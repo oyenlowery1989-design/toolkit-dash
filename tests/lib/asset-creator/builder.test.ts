@@ -133,12 +133,12 @@ describe("StandardStrategy.buildTransactions", () => {
       signal,
     );
 
-    const trustlineTx = TransactionBuilder.fromXDR(trustlineTxns[0].xdr, N.TESTNET);
-    const issuanceTx = TransactionBuilder.fromXDR(issuanceTxns[0].xdr, N.TESTNET);
+    const trustlineTx = TransactionBuilder.fromXDR(trustlineTxns[0].xdr, N.TESTNET) as import("stellar-sdk").Transaction;
+    const issuanceTx = TransactionBuilder.fromXDR(issuanceTxns[0].xdr, N.TESTNET) as import("stellar-sdk").Transaction;
 
     expect(trustlineTx.memo.type).toBe("none");
     expect(issuanceTx.memo.type).toBe("text");
-    const memoValue = (issuanceTx.memo as import("stellar-sdk").MemoText).value;
+    const memoValue = issuanceTx.memo.value;
     const memoStr = Buffer.isBuffer(memoValue) ? memoValue.toString("utf8") : memoValue;
     expect(memoStr).toBe("hello");
   });
@@ -156,7 +156,7 @@ describe("StandardStrategy.buildTransactions", () => {
       signal,
     );
     expect(txns).toHaveLength(1);
-    const tx = TransactionBuilder.fromXDR(txns[0].xdr, N.TESTNET);
+    const tx = TransactionBuilder.fromXDR(txns[0].xdr, N.TESTNET) as import("stellar-sdk").Transaction;
     const op = tx.operations[0] as import("stellar-sdk").Operation.Payment;
     expect(op.asset.getCode()).toBe("myTOKEN");
     expect(op.asset.getCode()).not.toBe("MYTOKEN");
