@@ -2,7 +2,7 @@
 "use client";
 
 import { useState } from "react";
-import { Keypair, StrKey } from "stellar-sdk";
+import { Keypair } from "stellar-sdk";
 import { Eye, EyeOff, RefreshCw, Wallet } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -15,6 +15,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { NETWORK_LABELS, type Network } from "@/lib/settings";
+import { useWalletsV2 } from "@/hooks/use-wallets-v2";
 import type { AssetCreatorForm } from "@/lib/asset-creator/types";
 
 interface Props {
@@ -25,42 +26,75 @@ interface Props {
   onNext: () => void;
 }
 
+/** Try to derive public key from secret. Returns "" if invalid. */
+function derivePublicKey(secret: string): string {
+  try {
+    return Keypair.fromSecret(secret).publicKey();
+  } catch {
+    return "";
+  }
+}
+
 function KeypairField({
   label,
-  publicKey,
   secretKey,
-  onPublicChange,
+  derivedPublicKey,
   onSecretChange,
   onGenerate,
 }: {
   label: string;
-  publicKey: string;
   secretKey: string;
-  onPublicChange: (v: string) => void;
-  onSecretChange: (v: string) => void;
+  derivedPublicKey: string;
+  onSecretChange: (secret: string, publicKey: string) => void;
   onGenerate: () => void;
 }) {
   const [showSecret, setShowSecret] = useState(false);
+  const { wallets } = useWalletsV2();
+
+  const handleSecretChange = (raw: string) => {
+    const trimmed = raw.trim();
+    onSecretChange(trimmed, derivePublicKey(trimmed));
+  };
+
+  const pickWallet = (walletId: string) => {
+    const w = wallets.find((w) => w.id === walletId);
+    if (w) onSecretChange(w.secretKey, w.publicKey);
+  };
+
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between">
         <Label className="text-sm font-semibold">{label}</Label>
-        <Button type="button" variant="ghost" size="sm" onClick={onGenerate} className="h-7 text-xs gap-1">
-          <RefreshCw className="h-3 w-3" /> Generate new
-        </Button>
+        <div className="flex items-center gap-1">
+          {wallets.length > 0 && (
+            <Select onValueChange={pickWallet} value="">
+              <SelectTrigger className="h-7 text-xs w-auto gap-1 border-0 shadow-none hover:bg-accent px-2">
+                <Wallet className="h-3 w-3" />
+                <SelectValue placeholder="Use wallet" />
+              </SelectTrigger>
+              <SelectContent align="end">
+                {wallets.map((w) => (
+                  <SelectItem key={w.id} value={w.id}>
+                    <span className="font-medium">{w.name}</span>
+                    <span className="ml-2 font-mono text-muted-foreground">
+                      {w.publicKey.slice(0, 4)}…{w.publicKey.slice(-4)}
+                    </span>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
+          <Button type="button" variant="ghost" size="sm" onClick={onGenerate} className="h-7 text-xs gap-1">
+            <RefreshCw className="h-3 w-3" /> Generate new
+          </Button>
+        </div>
       </div>
-      <Input
-        placeholder="Public key (G…)"
-        value={publicKey}
-        onChange={(e) => onPublicChange(e.target.value.trim())}
-        className="font-mono text-xs"
-      />
       <div className="relative">
         <Input
           type={showSecret ? "text" : "password"}
           placeholder="Secret key (S…)"
           value={secretKey}
-          onChange={(e) => onSecretChange(e.target.value.trim())}
+          onChange={(e) => handleSecretChange(e.target.value)}
           className="font-mono text-xs pr-10"
         />
         <button
@@ -71,25 +105,24 @@ function KeypairField({
           {showSecret ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
         </button>
       </div>
+      {derivedPublicKey && (
+        <p className="text-xs font-mono text-muted-foreground break-all">
+          {derivedPublicKey}
+        </p>
+      )}
+      {secretKey && !derivedPublicKey && (
+        <p className="text-xs text-destructive">Invalid secret key</p>
+      )}
     </div>
   );
 }
 
 function validateStep1(form: AssetCreatorForm): string | null {
-  if (!StrKey.isValidEd25519PublicKey(form.issuerPublicKey)) return "Invalid issuer public key";
-  if (!StrKey.isValidEd25519PublicKey(form.distributorPublicKey)) return "Invalid distributor public key";
-  try {
-    const kp = Keypair.fromSecret(form.issuerSecretKey);
-    if (kp.publicKey() !== form.issuerPublicKey) return "Issuer secret key does not match public key";
-  } catch {
-    return "Invalid issuer secret key";
-  }
-  try {
-    const kp = Keypair.fromSecret(form.distributorSecretKey);
-    if (kp.publicKey() !== form.distributorPublicKey) return "Distributor secret key does not match public key";
-  } catch {
-    return "Invalid distributor secret key";
-  }
+  if (!form.issuerSecretKey) return "Issuer secret key is required";
+  if (!form.issuerPublicKey) return "Invalid issuer secret key";
+  if (!form.distributorSecretKey) return "Distributor secret key is required";
+  if (!form.distributorPublicKey) return "Invalid distributor secret key";
+  if (form.issuerPublicKey === form.distributorPublicKey) return "Issuer and distributor must be different keypairs";
   return null;
 }
 
@@ -132,55 +165,63 @@ export function Step1Accounts({ form, onChange, activeWalletName, activeWalletKe
         </Select>
       </div>
 
-      {/* Funding source */}
-      <div className="space-y-2">
-        <Label className="text-sm font-semibold">Funding Source (for new accounts on mainnet)</Label>
-        {activeWalletName && activeWalletKey ? (
-          <div className="flex items-center gap-2 px-3 py-2 rounded-md bg-green-500/10 border border-green-500/30 text-sm">
-            <Wallet className="h-4 w-4 text-green-500" />
-            <span className="font-medium text-green-600 dark:text-green-400">{activeWalletName}</span>
-            <span className="text-muted-foreground font-mono text-xs">{activeWalletKey}</span>
-          </div>
-        ) : (
-          <div className="space-y-1">
-            <div className="relative">
-              <Input
-                type={showFundingSecret ? "text" : "password"}
-                placeholder="Funding secret key (S…) — only needed if creating new accounts on mainnet"
-                value={form.resolvedFundingSecretKey}
-                onChange={(e) => onChange({ resolvedFundingSecretKey: e.target.value.trim() })}
-                className="font-mono text-xs pr-10"
-              />
-              <button
-                type="button"
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                onClick={() => setShowFundingSecret((v) => !v)}
-              >
-                {showFundingSecret ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-              </button>
+      {/* Funding source — only relevant on mainnet/futurenet */}
+      {form.network !== "testnet" && (
+        <div className="space-y-2">
+          <Label className="text-sm font-semibold">Funding Source</Label>
+          <p className="text-xs text-muted-foreground">
+            Account that will pay to create the issuer and distributor on-chain (~4.1 XLM + fees).
+          </p>
+          {activeWalletName && activeWalletKey ? (
+            <div className="flex items-center gap-2 px-3 py-2 rounded-md bg-green-500/10 border border-green-500/30 text-sm">
+              <Wallet className="h-4 w-4 text-green-500" />
+              <span className="font-medium text-green-600 dark:text-green-400">{activeWalletName}</span>
+              <span className="text-muted-foreground font-mono text-xs">{activeWalletKey}</span>
             </div>
-            <p className="text-xs text-muted-foreground">Connect a wallet in Wallet Manager to use it here automatically.</p>
-          </div>
-        )}
-      </div>
+          ) : (
+            <div className="space-y-1">
+              <div className="relative">
+                <Input
+                  type={showFundingSecret ? "text" : "password"}
+                  placeholder="Funding secret key (S…)"
+                  value={form.resolvedFundingSecretKey}
+                  onChange={(e) => onChange({ resolvedFundingSecretKey: e.target.value.trim() })}
+                  className="font-mono text-xs pr-10"
+                />
+                <button
+                  type="button"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  onClick={() => setShowFundingSecret((v) => !v)}
+                >
+                  {showFundingSecret ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
+              </div>
+              <p className="text-xs text-muted-foreground">Connect a wallet in Wallet Manager to use it here automatically.</p>
+            </div>
+          )}
+        </div>
+      )}
+      {form.network === "testnet" && (
+        <div className="px-3 py-2 rounded-md bg-muted text-xs text-muted-foreground">
+          Testnet: accounts will be funded automatically via Friendbot — no funding source needed.
+        </div>
+      )}
 
       {/* Issuer keypair */}
       <KeypairField
         label="Issuer Keypair"
-        publicKey={form.issuerPublicKey}
         secretKey={form.issuerSecretKey}
-        onPublicChange={(v) => onChange({ issuerPublicKey: v })}
-        onSecretChange={(v) => onChange({ issuerSecretKey: v })}
+        derivedPublicKey={form.issuerPublicKey}
+        onSecretChange={(secret, pubKey) => onChange({ issuerSecretKey: secret, issuerPublicKey: pubKey })}
         onGenerate={() => generateKeypair("issuer")}
       />
 
       {/* Distributor keypair */}
       <KeypairField
         label="Distributor Keypair"
-        publicKey={form.distributorPublicKey}
         secretKey={form.distributorSecretKey}
-        onPublicChange={(v) => onChange({ distributorPublicKey: v })}
-        onSecretChange={(v) => onChange({ distributorSecretKey: v })}
+        derivedPublicKey={form.distributorPublicKey}
+        onSecretChange={(secret, pubKey) => onChange({ distributorSecretKey: secret, distributorPublicKey: pubKey })}
         onGenerate={() => generateKeypair("distributor")}
       />
 
