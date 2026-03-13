@@ -59,7 +59,7 @@
 | `address-generator` | Working — Web Worker vanity address generator |
 | `bulk-payments` | Working — secret key field replaced by active wallet indicator when wallet connected |
 | `ghost-payments` | Working — secret key field replaced by active wallet indicator when wallet connected |
-| `asset-creator` | In progress — 4-step wizard: accounts, asset config, preflight, execution |
+| `asset-creator` | Working — 4-step wizard: accounts, asset config, preflight, execution; auto-saves to Asset Groups |
 | `dex-orderbook` | Working — bid/ask tables, stats cards, depth chart (recharts) |
 | `wallet-manager` | Working — folders + wallets + connect/disconnect; header switcher added |
 | `payments` | Working — single payment builder with address book integration |
@@ -198,6 +198,22 @@ Full `autoCreate` URL param spec:
 - **Minimal cost**: 1 stroop per recipient = ~$0.000000001 each; fees are the real cost
 - Reuses: `runBulkPayments` runner, `estimateCost`, `fetchAllHolders`, `useAssetGroups`, `useBulkRecipients`
 - Do NOT add a ghost toggle to Bulk Payments — keep modules separate for clarity
+
+## Asset Creator
+- Route: `app/(tools)/asset-creator/page.tsx`
+- Panel: `components/asset-creator/AssetCreatorPanel.tsx`
+- Steps: `components/asset-creator/steps/Step1Accounts.tsx`, `Step2AssetConfig.tsx`, `Step3Preflight.tsx`, `Step4Result.tsx`
+- Lib: `lib/asset-creator/types.ts`, `preflight.ts`, `builder.ts`, `runner.ts`, `toml.ts`
+- **4-step wizard**: Accounts → Asset Config → Preflight → Execute
+- **Network**: always read from global `useSettings()` — never has its own network selector
+- **Keypair fields**: enter secret key only — public key is derived automatically via `Keypair.fromSecret()`
+- **Wallet picker**: "Use wallet" dropdown on each keypair field loads all wallets from `useWalletsV2()`; picks secret + derives public
+- **Funding source** (mainnet/futurenet only): shown only when `network !== "testnet"`; uses `activeWallet` if connected, otherwise manual secret key field. On testnet: Friendbot funds accounts automatically.
+- **Preflight checks**: account existence + balance (≥1.5 XLM) for issuer + distrib, asset already-issued warning, fee estimate — all run on mount
+- **Execution**: `runAssetCreation` in `lib/asset-creator/runner.ts` — testnet uses Friendbot, mainnet submits `fund-accounts` → `set-home-domain` → `trustline` → `issuance` transactions sequentially
+- **Auto-save**: on full success, creates Asset Group with `issuer` + `distributor` roles; shows "Open Group →" button
+- **`StandardStrategy`** in `builder.ts` implements `CreationStrategy` interface — pluggable for future multi-sig or custom strategies
+- **Known issues to fix**: retry doesn't union completedSteps; `fund-accounts` single tx fails if one account already exists; no per-step live progress during execution; supply scientific notation bug; futurenet Stellar.Expert link broken
 
 ## Intermediary Tracer — Tab Status
 | Tab | Status |
