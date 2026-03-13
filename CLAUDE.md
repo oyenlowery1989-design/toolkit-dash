@@ -213,7 +213,9 @@ Full `autoCreate` URL param spec:
 - **Execution**: `runAssetCreation` in `lib/asset-creator/runner.ts` — testnet uses Friendbot, mainnet submits `fund-accounts` → `set-home-domain` → `trustline` → `issuance` transactions sequentially
 - **Auto-save**: on full success, creates Asset Group with `issuer` + `distributor` roles; shows "Open Group →" button
 - **`StandardStrategy`** in `builder.ts` implements `CreationStrategy` interface — pluggable for future multi-sig or custom strategies
-- **Known issues to fix**: retry doesn't union completedSteps; `fund-accounts` single tx fails if one account already exists; no per-step live progress during execution; supply scientific notation bug; futurenet Stellar.Expert link broken
+- **Execution progress**: live per-step checklist shown during execution (onStep wired, not a no-op)
+- **fund-accounts smart**: checks each account individually before creating — handles pre-existing accounts gracefully
+- **Mainnet safety**: funding wallet balance checked in preflight; missing funding key blocks execute with clear message
 
 ## Intermediary Tracer — Tab Status
 | Tab | Status |
