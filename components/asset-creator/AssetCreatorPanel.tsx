@@ -1,7 +1,7 @@
 // components/asset-creator/AssetCreatorPanel.tsx
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Card, CardContent } from "@/components/ui/card";
 import { useActiveWallet } from "@/hooks/use-active-wallet";
@@ -43,24 +43,31 @@ export function AssetCreatorPanel() {
   const [groupId, setGroupId] = useState<string | undefined>();
   const [completedSteps, setCompletedSteps] = useState<Set<string>>(new Set());
 
+  // Keep resolvedFundingSecretKey in sync with active wallet (handles cross-tab disconnect)
+  useEffect(() => {
+    setForm((prev) => ({
+      ...prev,
+      resolvedFundingSecretKey: activeWallet?.secretKey ?? (prev.resolvedFundingSecretKey || ""),
+    }));
+  }, [activeWallet]);
+
   const onChange = (patch: Partial<AssetCreatorForm>) => {
-    setForm((prev) => {
-      const next = { ...prev, ...patch, network }; // network always from global settings
-      if (activeWallet?.secretKey) {
-        next.resolvedFundingSecretKey = activeWallet.secretKey;
-      }
-      return next;
-    });
+    setForm((prev) => ({
+      ...prev,
+      ...patch,
+      network, // network always from global settings
+      resolvedFundingSecretKey: activeWallet?.secretKey ?? patch.resolvedFundingSecretKey ?? prev.resolvedFundingSecretKey,
+    }));
   };
 
   const handleComplete = async (stepResults: StepResult[]) => {
     setResults(stepResults);
     setStep("result");
 
-    const succeeded = new Set(
-      stepResults.filter((r) => r.status === "success").map((r) => r.stepId)
-    );
-    setCompletedSteps(succeeded);
+    const succeeded = stepResults
+      .filter((r) => r.status === "success" || r.status === "skipped")
+      .map((r) => r.stepId);
+    setCompletedSteps((prev) => new Set([...prev, ...succeeded]));
 
     // Auto-save to Asset Groups on full success
     const allSucceeded = stepResults.every(

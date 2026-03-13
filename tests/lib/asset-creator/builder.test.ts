@@ -32,14 +32,31 @@ function makeServer() {
     incrementSequenceNumber: vi.fn(function(this: { sequence: string }) { this.sequence = String(parseInt(this.sequence) + 1); }),
   });
 
+  // By default all accounts exist. Pass notFound=[...publicKeys] to simulate missing accounts.
   return {
     loadAccount: vi.fn((pk: string) => Promise.resolve(mockAccount(pk))),
   } as unknown as import("stellar-sdk").Horizon.Server;
 }
 
+function makeServerWithMissing(missingKeys: string[]) {
+  const mockAccount = (publicKey: string, seq = "1000") => ({
+    id: publicKey,
+    sequence: seq,
+    sequenceNumber: () => seq,
+    accountId: () => publicKey,
+    incrementSequenceNumber: vi.fn(function(this: { sequence: string }) { this.sequence = String(parseInt(this.sequence) + 1); }),
+  });
+  return {
+    loadAccount: vi.fn((pk: string) => {
+      if (missingKeys.includes(pk)) return Promise.reject({ response: { status: 404 } });
+      return Promise.resolve(mockAccount(pk));
+    }),
+  } as unknown as import("stellar-sdk").Horizon.Server;
+}
+
 describe("StandardStrategy.buildTransactions", () => {
-  it("builds fund-accounts tx with two create_account ops on mainnet", async () => {
-    const server = makeServer();
+  it("builds fund-accounts tx when both accounts are missing", async () => {
+    const server = makeServerWithMissing([issuerKp.publicKey(), distribKp.publicKey()]);
     const signal = new AbortController().signal;
     const txns = await StandardStrategy.buildTransactions(
       { ...baseForm, network: "public", resolvedFundingSecretKey: fundingKp.secret() },
@@ -51,8 +68,20 @@ describe("StandardStrategy.buildTransactions", () => {
     expect(txns).toHaveLength(1);
     expect(txns[0].stepId).toBe("fund-accounts");
     expect(txns[0].sourceAccount).toBe(fundingKp.publicKey());
-    // XDR should be a non-empty string
     expect(txns[0].xdr.length).toBeGreaterThan(0);
+  });
+
+  it("skips fund-accounts when both accounts already exist", async () => {
+    const server = makeServer(); // all accounts exist
+    const signal = new AbortController().signal;
+    const txns = await StandardStrategy.buildTransactions(
+      { ...baseForm, network: "public", resolvedFundingSecretKey: fundingKp.secret() },
+      ["fund-accounts"],
+      server,
+      Networks.PUBLIC,
+      signal,
+    );
+    expect(txns).toHaveLength(0);
   });
 
   it("builds set-home-domain tx when homeDomain is provided", async () => {

@@ -24,7 +24,9 @@ interface Props {
 export function Step4Result({ results, groupId, network, onRetry, onStartOver }: Props) {
   const expertBase = network === "public"
     ? "https://stellar.expert/explorer/public/tx"
-    : "https://stellar.expert/explorer/testnet/tx";
+    : network === "testnet"
+      ? "https://stellar.expert/explorer/testnet/tx"
+      : null; // futurenet not supported by Stellar.Expert
 
   const failed = results.filter((r) => r.status === "failed");
   const allSuccess = results.length > 0 && failed.length === 0;
@@ -51,7 +53,7 @@ export function Step4Result({ results, groupId, network, onRetry, onStartOver }:
             {statusIcon(r.status)}
             <div className="flex-1 min-w-0">
               <p className="text-sm">{STEP_LABELS[r.stepId] ?? r.stepId}</p>
-              {r.txHash && (
+              {r.txHash && expertBase && (
                 <a
                   href={`${expertBase}/${r.txHash}`}
                   target="_blank"
@@ -61,6 +63,9 @@ export function Step4Result({ results, groupId, network, onRetry, onStartOver }:
                   {r.txHash.slice(0, 8)}…{r.txHash.slice(-8)}
                   <ExternalLink className="h-3 w-3" />
                 </a>
+              )}
+              {r.txHash && !expertBase && (
+                <span className="text-xs font-mono text-muted-foreground mt-0.5">{r.txHash.slice(0, 8)}…{r.txHash.slice(-8)}</span>
               )}
               {r.error && <p className="text-xs text-destructive mt-0.5">{r.error}</p>}
             </div>

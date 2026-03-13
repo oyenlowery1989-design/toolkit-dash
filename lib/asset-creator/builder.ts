@@ -14,6 +14,16 @@ const ISSUER_FUND_XLM = "2.1";
 const DISTRIB_FUND_XLM = "2.0";
 const TX_TIMEOUT = 180;
 
+/** Check if an account already exists on Horizon. */
+async function accountExists(server: Horizon.Server, publicKey: string): Promise<boolean> {
+  try {
+    await server.loadAccount(publicKey);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export const StandardStrategy: CreationStrategy = {
   id: "standard",
   label: "Standard",
@@ -31,26 +41,36 @@ export const StandardStrategy: CreationStrategy = {
       if (signal.aborted) throw new DOMException("Aborted", "AbortError");
 
       if (stepId === "fund-accounts") {
-        // Both create_account ops in one tx — single funding wallet sequence number
+        // Check which accounts already exist — only create missing ones
         const fundingKp = Keypair.fromSecret(form.resolvedFundingSecretKey);
+        const [issuerExists, distribExists] = await Promise.all([
+          accountExists(server, form.issuerPublicKey),
+          accountExists(server, form.distributorPublicKey),
+        ]);
+        if (signal.aborted) throw new DOMException("Aborted", "AbortError");
+
+        // If both already exist, nothing to do
+        if (issuerExists && distribExists) continue;
+
         const fundingAccount = await server.loadAccount(fundingKp.publicKey());
         if (signal.aborted) throw new DOMException("Aborted", "AbortError");
 
-        const tx = new TransactionBuilder(fundingAccount, {
-          fee: BASE_FEE,
-          networkPassphrase,
-        })
-          .addOperation(Operation.createAccount({
+        const builder = new TransactionBuilder(fundingAccount, { fee: BASE_FEE, networkPassphrase });
+
+        if (!issuerExists) {
+          builder.addOperation(Operation.createAccount({
             destination: form.issuerPublicKey,
             startingBalance: ISSUER_FUND_XLM,
-          }))
-          .addOperation(Operation.createAccount({
+          }));
+        }
+        if (!distribExists) {
+          builder.addOperation(Operation.createAccount({
             destination: form.distributorPublicKey,
             startingBalance: DISTRIB_FUND_XLM,
-          }))
-          .setTimeout(TX_TIMEOUT)
-          .build();
+          }));
+        }
 
+        const tx = builder.setTimeout(TX_TIMEOUT).build();
         tx.sign(fundingKp);
         results.push({
           stepId: "fund-accounts",
@@ -61,15 +81,12 @@ export const StandardStrategy: CreationStrategy = {
       }
 
       if (stepId === "set-home-domain") {
-        if (!form.homeDomain) continue; // skip if no home domain
+        if (!form.homeDomain) continue;
         const issuerKp = Keypair.fromSecret(form.issuerSecretKey);
         const issuerAccount = await server.loadAccount(issuerKp.publicKey());
         if (signal.aborted) throw new DOMException("Aborted", "AbortError");
 
-        const tx = new TransactionBuilder(issuerAccount, {
-          fee: BASE_FEE,
-          networkPassphrase,
-        })
+        const tx = new TransactionBuilder(issuerAccount, { fee: BASE_FEE, networkPassphrase })
           .addOperation(Operation.setOptions({ homeDomain: form.homeDomain }))
           .setTimeout(TX_TIMEOUT)
           .build();
@@ -89,10 +106,7 @@ export const StandardStrategy: CreationStrategy = {
         if (signal.aborted) throw new DOMException("Aborted", "AbortError");
 
         const asset = new Asset(form.assetCode, form.issuerPublicKey);
-        const tx = new TransactionBuilder(distribAccount, {
-          fee: BASE_FEE,
-          networkPassphrase,
-        })
+        const tx = new TransactionBuilder(distribAccount, { fee: BASE_FEE, networkPassphrase })
           .addOperation(Operation.changeTrust({ asset }))
           .setTimeout(TX_TIMEOUT)
           .build();
@@ -112,14 +126,12 @@ export const StandardStrategy: CreationStrategy = {
         if (signal.aborted) throw new DOMException("Aborted", "AbortError");
 
         const asset = new Asset(form.assetCode, form.issuerPublicKey);
-        const builder = new TransactionBuilder(issuerAccount, {
-          fee: BASE_FEE,
-          networkPassphrase,
-        }).addOperation(Operation.payment({
-          destination: form.distributorPublicKey,
-          asset,
-          amount: String(form.supply),
-        }));
+        const builder = new TransactionBuilder(issuerAccount, { fee: BASE_FEE, networkPassphrase })
+          .addOperation(Operation.payment({
+            destination: form.distributorPublicKey,
+            asset,
+            amount: form.supply.toFixed(7), // prevent scientific notation for large numbers
+          }));
 
         if (form.memo) builder.addMemo(Memo.text(form.memo));
 

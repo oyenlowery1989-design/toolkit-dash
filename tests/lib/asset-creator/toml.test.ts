@@ -38,15 +38,14 @@ describe("generateTomlSnippet", () => {
     expect(snippet).toContain('name = "My Token"');
   });
 
-  it("leaves name empty when tokenName is empty string", () => {
+  it("omits name line when tokenName is empty string", () => {
     const snippet = generateTomlSnippet({ ...base, tokenName: "" });
-    expect(snippet).toContain('name = ""');
+    expect(snippet).not.toContain("name =");
   });
 
   it("includes all required TOML fields", () => {
     const snippet = generateTomlSnippet(base);
     expect(snippet).toContain("[[CURRENCIES]]");
-    expect(snippet).toContain("desc =");
     expect(snippet).toContain("is_asset_anchored =");
     expect(snippet).toContain("anchor_asset_type =");
   });

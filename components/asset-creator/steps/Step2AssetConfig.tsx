@@ -12,9 +12,12 @@ import type { AssetCreatorForm } from "@/lib/asset-creator/types";
 const ASSET_CODE_RE = /^[A-Za-z0-9]{1,12}$/;
 const DOMAIN_RE = /^([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$/;
 
+const MAX_SUPPLY = 900_000_000_000;
+
 function validateStep2(form: AssetCreatorForm): string | null {
   if (!ASSET_CODE_RE.test(form.assetCode)) return "Asset code must be 1–12 alphanumeric characters";
   if (form.supply <= 0) return "Supply must be a positive number";
+  if (form.supply > MAX_SUPPLY) return `Supply exceeds Stellar maximum (${MAX_SUPPLY.toLocaleString()})`;
   if (form.memo && Buffer.byteLength(form.memo, "utf8") > 28) return "Memo exceeds 28 bytes";
   if (form.homeDomain && !DOMAIN_RE.test(form.homeDomain)) return "Invalid home domain format";
   return null;

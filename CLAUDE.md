@@ -128,7 +128,7 @@ Full `autoCreate` URL param spec:
 
 ## Asset Groups
 - Tables: `asset_groups`, `asset_group_members` (FK cascade on delete)
-- 9 roles: `issuer`, `distrib`, `creator`, `intermediary`, `bank`, `withdrawal`, `destination`, `service`, `other`
+- 9 roles: `issuer`, `distributor`, `creator`, `intermediary`, `bank`, `withdrawal`, `destination`, `service`, `other`
 - Types + role constants: `lib/asset-groups/types.ts` (`GroupMemberRole`, `ROLE_LABELS`, `ROLE_COLORS`)
 - Hook: `hooks/use-asset-groups.ts` — uses DB cache pattern; delete uses custom fetch (not `dbDelete`) because body needs `type` discriminator
 - API: `/api/db/groups` — POST/PATCH/DELETE body must include `type: "group"` or `type: "member"`

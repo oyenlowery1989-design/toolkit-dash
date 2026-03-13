@@ -15,6 +15,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useWalletsV2 } from "@/hooks/use-wallets-v2";
+import { shortAddr } from "@/lib/format";
 import type { AssetCreatorForm } from "@/lib/asset-creator/types";
 
 interface Props {
@@ -76,7 +77,7 @@ function KeypairField({
                   <SelectItem key={w.id} value={w.id}>
                     <span className="font-medium">{w.name}</span>
                     <span className="ml-2 font-mono text-muted-foreground">
-                      {w.publicKey.slice(0, 4)}…{w.publicKey.slice(-4)}
+                      {shortAddr(w.publicKey)}
                     </span>
                   </SelectItem>
                 ))}
