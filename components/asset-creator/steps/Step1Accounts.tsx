@@ -14,7 +14,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { NETWORK_LABELS, type Network } from "@/lib/settings";
 import { useWalletsV2 } from "@/hooks/use-wallets-v2";
 import type { AssetCreatorForm } from "@/lib/asset-creator/types";
 
@@ -146,25 +145,8 @@ export function Step1Accounts({ form, onChange, activeWalletName, activeWalletKe
     }
   };
 
-  const networks: Network[] = ["public", "testnet", "futurenet"];
-
   return (
     <div className="space-y-6">
-      {/* Network */}
-      <div className="space-y-2">
-        <Label className="text-sm font-semibold">Network</Label>
-        <Select value={form.network} onValueChange={(v) => onChange({ network: v as Network })}>
-          <SelectTrigger className="w-48">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {networks.map((n) => (
-              <SelectItem key={n} value={n}>{NETWORK_LABELS[n]}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
-
       {/* Funding source — only relevant on mainnet/futurenet */}
       {form.network !== "testnet" && (
         <div className="space-y-2">

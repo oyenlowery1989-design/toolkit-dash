@@ -6,6 +6,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Card, CardContent } from "@/components/ui/card";
 import { useActiveWallet } from "@/hooks/use-active-wallet";
 import { useAssetGroups } from "@/hooks/use-asset-groups";
+import { useSettings } from "@/lib/settings";
 import { shortAddr } from "@/lib/format";
 import type { AssetCreatorForm, StepResult } from "@/lib/asset-creator/types";
 import { Step1Accounts } from "./steps/Step1Accounts";
@@ -33,17 +34,18 @@ type Step = (typeof STEPS)[number];
 export function AssetCreatorPanel() {
   const { activeWallet } = useActiveWallet();
   const { createGroup, upsertMember } = useAssetGroups();
+  const { settings } = useSettings();
+  const network = settings.network;
 
   const [step, setStep] = useState<Step>("accounts");
-  const [form, setForm] = useState<AssetCreatorForm>(EMPTY_FORM);
+  const [form, setForm] = useState<AssetCreatorForm>({ ...EMPTY_FORM, network });
   const [results, setResults] = useState<StepResult[]>([]);
   const [groupId, setGroupId] = useState<string | undefined>();
   const [completedSteps, setCompletedSteps] = useState<Set<string>>(new Set());
 
   const onChange = (patch: Partial<AssetCreatorForm>) => {
     setForm((prev) => {
-      const next = { ...prev, ...patch };
-      // Always resolve funding key from active wallet if connected
+      const next = { ...prev, ...patch, network }; // network always from global settings
       if (activeWallet?.secretKey) {
         next.resolvedFundingSecretKey = activeWallet.secretKey;
       }
@@ -92,7 +94,7 @@ export function AssetCreatorPanel() {
   };
 
   const handleStartOver = () => {
-    setForm(EMPTY_FORM);
+    setForm({ ...EMPTY_FORM, network });
     setResults([]);
     setGroupId(undefined);
     setCompletedSteps(new Set());
