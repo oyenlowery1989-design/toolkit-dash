@@ -18,6 +18,7 @@ import {
   Ghost,
   ArrowDownUp,
   Wand2,
+  Trophy,
   type LucideIcon,
 } from "lucide-react";
 
@@ -74,6 +75,11 @@ export const menuItems: MenuEntry[] = [
     title: "Ghost Payments",
     href: "/ghost-payments",
     icon: Ghost,
+  },
+  {
+    title: "Tiered Rewards",
+    href: "/tiered-rewards",
+    icon: Trophy,
   },
   {
     title: "Asset Creator",
