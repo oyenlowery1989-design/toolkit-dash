@@ -83,7 +83,7 @@ export function TierConfigCard({ config, onUpdate, onDelete, onUpsertTier, onDel
           </button>
           <span className="font-medium text-foreground flex-1">{config.name}</span>
           {config.lastFailureAt && (
-            <AlertTriangle className="h-4 w-4 text-destructive" title="Last run had failures" />
+            <AlertTriangle className="h-4 w-4 text-destructive" aria-label="Last run had failures" />
           )}
           <span className={`text-xs px-2 py-0.5 rounded-full border ${config.enabled ? "bg-green-950 text-green-400 border-green-800" : "bg-muted text-muted-foreground border-border"}`}>
             {config.enabled ? "\u25CF active" : "\u25CB paused"}
