@@ -5,18 +5,21 @@
  * Pattern: global singleton so Next.js HMR doesn't open multiple connections.
  */
 
-import Database from "better-sqlite3";
+import type Database from "better-sqlite3";
 import path from "path";
 
 const DB_PATH = path.join(process.cwd(), "stellar-toolkit.db");
 
 declare global {
-  // eslint-disable-next-line no-var
   var _stellarDb: Database.Database | undefined;
 }
 
 function initDb(): Database.Database {
-  const db = new Database(DB_PATH);
+  // require() here (not top-level import) so the native binary is only loaded
+  // when getDb() is actually called. On Vercel, isSupabaseOnly()=true means
+  // getDb() is never called, so the binary never needs to load.
+  const BetterSqlite3 = require("better-sqlite3") as typeof Database;
+  const db = new BetterSqlite3(DB_PATH);
   db.pragma("journal_mode = WAL"); // better concurrent read performance
   db.pragma("foreign_keys = ON");
 
@@ -158,7 +161,204 @@ function initDb(): Database.Database {
       key         TEXT PRIMARY KEY,
       value       TEXT NOT NULL
     );
+
+    -- ── Creator Children (creator tree / ownership graph) ────────────────────
+
+    CREATE TABLE IF NOT EXISTS creator_children (
+      id              TEXT    PRIMARY KEY,
+      creator_address TEXT    NOT NULL,
+      child_address   TEXT    NOT NULL,
+      network         TEXT    NOT NULL DEFAULT 'public',
+      via_intermediary TEXT,
+      created_on_chain TEXT,           -- ISO timestamp when child was created on Stellar
+      confidence      INTEGER,
+      starting_balance REAL,
+      home_domain     TEXT,
+      issued_assets   TEXT,            -- JSON: [{code, supply}] or null
+      distributed_assets TEXT,         -- JSON: [{code, issuer}] or null
+      parent_address  TEXT,            -- address of the grandparent (another creator)
+      discovered_at   INTEGER NOT NULL,
+      UNIQUE(creator_address, child_address, network)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_creator_children_creator ON creator_children(creator_address, network);
+    CREATE INDEX IF NOT EXISTS idx_creator_children_child ON creator_children(child_address);
+
+    -- ── Auto-Send Groups (scheduled wallet sweeps) ────────────────────────────
+
+    CREATE TABLE IF NOT EXISTS auto_send_groups (
+      id                TEXT    PRIMARY KEY,
+      name              TEXT    NOT NULL,
+      network           TEXT    NOT NULL DEFAULT 'public',
+      secret_key        TEXT    NOT NULL DEFAULT '',  -- source wallet secret key
+      interval_minutes  INTEGER,          -- NULL = manual only
+      enabled           INTEGER NOT NULL DEFAULT 1,  -- 0=disabled, 1=enabled
+      batch_send        INTEGER NOT NULL DEFAULT 0,  -- 0=separate txs, 1=one tx
+      created_at        INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS auto_send_destinations (
+      id          TEXT    PRIMARY KEY,
+      group_id    TEXT    NOT NULL REFERENCES auto_send_groups(id) ON DELETE CASCADE,
+      destination TEXT    NOT NULL,
+      percentage  REAL    NOT NULL,
+      label       TEXT,
+      memo        TEXT,
+      position    INTEGER NOT NULL DEFAULT 0,
+      UNIQUE(group_id, destination)
+    );
+
+    CREATE TABLE IF NOT EXISTS auto_send_run_log (
+      id              TEXT    PRIMARY KEY,
+      group_id        TEXT    NOT NULL REFERENCES auto_send_groups(id) ON DELETE CASCADE,
+      wallet_address  TEXT    NOT NULL,
+      destination     TEXT    NOT NULL,
+      amount_sent     REAL,
+      status          TEXT    NOT NULL,   -- sent|skipped|failed
+      error           TEXT,
+      ran_at          INTEGER NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_auto_send_destinations_group ON auto_send_destinations(group_id);
+    CREATE INDEX IF NOT EXISTS idx_auto_send_run_log_group ON auto_send_run_log(group_id, ran_at DESC);
+
+    -- ── Migration version tracking ────────────────────────────────────────────
+    -- Single-row table. Future schema changes should:
+    --   1. Increment CURRENT_SCHEMA_VERSION constant below.
+    --   2. Add a block: if (version < N) { db.exec(...); setVersion(N); }
+    -- This replaces the try/catch ALTER TABLE pattern for new columns.
+
+    CREATE TABLE IF NOT EXISTS schema_version (
+      version INTEGER NOT NULL
+    );
+
+    -- ── Tiered Rewards ──────────────────────────────────────────────────────────
+
+    CREATE TABLE IF NOT EXISTS tiered_reward_configs (
+      id                    TEXT    PRIMARY KEY,
+      name                  TEXT    NOT NULL,
+      asset_code            TEXT    NOT NULL,
+      asset_issuer          TEXT    NOT NULL,
+      network               TEXT    NOT NULL,
+      secret_key            TEXT    NOT NULL,
+      interval_minutes      INTEGER,
+      enabled               INTEGER NOT NULL DEFAULT 0,
+      min_reserve           REAL    NOT NULL DEFAULT 10.0,
+      min_sender_threshold  REAL    NOT NULL DEFAULT 0.0,
+      preview_only          INTEGER NOT NULL DEFAULT 0,
+      last_run_at           INTEGER,
+      last_failure_at       INTEGER,
+      created_at            INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS tiered_reward_tiers (
+      id           TEXT    PRIMARY KEY,
+      config_id    TEXT    NOT NULL REFERENCES tiered_reward_configs(id) ON DELETE CASCADE,
+      tier_number  INTEGER NOT NULL,
+      min_tokens   REAL    NOT NULL,
+      max_tokens   REAL,
+      position     INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS tiered_reward_assets (
+      id            TEXT    PRIMARY KEY,
+      tier_id       TEXT    NOT NULL REFERENCES tiered_reward_tiers(id) ON DELETE CASCADE,
+      asset_code    TEXT    NOT NULL,
+      asset_issuer  TEXT,
+      amount        REAL    NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS tiered_reward_run_log (
+      id              TEXT    PRIMARY KEY,
+      config_id       TEXT    REFERENCES tiered_reward_configs(id) ON DELETE CASCADE,
+      tier_number     INTEGER NOT NULL,
+      holder_address  TEXT    NOT NULL,
+      asset_code      TEXT    NOT NULL,
+      asset_issuer    TEXT,
+      amount_sent     REAL    NOT NULL DEFAULT 0,
+      status          TEXT    NOT NULL,
+      tx_hash         TEXT,
+      error           TEXT,
+      ran_at          INTEGER NOT NULL
+    );
   `);
+
+  // ── Auto-send migrations ──────────────────────────────────────────────────
+  try {
+    const autoSendGroupCols = (db.pragma("table_info(auto_send_groups)") as { name: string }[]).map((c) => c.name);
+    if (autoSendGroupCols.length > 0 && !autoSendGroupCols.includes("secret_key")) {
+      db.exec(`ALTER TABLE auto_send_groups ADD COLUMN secret_key TEXT NOT NULL DEFAULT ''`);
+    }
+    if (autoSendGroupCols.length > 0 && !autoSendGroupCols.includes("batch_send")) {
+      db.exec(`ALTER TABLE auto_send_groups ADD COLUMN batch_send INTEGER NOT NULL DEFAULT 0`);
+    }
+    if (autoSendGroupCols.length > 0 && !autoSendGroupCols.includes("batch_memo")) {
+      db.exec(`ALTER TABLE auto_send_groups ADD COLUMN batch_memo TEXT`);
+    }
+    if (autoSendGroupCols.length > 0 && !autoSendGroupCols.includes("min_reserve")) {
+      db.exec(`ALTER TABLE auto_send_groups ADD COLUMN min_reserve REAL NOT NULL DEFAULT 10.0`);
+    }
+    const autoSendDestCols = (db.pragma("table_info(auto_send_destinations)") as { name: string }[]).map((c) => c.name);
+    if (autoSendDestCols.length > 0 && !autoSendDestCols.includes("memo")) {
+      db.exec(`ALTER TABLE auto_send_destinations ADD COLUMN memo TEXT`);
+    }
+    if (autoSendDestCols.length > 0 && !autoSendDestCols.includes("min_threshold")) {
+      db.exec(`ALTER TABLE auto_send_destinations ADD COLUMN min_threshold REAL NOT NULL DEFAULT 0`);
+    }
+    if (autoSendDestCols.length > 0 && !autoSendDestCols.includes("is_remainder")) {
+      db.exec(`ALTER TABLE auto_send_destinations ADD COLUMN is_remainder INTEGER NOT NULL DEFAULT 0`);
+    }
+    if (autoSendDestCols.length > 0 && !autoSendDestCols.includes("is_paused")) {
+      db.exec(`ALTER TABLE auto_send_destinations ADD COLUMN is_paused INTEGER NOT NULL DEFAULT 0`);
+    }
+    // run_log migrations
+    const autoSendLogCols = (db.pragma("table_info(auto_send_run_log)") as { name: string }[]).map((c) => c.name);
+    if (autoSendLogCols.length > 0 && !autoSendLogCols.includes("tx_hash")) {
+      db.exec(`ALTER TABLE auto_send_run_log ADD COLUMN tx_hash TEXT`);
+    }
+    // group preview_only
+    if (autoSendGroupCols.length > 0 && !autoSendGroupCols.includes("preview_only")) {
+      db.exec(`ALTER TABLE auto_send_groups ADD COLUMN preview_only INTEGER NOT NULL DEFAULT 0`);
+    }
+    // group min_sender_threshold
+    if (autoSendGroupCols.length > 0 && !autoSendGroupCols.includes("min_sender_threshold")) {
+      db.exec(`ALTER TABLE auto_send_groups ADD COLUMN min_sender_threshold REAL NOT NULL DEFAULT 0`);
+    }
+    // group last_failure_at
+    if (autoSendGroupCols.length > 0 && !autoSendGroupCols.includes("last_failure_at")) {
+      db.exec(`ALTER TABLE auto_send_groups ADD COLUMN last_failure_at INTEGER`);
+    }
+    // destination max_cap
+    if (autoSendDestCols.length > 0 && !autoSendDestCols.includes("max_cap")) {
+      db.exec(`ALTER TABLE auto_send_destinations ADD COLUMN max_cap REAL NOT NULL DEFAULT 0`);
+    }
+    // Migrate auto_send_wallets → auto_send_destinations if old table still exists
+    const allTables = (db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as { name: string }[]).map((t) => t.name);
+    if (allTables.includes("auto_send_wallets") && !allTables.includes("auto_send_destinations")) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS auto_send_destinations (
+          id          TEXT    PRIMARY KEY,
+          group_id    TEXT    NOT NULL REFERENCES auto_send_groups(id) ON DELETE CASCADE,
+          destination TEXT    NOT NULL,
+          percentage  REAL    NOT NULL,
+          label       TEXT,
+          position    INTEGER NOT NULL DEFAULT 0,
+          UNIQUE(group_id, destination)
+        );
+        INSERT OR IGNORE INTO auto_send_destinations (id, group_id, destination, percentage, position)
+          SELECT id, group_id, destination, percentage, position FROM auto_send_wallets;
+        DROP TABLE auto_send_wallets;
+      `);
+    }
+  } catch (err) {
+    console.error("[db] auto-send migration failed (non-fatal):", err);
+  }
+
+  // ── Known creators migration: add parent_address column if missing ────────
+  const creatorCols = (db.pragma("table_info(known_creators)") as { name: string }[]).map((c) => c.name);
+  if (!creatorCols.includes("parent_address")) {
+    db.exec(`ALTER TABLE known_creators ADD COLUMN parent_address TEXT`);
+  }
 
   // ── Wallet migration: ensure id + folder_id columns exist ─────────────────
   // The wallets table schema evolved over time. Recreate if id column is missing
@@ -210,8 +410,24 @@ function initDb(): Database.Database {
     db.exec(`CREATE INDEX IF NOT EXISTS idx_wallets_folder ON wallets(folder_id)`);
   }
 
+  // ── Schema version init ───────────────────────────────────────────────────
+  // All existing migrations have already run above (idempotent checks).
+  // Stamp version 1 so new installs skip the legacy migration path going forward.
+  const versionRow = db.prepare("SELECT version FROM schema_version LIMIT 1").get() as { version: number } | undefined;
+  if (!versionRow) {
+    db.prepare("INSERT INTO schema_version (version) VALUES (?)").run(1);
+  }
+
   return db;
 }
+
+/**
+ * The current schema version. Increment this whenever you add a new versioned migration.
+ * New migrations should use the pattern:
+ *   const v = (db.prepare("SELECT version FROM schema_version LIMIT 1").get() as {version:number}).version;
+ *   if (v < 2) { db.exec(`ALTER TABLE ...`); db.prepare("UPDATE schema_version SET version=2").run(); }
+ */
+export const CURRENT_SCHEMA_VERSION = 1;
 
 export function getDb(): Database.Database {
   if (!global._stellarDb) {
