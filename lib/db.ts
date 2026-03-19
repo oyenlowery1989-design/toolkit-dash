@@ -281,6 +281,10 @@ function initDb(): Database.Database {
       error           TEXT,
       ran_at          INTEGER NOT NULL
     );
+
+    CREATE INDEX IF NOT EXISTS idx_tiered_reward_tiers_config ON tiered_reward_tiers(config_id);
+    CREATE INDEX IF NOT EXISTS idx_tiered_reward_assets_tier ON tiered_reward_assets(tier_id);
+    CREATE INDEX IF NOT EXISTS idx_tiered_reward_run_log_config ON tiered_reward_run_log(config_id, ran_at DESC);
   `);
 
   // ── Auto-send migrations ──────────────────────────────────────────────────
