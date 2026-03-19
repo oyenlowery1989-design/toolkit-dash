@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
+import { isSupabaseOnly, requireAuth } from "@/lib/supabase-server";
 import { refreshTieredRewardsScheduler } from "@/lib/tiered-rewards/scheduler";
 
 type Row = Record<string, unknown>;
@@ -43,17 +44,33 @@ function validateNoOverlap(tiers: Array<{ minTokens: number; maxTokens?: number 
   return null;
 }
 
-export async function GET() {
+export async function GET(req: NextRequest) {
+  const auth = await requireAuth(req);
+  if (!auth.ok) return auth.response;
+
+  if (isSupabaseOnly()) {
+    // TODO: Supabase implementation
+    return NextResponse.json([]);
+  }
+
   const db = getDb();
   return NextResponse.json(sqliteGet(db));
 }
 
 export async function POST(req: NextRequest) {
+  const auth = await requireAuth(req);
+  if (!auth.ok) return auth.response;
+
   try {
     let body: Row;
     try { body = await req.json(); } catch { return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 }); }
 
     const { type, action, data } = body as { type: string; action: string; data: Row };
+
+    if (isSupabaseOnly()) {
+      // TODO: Supabase implementation
+      return NextResponse.json({ ok: true });
+    }
 
     const db = getDb();
 

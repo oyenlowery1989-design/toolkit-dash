@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
+import { requireAuth } from "@/lib/supabase-server";
 import { refreshTieredRewardsScheduler } from "@/lib/tiered-rewards/scheduler";
 import type { TieredRewardConfig } from "@/lib/tiered-rewards/types";
 
@@ -46,6 +47,9 @@ function loadConfig(db: ReturnType<typeof getDb>, configId: string): TieredRewar
 }
 
 export async function POST(req: NextRequest) {
+  const auth = await requireAuth(req);
+  if (!auth.ok) return auth.response;
+
   const body = await req.json() as { mode: string; configId?: string; config?: TieredRewardConfig };
 
   if (body.mode === "refresh-scheduler") {
