@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
+import { StrKey } from "stellar-sdk";
 import { getDb } from "@/lib/db";
+import { getSupabase, isSupabaseOnly, syncToSupabase, requireAuth } from "@/lib/supabase-server";
 
 const PRESEEDED = [
   {
@@ -10,7 +12,42 @@ const PRESEEDED = [
   },
 ];
 
-export async function GET() {
+function mapRow(r: Record<string, unknown>) {
+  return {
+    address: r.address,
+    name: r.name,
+    notes: r.notes ?? undefined,
+    addedAt: r.added_at,
+  };
+}
+
+export async function GET(req: NextRequest) {
+  const auth = await requireAuth(req);
+  if (!auth.ok) return auth.response;
+  const { userId } = auth;
+
+  if (isSupabaseOnly()) {
+    const sb = getSupabase()!;
+    let { data } = await sb
+      .from("known_intermediaries")
+      .select("*")
+      .eq("user_id", userId!)
+      .order("added_at", { ascending: false });
+    // Seed defaults on first use (per user)
+    if (!data || data.length === 0) {
+      await sb.from("known_intermediaries").upsert(
+        PRESEEDED.map((s) => ({ ...s, user_id: userId })),
+        { onConflict: "user_id,address" },
+      );
+      ({ data } = await sb
+        .from("known_intermediaries")
+        .select("*")
+        .eq("user_id", userId!)
+        .order("added_at", { ascending: false }));
+    }
+    return NextResponse.json((data ?? []).map(mapRow));
+  }
+
   const db = getDb();
   let rows = db
     .prepare("SELECT * FROM known_intermediaries ORDER BY added_at DESC")
@@ -28,32 +65,62 @@ export async function GET() {
       .all() as Record<string, unknown>[];
   }
 
-  return NextResponse.json(
-    rows.map((r) => ({
-      address: r.address,
-      name: r.name,
-      notes: r.notes ?? undefined,
-      addedAt: r.added_at,
-    })),
-  );
+  return NextResponse.json(rows.map(mapRow));
 }
 
 export async function POST(req: NextRequest) {
+  const auth = await requireAuth(req);
+  if (!auth.ok) return auth.response;
+  const { userId } = auth;
+
   const b = await req.json();
-  getDb()
-    .prepare(
-      `INSERT INTO known_intermediaries (address, name, notes, added_at)
-       VALUES (?, ?, ?, ?)
-       ON CONFLICT(address) DO UPDATE SET
-         name = excluded.name,
-         notes = excluded.notes`,
-    )
-    .run(b.address, b.name, b.notes ?? null, b.addedAt ?? Date.now());
+  if (!b.address || !StrKey.isValidEd25519PublicKey(b.address)) {
+    return NextResponse.json({ error: "Invalid Stellar address" }, { status: 400 });
+  }
+  const now = b.addedAt ?? Date.now();
+
+  if (!isSupabaseOnly()) {
+    getDb()
+      .prepare(
+        `INSERT INTO known_intermediaries (address, name, notes, added_at)
+         VALUES (?, ?, ?, ?)
+         ON CONFLICT(address) DO UPDATE SET
+           name = excluded.name,
+           notes = excluded.notes`,
+      )
+      .run(b.address, b.name, b.notes ?? null, now);
+  }
+
+  syncToSupabase(() =>
+    getSupabase()!.from("known_intermediaries").upsert(
+      {
+        user_id: userId,
+        address: b.address,
+        name: b.name,
+        notes: b.notes ?? null,
+        added_at: now,
+      },
+      { onConflict: "user_id,address" },
+    ),
+  );
+
   return NextResponse.json({ ok: true });
 }
 
 export async function DELETE(req: NextRequest) {
+  const auth = await requireAuth(req);
+  if (!auth.ok) return auth.response;
+  const { userId } = auth;
+
   const { key } = await req.json();
-  getDb().prepare("DELETE FROM known_intermediaries WHERE address = ?").run(key);
+
+  if (!isSupabaseOnly()) {
+    getDb().prepare("DELETE FROM known_intermediaries WHERE address = ?").run(key);
+  }
+
+  syncToSupabase(() =>
+    getSupabase()!.from("known_intermediaries").delete().eq("user_id", userId!).eq("address", key),
+  );
+
   return NextResponse.json({ ok: true });
 }

@@ -16,7 +16,8 @@ const csp = [
   // data: covers inline SVG icons (Lucide/Radix).
   "img-src 'self' data:",
   // Stellar Horizon endpoints and Friendbot (testnet/futurenet funding).
-  "connect-src 'self' https://horizon.stellar.org https://horizon-testnet.stellar.org https://horizon-futurenet.stellar.org https://friendbot.stellar.org https://friendbot-futurenet.stellar.org",
+  // Supabase auth/API (required when NEXT_PUBLIC_SUPABASE_URL is set).
+  `connect-src 'self' https://horizon.stellar.org https://horizon-testnet.stellar.org https://horizon-futurenet.stellar.org https://friendbot.stellar.org https://friendbot-futurenet.stellar.org${process.env.NEXT_PUBLIC_SUPABASE_URL ? ` ${process.env.NEXT_PUBLIC_SUPABASE_URL}` : ""}`,
   // Vanity worker is a bundled same-origin chunk via webpack 5 Worker URL transform.
   "worker-src 'self'",
   // Never allow this app to be embedded in a frame (clickjacking protection).
@@ -41,7 +42,7 @@ const securityHeaders = [
 const nextConfig: NextConfig = {
   reactStrictMode: true,
   // better-sqlite3 is a native Node.js module — must not be bundled by webpack.
-  serverExternalPackages: ["better-sqlite3"],
+  serverExternalPackages: ["better-sqlite3", "node-cron"],
   eslint: {
     ignoreDuringBuilds: false,
   },
@@ -59,10 +60,12 @@ const nextConfig: NextConfig = {
       },
     ],
   },
-  output: "standalone",
-  // Explicitly set the root so Next.js doesn't get confused by the parent
-  // lockfile at C:\Users\Windows\package-lock.json.
-  outputFileTracingRoot: require("path").join(__dirname, "../../"),
+  // standalone + custom tracing root only for local builds.
+  // On Vercel these cause path-doubling errors — Vercel manages its own output.
+  ...(!process.env.VERCEL && {
+    output: "standalone",
+    outputFileTracingRoot: require("path").join(__dirname, "../../"),
+  }),
   transpilePackages: [],
   async headers() {
     return [{ source: "/(.*)", headers: securityHeaders }];

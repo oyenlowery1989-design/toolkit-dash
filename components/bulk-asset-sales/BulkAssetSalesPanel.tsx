@@ -443,7 +443,7 @@ export function BulkAssetSalesPanel() {
           updateRow(i, { status: "done", result });
           // Auto-save to Saved Analyses on completion
           saveAnalysis({
-            name: `${assetCode.toUpperCase()} — ${new Date().toLocaleDateString()}`,
+            name: `${assetCode} — ${new Date().toLocaleDateString()}`,
             assetCode,
             issuer,
             distribAddresses: [distribAddress],

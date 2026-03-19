@@ -237,7 +237,7 @@ export function ChainDisplay({
       groupId = targetGroup.id;
     } else {
       groupId = createGroup({
-        name: `${assetCode.toUpperCase()} Asset`,
+        name: `${assetCode} Asset`,
         assetCode,
         issuer,
         network,
@@ -283,7 +283,7 @@ export function ChainDisplay({
             <div>
               <p className="text-xs text-muted-foreground mb-1">Group</p>
               <p className="text-sm font-medium">
-                {targetGroup?.name ?? `${assetCode.toUpperCase()} Asset`}
+                {targetGroup?.name ?? `${assetCode} Asset`}
                 {!targetGroup && (
                   <span className="ml-2 text-[10px] text-muted-foreground font-normal">
                     (will be created)

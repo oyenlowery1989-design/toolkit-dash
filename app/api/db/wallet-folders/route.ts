@@ -1,15 +1,36 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
+import { getSupabase, isSupabaseOnly, syncToSupabase, requireAuth } from "@/lib/supabase-server";
 
-export function GET() {
+function mapRow(r: { id: string; name: string; position: number }) {
+  return { id: r.id, name: r.name, position: r.position };
+}
+
+export async function GET(req: NextRequest) {
+  const auth = await requireAuth(req);
+  if (!auth.ok) return auth.response;
+  const { userId } = auth;
+
+  if (isSupabaseOnly()) {
+    const { data } = await getSupabase()!
+      .from("wallet_folders")
+      .select("id, name, position")
+      .eq("user_id", userId!)
+      .order("position", { ascending: true });
+    return NextResponse.json((data ?? []).map(mapRow));
+  }
   const db = getDb();
   const rows = db.prepare(
     "SELECT id, name, position FROM wallet_folders ORDER BY position ASC, name ASC"
   ).all() as { id: string; name: string; position: number }[];
-  return NextResponse.json(rows);
+  return NextResponse.json(rows.map(mapRow));
 }
 
 export async function POST(req: NextRequest) {
+  const auth = await requireAuth(req);
+  if (!auth.ok) return auth.response;
+  const { userId } = auth;
+
   let body: unknown;
   try {
     body = await req.json();
@@ -28,21 +49,36 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
   }
 
-  const trimmedName = name.trim();
+  const trimmedId = (id as string).trim();
+  const trimmedName = (name as string).trim();
 
-  try {
-    const db = getDb();
-    db.prepare(
-      "INSERT INTO wallet_folders (id, name, position) VALUES (?, ?, ?)"
-    ).run(id.trim(), trimmedName, position);
-  } catch {
-    return NextResponse.json({ error: "DB error" }, { status: 500 });
+  if (!isSupabaseOnly()) {
+    try {
+      getDb().prepare(
+        "INSERT INTO wallet_folders (id, name, position) VALUES (?, ?, ?)"
+      ).run(trimmedId, trimmedName, position);
+    } catch {
+      return NextResponse.json({ error: "DB error" }, { status: 500 });
+    }
   }
+
+  syncToSupabase(() =>
+    getSupabase()!.from("wallet_folders").upsert({
+      id: trimmedId,
+      user_id: userId,
+      name: trimmedName,
+      position: position as number,
+    }),
+  );
 
   return NextResponse.json({ ok: true });
 }
 
 export async function PATCH(req: NextRequest) {
+  const auth = await requireAuth(req);
+  if (!auth.ok) return auth.response;
+  const { userId } = auth;
+
   let body: unknown;
   try {
     body = await req.json();
@@ -59,17 +95,29 @@ export async function PATCH(req: NextRequest) {
     return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
   }
 
-  try {
-    const db = getDb();
-    db.prepare("UPDATE wallet_folders SET name = ? WHERE id = ?").run(name.trim(), id.trim());
-  } catch {
-    return NextResponse.json({ error: "DB error" }, { status: 500 });
+  const trimmedId = (id as string).trim();
+  const trimmedName = (name as string).trim();
+
+  if (!isSupabaseOnly()) {
+    try {
+      getDb().prepare("UPDATE wallet_folders SET name = ? WHERE id = ?").run(trimmedName, trimmedId);
+    } catch {
+      return NextResponse.json({ error: "DB error" }, { status: 500 });
+    }
   }
+
+  syncToSupabase(() =>
+    getSupabase()!.from("wallet_folders").update({ name: trimmedName }).eq("id", trimmedId).eq("user_id", userId!),
+  );
 
   return NextResponse.json({ ok: true });
 }
 
 export async function DELETE(req: NextRequest) {
+  const auth = await requireAuth(req);
+  if (!auth.ok) return auth.response;
+  const { userId } = auth;
+
   let body: unknown;
   try {
     body = await req.json();
@@ -77,22 +125,29 @@ export async function DELETE(req: NextRequest) {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
-  const { id } = body as { id?: unknown };
+  const { key } = body as { key?: unknown };
 
-  if (!id || typeof id !== "string" || !id.trim()) {
+  if (!key || typeof key !== "string" || !key.trim()) {
     return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
   }
 
-  try {
-    const db = getDb();
-    // Manually cascade since FK constraint can't be added via ALTER TABLE on existing DBs
-    db.transaction(() => {
-      db.prepare("DELETE FROM wallets WHERE folder_id = ?").run(id.trim());
-      db.prepare("DELETE FROM wallet_folders WHERE id = ?").run(id.trim());
-    })();
-  } catch {
-    return NextResponse.json({ error: "DB error" }, { status: 500 });
+  const trimmedId = (key as string).trim();
+
+  if (!isSupabaseOnly()) {
+    try {
+      getDb().transaction(() => {
+        getDb().prepare("DELETE FROM wallets WHERE folder_id = ?").run(trimmedId);
+        getDb().prepare("DELETE FROM wallet_folders WHERE id = ?").run(trimmedId);
+      })();
+    } catch {
+      return NextResponse.json({ error: "DB error" }, { status: 500 });
+    }
   }
+
+  // On Supabase, wallets FK cascades on delete (defined in schema)
+  syncToSupabase(() =>
+    getSupabase()!.from("wallet_folders").delete().eq("id", trimmedId).eq("user_id", userId!),
+  );
 
   return NextResponse.json({ ok: true });
 }

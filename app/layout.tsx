@@ -1,9 +1,12 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import AppLayout from "@/components/layout/app-layout";
+import { ErrorBoundary } from "@/components/layout/error-boundary";
 import { Inter, JetBrains_Mono } from "next/font/google";
 import { ThemeProvider } from "next-themes";
 import { Toaster } from "sonner";
+import { StartupSync } from "@/components/startup-sync";
+import { AuthInit } from "@/components/auth/auth-init";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -36,7 +39,11 @@ export default function RootLayout({
         className="bg-background font-sans antialiased"
       >
         <ThemeProvider attribute="class" defaultTheme="dark" enableSystem>
-          <AppLayout>{children}</AppLayout>
+          <AuthInit />
+          <StartupSync />
+          <ErrorBoundary label="Application error">
+            <AppLayout>{children}</AppLayout>
+          </ErrorBoundary>
           <Toaster
             position="bottom-right"
             toastOptions={{

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { createDbCache, dbPost, dbPatch, dbDelete } from "@/lib/db-client";
+import { createDbCache, dbPost, dbPatch, dbDelete, debounce } from "@/lib/db-client";
 import { purgeWalletsByFolder } from "./use-wallets-v2";
 
 export interface WalletFolder {
@@ -19,7 +19,7 @@ export function useWalletFolders() {
   useEffect(() => {
     const unsub = _cache.subscribe(() => rerender((n) => n + 1));
     _cache.load(ENDPOINT);
-    const onFocus = () => _cache.reload(ENDPOINT);
+    const onFocus = debounce(() => _cache.reload(ENDPOINT), 2000);
     window.addEventListener("focus", onFocus);
     return () => {
       unsub();

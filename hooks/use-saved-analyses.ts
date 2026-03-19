@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import type { AssetProceedsResult } from "@/lib/proceeds-investigator/types";
-import { createDbCache, dbPost, dbPatch, dbDelete } from "@/lib/db-client";
+import { createDbCache, dbPost, dbPatch, dbDelete, debounce } from "@/lib/db-client";
 
 export interface SavedAnalysis {
   id: string;
@@ -30,7 +30,7 @@ export function useSavedAnalyses() {
   useEffect(() => {
     const unsub = _cache.subscribe(() => rerender((n) => n + 1));
     _cache.load(ENDPOINT);
-    const onFocus = () => _cache.load(ENDPOINT);
+    const onFocus = debounce(() => _cache.reload(ENDPOINT), 2000);
     window.addEventListener("focus", onFocus);
     return () => {
       unsub();

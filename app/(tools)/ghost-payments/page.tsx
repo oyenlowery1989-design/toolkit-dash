@@ -8,9 +8,7 @@ export default function GhostPaymentsPage() {
       <div>
         <h1 className="text-3xl font-bold tracking-tight">Ghost Payments</h1>
         <p className="text-muted-foreground mt-2">
-          Send minimal XLM payments that leave a permanent on-chain proof.
-          Transactions succeed and are visible on Horizon and Stellar.Expert with
-          your memo attached. Use the minimum amount (0.0000001 XLM) to keep costs negligible.
+          Send real micro-payments as permanent on-chain proof of contact. Each transaction is publicly visible on Horizon and Stellar.Expert with your custom memo attached — useful for claim proofs, eligibility signals, and timestamped on-chain messaging.
         </p>
       </div>
 

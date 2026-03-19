@@ -33,6 +33,8 @@ import {
 } from "lucide-react";
 import { useSettings, resolveHorizonUrl } from "@/lib/settings";
 import { useSavedSearches } from "@/hooks/use-saved-searches";
+
+import { WalletSelect } from "@/components/ui/wallet-select";
 import type { Network } from "@/lib/settings";
 import {
   getErrorMessage,
@@ -422,6 +424,7 @@ export default function TransactionsPage() {
   const network = settings.network;
   const { upsert: upsertSearch } = useSavedSearches();
 
+
   const [operations, setOperations] = useState<OpDisplay[]>([]);
   const [lastPagingToken, setLastPagingToken] = useState<string | null>(null);
   const [hasMore, setHasMore] = useState(false);
@@ -556,11 +559,10 @@ export default function TransactionsPage() {
     <div className="space-y-6">
       <div>
         <h1 className="text-3xl font-bold tracking-tight">
-          Account Operations
+          Transaction Explorer
         </h1>
         <p className="text-muted-foreground mt-2">
-          Browse operations for any Stellar account — payments, offers,
-          trustlines, and more.
+          Browse every operation on any Stellar account — payments, offers, trustlines, account admin, and more. Filter by category and export to CSV.
         </p>
       </div>
 
@@ -575,7 +577,13 @@ export default function TransactionsPage() {
         <CardContent className="space-y-4">
           <div className="grid gap-4 md:grid-cols-[1fr_auto]">
             <div className="space-y-2">
-              <Label htmlFor="account-id">Account ID</Label>
+              <div className="flex items-center justify-between">
+                <Label htmlFor="account-id">Account ID</Label>
+                <WalletSelect
+                  currentValue={accountId}
+                  onPick={(w) => setAccountId(w.publicKey)}
+                />
+              </div>
               <Input
                 id="account-id"
                 placeholder="G…"

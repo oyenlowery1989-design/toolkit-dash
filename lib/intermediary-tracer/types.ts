@@ -53,7 +53,24 @@ export interface KnownCreator {
   address: string;
   name: string;
   notes?: string;
+  parentAddress?: string;
   addedAt: number;
+}
+
+/** A child account discovered as belonging to a known creator */
+export interface CreatorChild {
+  id: string;
+  creatorAddress: string;
+  childAddress: string;
+  network: string;
+  viaIntermediary?: string;
+  createdOnChain?: string;       // ISO timestamp
+  confidence?: number;
+  startingBalance?: number;
+  homeDomain?: string;
+  issuedAssets?: { code: string; supply: string }[];
+  distributedAssets?: { code: string; issuer: string }[];
+  discoveredAt: number;
 }
 
 /** One account created for a known creator via an intermediary */

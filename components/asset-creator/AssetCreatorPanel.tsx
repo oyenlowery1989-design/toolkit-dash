@@ -75,7 +75,7 @@ export function AssetCreatorPanel() {
     );
     if (allSucceeded && form.assetCode && form.issuerPublicKey) {
       const gId = createGroup({
-        name: `${form.assetCode.toUpperCase()} Asset`,
+        name: `${form.assetCode} Asset`,
         assetCode: form.assetCode,
         issuer: form.issuerPublicKey,
         network: form.network,

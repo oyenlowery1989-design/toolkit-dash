@@ -24,6 +24,7 @@ import {
 import { ShortAddress } from "@/components/asset-lookup";
 import { useSettings, resolveHorizonUrl } from "@/lib/settings";
 import { getErrorMessage } from "@/lib/stellar-helpers";
+import { useActiveWallet } from "@/hooks/use-active-wallet";
 import { traceAccountOrigin } from "@/lib/intermediary-tracer/fetchers";
 import { getIntermediariesMap } from "@/hooks/use-known-intermediaries";
 import { useSavedSearches } from "@/hooks/use-saved-searches";
@@ -37,7 +38,7 @@ function TraceLogPanel({
   running,
 }: {
   logs: string[];
-  logBottomRef: React.RefObject<HTMLDivElement>;
+  logBottomRef: React.RefObject<HTMLDivElement | null>;
   running: boolean;
 }) {
   const [open, setOpen] = useState(true);
@@ -98,6 +99,7 @@ const TOLERANCE_OPTIONS = [
 
 export function TraceAccountTab() {
   const { settings } = useSettings();
+  const { activeWallet } = useActiveWallet();
   const { upsert: upsertHistory } = useSavedSearches();
   const { history: recentSearches, upsert: upsertRecent, remove: removeRecent } = useIntermediaryHistory();
   const abortRef = useRef<AbortController | null>(null);
@@ -216,7 +218,18 @@ export function TraceAccountTab() {
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="space-y-2">
-            <Label htmlFor="trace-addr">Stellar Address</Label>
+            <div className="flex items-center justify-between">
+              <Label htmlFor="trace-addr">Stellar Address</Label>
+              {activeWallet && (
+                <button
+                  type="button"
+                  onClick={() => { setAddress(activeWallet.publicKey); setError(null); setResult(null); }}
+                  className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  Use my wallet
+                </button>
+              )}
+            </div>
             <Input
               id="trace-addr"
               value={address}

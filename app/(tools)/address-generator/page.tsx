@@ -690,7 +690,7 @@ export default function AddressPatternGeneratorPage() {
       <div>
         <h1 className="text-3xl font-bold tracking-tight">Address Generator</h1>
         <p className="text-muted-foreground mt-2">
-          Generate Stellar keypairs that match a specific pattern.
+          Generate vanity Stellar keypairs — find addresses that start with, end with, or contain a custom pattern. Uses parallel Web Workers for speed.
         </p>
       </div>
 

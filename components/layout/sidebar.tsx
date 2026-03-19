@@ -7,8 +7,9 @@ import { Menu, X, Rocket, Sun, Moon, Database, UserSearch, GitFork, ChevronDown,
 import { useState } from "react";
 import { useTheme } from "next-themes";
 import { Button } from "@/components/ui/button";
-import { useSettings, NETWORK_LABELS } from "@/lib/settings";
-import { menuItems, isSeparator } from "@/lib/navigation";
+import { useSettings, NETWORK_LABELS, type Network } from "@/lib/settings";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { menuItems, isSeparator, isSection } from "@/lib/navigation";
 import { useSavedSearches } from "@/hooks/use-saved-searches";
 
 export function Sidebar() {
@@ -16,7 +17,15 @@ export function Sidebar() {
   const router = useRouter();
   const [isOpen, setIsOpen] = useState(false);
   const [recentOpen, setRecentOpen] = useState(true);
-  const { settings } = useSettings();
+  const { settings, updateSettings } = useSettings();
+
+  const VISIBLE_NETWORKS: Network[] = ["public", "testnet"];
+  const NETWORK_DOTS: Record<Network, string> = {
+    public: "bg-blue-500",
+    testnet: "bg-yellow-500",
+    futurenet: "bg-purple-500",
+    local: "bg-gray-400",
+  };
   const { theme, setTheme } = useTheme();
   const { history: savedSearches, remove: removeSearch } = useSavedSearches();
 
@@ -74,6 +83,16 @@ export function Sidebar() {
                       key={`sep-${index}`}
                       className="my-2 border-t border-border"
                     />
+                  );
+                }
+                if (isSection(entry)) {
+                  return (
+                    <div
+                      key={`sec-${index}`}
+                      className="pt-4 pb-1 px-4 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/60"
+                    >
+                      {entry.section}
+                    </div>
                   );
                 }
                 const isActive = pathname === entry.href;
@@ -178,13 +197,31 @@ export function Sidebar() {
           <div className="p-4 border-t border-border">
             <div className="bg-accent/50 rounded-lg p-4">
               <div className="flex items-center justify-between">
-                <div>
+                <div className="flex flex-col gap-1.5">
                   <p className="text-xs text-muted-foreground">
                     Stellar Toolkit v1.0.0
                   </p>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    {NETWORK_LABELS[settings.network]}
-                  </p>
+                  <Select
+                    value={settings.network}
+                    onValueChange={(v) => updateSettings({ network: v as Network })}
+                  >
+                    <SelectTrigger className="h-7 w-36 text-xs border-0 bg-transparent p-0 shadow-none focus:ring-0 gap-1.5">
+                      <span className="flex items-center gap-1.5">
+                        <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${NETWORK_DOTS[settings.network]}`} />
+                        <SelectValue />
+                      </span>
+                    </SelectTrigger>
+                    <SelectContent side="top">
+                      {VISIBLE_NETWORKS.map((n) => (
+                        <SelectItem key={n} value={n} className="text-xs">
+                          <span className="flex items-center gap-2">
+                            <span className={`h-1.5 w-1.5 rounded-full ${NETWORK_DOTS[n]}`} />
+                            {NETWORK_LABELS[n]}
+                          </span>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
                 <div className="flex items-center gap-1">
                   <Button

@@ -7,15 +7,7 @@ import { Eye, EyeOff, RefreshCw, Wallet } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { useWalletsV2 } from "@/hooks/use-wallets-v2";
-import { shortAddr } from "@/lib/format";
+import { WalletSelect } from "@/components/ui/wallet-select";
 import type { AssetCreatorForm } from "@/lib/asset-creator/types";
 
 interface Props {
@@ -49,16 +41,10 @@ function KeypairField({
   onGenerate: () => void;
 }) {
   const [showSecret, setShowSecret] = useState(false);
-  const { wallets } = useWalletsV2();
 
   const handleSecretChange = (raw: string) => {
     const trimmed = raw.trim();
     onSecretChange(trimmed, derivePublicKey(trimmed));
-  };
-
-  const pickWallet = (walletId: string) => {
-    const w = wallets.find((w) => w.id === walletId);
-    if (w) onSecretChange(w.secretKey, w.publicKey);
   };
 
   return (
@@ -66,24 +52,11 @@ function KeypairField({
       <div className="flex items-center justify-between">
         <Label className="text-sm font-semibold">{label}</Label>
         <div className="flex items-center gap-1">
-          {wallets.length > 0 && (
-            <Select onValueChange={pickWallet} value="">
-              <SelectTrigger className="h-7 text-xs w-auto gap-1 border-0 shadow-none hover:bg-accent px-2">
-                <Wallet className="h-3 w-3" />
-                <SelectValue placeholder="Use wallet" />
-              </SelectTrigger>
-              <SelectContent align="end">
-                {wallets.map((w) => (
-                  <SelectItem key={w.id} value={w.id}>
-                    <span className="font-medium">{w.name}</span>
-                    <span className="ml-2 font-mono text-muted-foreground">
-                      {shortAddr(w.publicKey)}
-                    </span>
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          )}
+          <WalletSelect
+            currentValue={secretKey}
+            onPick={(w) => onSecretChange(w.secretKey, w.publicKey)}
+            triggerClassName="h-7"
+          />
           <Button type="button" variant="ghost" size="sm" onClick={onGenerate} className="h-7 text-xs gap-1">
             <RefreshCw className="h-3 w-3" /> Generate new
           </Button>

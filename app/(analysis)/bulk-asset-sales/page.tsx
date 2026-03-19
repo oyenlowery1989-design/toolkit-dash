@@ -8,8 +8,7 @@ export default function BulkAssetSalesPage() {
       <div>
         <h1 className="text-3xl font-bold tracking-tight">Bulk Asset Sales</h1>
         <p className="text-muted-foreground mt-2">
-          Analyze all-time XLM sales and top destinations for multiple assets at
-          once. The distribution address is inferred automatically.
+          Scan XLM proceeds for multiple assets in one run. Distributors are inferred automatically — results stream live and are auto-saved to Saved Analyses.
         </p>
       </div>
 

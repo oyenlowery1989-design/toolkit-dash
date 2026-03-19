@@ -33,6 +33,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useAssetGroups } from "@/hooks/use-asset-groups";
+import { AlertTriangle, Info } from "lucide-react";
 import { useSettings } from "@/lib/settings";
 import { ROLE_LABELS, ROLE_COLORS } from "@/lib/asset-groups/types";
 import type {
@@ -71,11 +72,20 @@ function AddMemberForm({
   const [label, setLabel] = useState(prefill?.label ?? "");
   const [notes, setNotes] = useState("");
   const [homeDomain, setHomeDomain] = useState(prefill?.homeDomain ?? "");
+  const { groups } = useAssetGroups();
+
+  const trimmed = address.trim();
+  const sameGroupDuplicate = trimmed
+    ? groups.find((g) => g.id === groupId)?.members.find((m) => m.address === trimmed)
+    : undefined;
+  const otherGroupMatches = trimmed
+    ? groups.filter((g) => g.id !== groupId && g.members.some((m) => m.address === trimmed))
+    : [];
 
   function handleSubmit() {
-    if (!address.trim()) return;
+    if (!trimmed || sameGroupDuplicate) return;
     onAdd(groupId, {
-      address: address.trim(),
+      address: trimmed,
       role,
       label: label.trim() || undefined,
       notes: notes.trim() || undefined,
@@ -98,6 +108,28 @@ function AddMemberForm({
             placeholder="G…"
             className="font-mono text-xs"
           />
+          {sameGroupDuplicate && (
+            <div className="flex items-center gap-1.5 rounded-md border border-amber-500/40 bg-amber-500/10 px-2.5 py-1.5 text-xs text-amber-600 dark:text-amber-400">
+              <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+              <span>Already in this group as <strong>{ROLE_LABELS[sameGroupDuplicate.role]}</strong>{sameGroupDuplicate.label ? ` (${sameGroupDuplicate.label})` : ""}. Remove it first to re-add.</span>
+            </div>
+          )}
+          {otherGroupMatches.length > 0 && (
+            <div className="flex items-start gap-1.5 rounded-md border border-blue-500/30 bg-blue-500/10 px-2.5 py-1.5 text-xs text-blue-600 dark:text-blue-400">
+              <Info className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+              <span>
+                Also in: {otherGroupMatches.map((g, i) => {
+                  const m = g.members.find((m) => m.address === trimmed)!;
+                  return (
+                    <span key={g.id}>
+                      {i > 0 && ", "}
+                      <strong>{g.name}</strong> as {ROLE_LABELS[m.role]}{m.label ? ` (${m.label})` : ""}
+                    </span>
+                  );
+                })}
+              </span>
+            </div>
+          )}
         </div>
         <div className="space-y-1">
           <Label className="text-xs">Role</Label>
@@ -146,7 +178,7 @@ function AddMemberForm({
         </div>
       </div>
       <div className="flex gap-2">
-        <Button size="sm" onClick={handleSubmit} disabled={!address.trim()}>
+        <Button size="sm" onClick={handleSubmit} disabled={!address.trim() || !!sameGroupDuplicate}>
           <Check className="h-3.5 w-3.5 mr-1" /> Add
         </Button>
         <Button size="sm" variant="ghost" onClick={onCancel}>
@@ -638,7 +670,7 @@ function CreateGroupForm({
             <Label className="text-xs">Asset Code</Label>
             <Input
               value={assetCode}
-              onChange={(e) => setAssetCode(e.target.value.toUpperCase())}
+              onChange={(e) => setAssetCode(e.target.value)}
               placeholder="XYZ"
             />
           </div>
@@ -748,7 +780,7 @@ export default function GroupsPage() {
     }
 
     const createName = paramAssetCode
-      ? `${paramAssetCode.toUpperCase()} Asset`
+      ? `${paramAssetCode} Asset`
       : trimmedName;
 
     const id = createGroup({

@@ -140,7 +140,7 @@ export function AssetXlmProceedsTab() {
   const tryParseAssetPair = (raw: string): boolean => {
     const match = raw.match(/([A-Za-z0-9]{1,12}):([A-Z2-7]{56})/);
     if (!match) return false;
-    const code = match[1].toUpperCase();
+    const code = match[1];
     const addr = match[2];
     if (!StrKey.isValidEd25519PublicKey(addr)) return false;
     setAssetCode(code);
@@ -189,7 +189,7 @@ export function AssetXlmProceedsTab() {
     try {
       const candidates = await inferDistribLite(
         resolveHorizonUrl(settings),
-        assetCode.trim().toUpperCase(),
+        assetCode.trim(),
         issuer.trim(),
         inferAbortRef.current.signal,
       );
@@ -230,7 +230,7 @@ export function AssetXlmProceedsTab() {
       try {
         const candidates = await inferDistribLite(
           resolveHorizonUrl(settings),
-          assetCode.trim().toUpperCase(),
+          assetCode.trim(),
           issuer.trim(),
           inferAbortRef.current.signal,
         );
@@ -283,7 +283,7 @@ export function AssetXlmProceedsTab() {
 
       const summary = await fetchAssetXlmProceeds(
         horizonBase,
-        assetCode.trim().toUpperCase(),
+        assetCode.trim(),
         issuer.trim(),
         resolvedAccounts,
         abortRef.current.signal,
@@ -299,7 +299,7 @@ export function AssetXlmProceedsTab() {
 
       if (abortRef.current.signal.aborted) return;
       setResult(summary);
-      const trimCode = assetCode.trim().toUpperCase();
+      const trimCode = assetCode.trim();
       const trimIssuer = issuer.trim();
       upsertHistory({ assetCode: trimCode, issuer: trimIssuer, network: settings.network, accountsText: resolvedAccounts.join("\n") });
       upsertSearch({
@@ -320,7 +320,7 @@ export function AssetXlmProceedsTab() {
 
       setProgressText("Completed.");
       notifyIfHidden(
-        `Scan complete — ${assetCode.trim().toUpperCase()}`,
+        `Scan complete — ${assetCode.trim()}`,
         `${formatXlm(summary.totalXlmProceeds)} XLM proceeds · ${formatXlm(summary.totalAssetSold)} sold`,
       );
     } catch (e) {
@@ -366,14 +366,14 @@ export function AssetXlmProceedsTab() {
     const addresses = parseManualAddresses(accountsText);
     const distributionAddress = addresses[0];
     savePreset({
-      assetCode: assetCode.trim().toUpperCase(),
+      assetCode: assetCode.trim(),
       issuer: issuer.trim(),
       distributionAddress,
       network: settings.network,
       accountsText,
     });
     setSelectedPresetId(
-      `${assetCode.trim().toUpperCase()}:${issuer.trim()}:${distributionAddress}`,
+      `${assetCode.trim()}:${issuer.trim()}:${distributionAddress}`,
     );
     setError(null);
   };
@@ -445,7 +445,7 @@ export function AssetXlmProceedsTab() {
             {assetCode.trim() &&
               StrKey.isValidEd25519PublicKey(issuer.trim()) && (
                 <a
-                  href={`https://lobstr.co/trade/${assetCode.trim().toUpperCase()}:${issuer.trim()}`}
+                  href={`https://lobstr.co/trade/${assetCode.trim()}:${issuer.trim()}`}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="ml-auto inline-flex items-center gap-1 text-xs font-normal text-muted-foreground border border-border rounded px-2 py-0.5 hover:text-foreground hover:border-foreground/30 transition-colors"
@@ -516,7 +516,7 @@ export function AssetXlmProceedsTab() {
                 id="asset-code"
                 placeholder="USDC / paste CODE:ISSUER / URL"
                 value={assetCode}
-                onChange={(e) => setAssetCode(e.target.value.toUpperCase())}
+                onChange={(e) => setAssetCode(e.target.value)}
                 onPaste={handleAssetCodePaste}
               />
             </div>

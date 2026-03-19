@@ -33,6 +33,8 @@ import { getErrorMessage } from "@/lib/stellar-helpers";
 import { findCreatorAccounts } from "@/lib/intermediary-tracer/fetchers";
 import { useKnownCreators } from "@/hooks/use-known-creators";
 import { useKnownIntermediaries } from "@/hooks/use-known-intermediaries";
+import { useCreatorChildren } from "@/hooks/use-creator-children";
+import type { CreatorChild } from "@/lib/intermediary-tracer/types";
 import { useRouter } from "next/navigation";
 import { LogPanel } from "./LogPanel";
 import type { CreatorAccountResult } from "@/lib/intermediary-tracer/types";
@@ -157,11 +159,14 @@ export function TraceCreatorTab() {
   const [tolerancePct, setTolerancePct] = useState("2");
   const [fromDays, setFromDays] = useState("0.042");
 
+  const { saveChildren, forCreator } = useCreatorChildren();
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [results, setResults] = useState<CreatorAccountResult[]>([]);
   const [logs, setLogs] = useState<string[]>([]);
   const [hasStarted, setHasStarted] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saveMsg, setSaveMsg] = useState<string | null>(null);
 
   const creatorValid = StrKey.isValidEd25519PublicKey(creatorAddr.trim());
   const intermediaryValid = StrKey.isValidEd25519PublicKey(intermediaryAddr.trim());
@@ -211,6 +216,33 @@ export function TraceCreatorTab() {
 
   const resolvedCreatorName = knownCreators.find((c) => c.address === creatorAddr.trim())?.name;
   const resolvedIntermediaryName = knownIntermediaries.find((c) => c.address === intermediaryAddr.trim())?.name;
+
+  const handleSaveAll = async () => {
+    if (results.length === 0 || !creatorAddr.trim()) return;
+    setSaving(true);
+    setSaveMsg(null);
+    try {
+      const children: CreatorChild[] = results.map((r) => ({
+        id: crypto.randomUUID(),
+        creatorAddress: creatorAddr.trim(),
+        childAddress: r.createdAccount,
+        network: settings.network,
+        viaIntermediary: intermediaryAddr.trim() || undefined,
+        createdOnChain: r.createdAt,
+        confidence: r.confidence,
+        startingBalance: r.startingBalance,
+        homeDomain: r.homeDomain,
+        discoveredAt: Date.now(),
+      }));
+      const { added } = await saveChildren(children);
+      const already = children.length - added;
+      setSaveMsg(already > 0 ? `${added} new · ${already} already known` : `${added} saved`);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const existingCount = forCreator(creatorAddr.trim(), settings.network).length;
 
   return (
     <div className="space-y-6">
@@ -332,10 +364,29 @@ export function TraceCreatorTab() {
             <Button variant="outline" onClick={() => abortRef.current?.abort()}>Stop</Button>
           )}
           {results.length > 0 && !running && (
-            <Button variant="outline" onClick={() => exportCsv(results, creatorAddr, intermediaryAddr)}>
-              <Download className="mr-2 h-4 w-4" />
-              Export CSV
-            </Button>
+            <>
+              <Button variant="outline" onClick={() => exportCsv(results, creatorAddr, intermediaryAddr)}>
+                <Download className="mr-2 h-4 w-4" />
+                Export CSV
+              </Button>
+              <Button
+                variant="outline"
+                onClick={handleSaveAll}
+                disabled={saving || !creatorAddr.trim()}
+                className="border-primary/40 text-primary hover:bg-primary/10"
+              >
+                {saving ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  <UserCheck className="mr-2 h-4 w-4" />
+                )}
+                Save {results.length} to Creator
+                {existingCount > 0 && <span className="ml-1 text-muted-foreground">({existingCount} known)</span>}
+              </Button>
+              {saveMsg && (
+                <span className="text-xs text-green-500">{saveMsg}</span>
+              )}
+            </>
           )}
         </CardFooter>
       </Card>
@@ -359,9 +410,9 @@ export function TraceCreatorTab() {
             </span>
           </div>
           <div className="space-y-2">
-            {results.map((r) => (
+            {results.map((r, i) => (
               <ResultRow
-                key={r.createdAccount + r.createdAt}
+                key={`${r.createdAccount}:${r.createdAt}:${i}`}
                 result={r}
                 network={settings.network}
               />

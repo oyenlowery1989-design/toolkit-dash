@@ -6,11 +6,7 @@ import type {
   TraceResult,
 } from "./types";
 import { scoreCandidate } from "./matcher";
-
-/** Display a Stellar address as GA42…PFBI */
-function shortAddr(addr: string): string {
-  return `${addr.slice(0, 4)}…${addr.slice(-4)}`;
-}
+import { shortAddr } from "@/lib/format";
 
 // ---------------------------------------------------------------------------
 // HTTP helper with retry / backoff (mirrors proceeds-investigator pattern)
@@ -591,6 +587,7 @@ export async function findCreatorAccounts(
   );
 
   const results: CreatorAccountResult[] = [];
+  const seenAccounts = new Set<string>(); // dedup — same account can match multiple payments
 
   for (let i = 0; i < payments.length; i++) {
     if (signal.aborted) {
@@ -651,6 +648,8 @@ export async function findCreatorAccounts(
 
         if (amountDiffPct > tolerancePct) continue;
         if (confidence < 20) continue;
+        if (seenAccounts.has(op.account as string)) continue; // skip duplicate
+        seenAccounts.add(op.account as string);
 
         const accountData = await fetchJson(
           `${base}/accounts/${encodeURIComponent(op.account as string)}`,

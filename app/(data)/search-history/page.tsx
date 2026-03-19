@@ -7,23 +7,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useSavedSearches } from "@/hooks/use-saved-searches";
 import { formatXlm } from "@/lib/format";
-
-function timeAgo(timestamp: number): string {
-  const diff = Date.now() - timestamp;
-  const minutes = Math.floor(diff / 60_000);
-  if (minutes < 1) return "just now";
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  if (days < 30) return `${days}d ago`;
-  return new Date(timestamp).toLocaleDateString();
-}
-
-const NETWORK_LABELS: Record<string, string> = {
-  public: "Mainnet",
-  testnet: "Testnet",
-};
+import { timeAgo } from "@/lib/stellar-helpers";
+import { NETWORK_LABELS } from "@/lib/settings";
 
 export default function SearchHistoryPage() {
   const router = useRouter();
@@ -58,7 +43,7 @@ export default function SearchHistoryPage() {
           Search History
         </h1>
         <p className="text-sm text-muted-foreground mt-1">
-          {history.length} saved searches
+          Recent address and asset lookups — click any entry to jump back in, or run a quick Asset Sales analysis from history.
         </p>
       </div>
 
@@ -134,7 +119,7 @@ export default function SearchHistoryPage() {
                         </span>
                         {entry.network && (
                           <span className="text-xs px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
-                            {NETWORK_LABELS[entry.network] ?? entry.network}
+                            {NETWORK_LABELS[entry.network as keyof typeof NETWORK_LABELS] ?? entry.network}
                           </span>
                         )}
                       </div>

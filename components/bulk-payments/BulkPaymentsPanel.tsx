@@ -5,6 +5,15 @@ import { useSearchParams } from "next/navigation";
 import { Asset, StrKey, Keypair } from "stellar-sdk";
 import { useAssetGroups } from "@/hooks/use-asset-groups";
 import { useActiveWallet } from "@/hooks/use-active-wallet";
+import { WalletSelect } from "@/components/ui/wallet-select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { useAutoSaveSigningKey } from "@/hooks/use-auto-save-signing-key";
 import {
   Card,
   CardContent,
@@ -49,7 +58,9 @@ import type { BatchResult, AssetSource } from "@/lib/bulk-payments/types";
 import { useBulkRecipients } from "@/hooks/use-bulk-recipients";
 import { useBulkRunHistory } from "@/hooks/use-bulk-run-history";
 import { useHorizonServer } from "@/hooks/use-horizon-server";
-import { formatXlm, parseAddresses as parseValidAddresses } from "@/lib/format";
+import { formatXlm, parseAddresses as parseValidAddresses, shortAddr } from "@/lib/format";
+import { toast } from "sonner";
+import { notifyIfHidden } from "@/lib/notifications";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -175,9 +186,12 @@ export function BulkPaymentsPanel() {
 
   const { activeWallet } = useActiveWallet();
 
+  const { autoSave: autoSaveSigningKey } = useAutoSaveSigningKey();
+
   // --- Form state ---
   const [memo, setMemo] = useState("");
   const [secretKey, setSecretKey] = useState("");
+
   const effectiveSecretKey = activeWallet?.secretKey ?? secretKey;
   const [batchSize, setBatchSize] = useState(100);
   const [feeMultiplier, setFeeMultiplier] = useState(1);
@@ -269,7 +283,7 @@ export function BulkPaymentsPanel() {
 
   function getPaymentAsset(): Asset {
     if (assetType === "custom") {
-      const code = customAssetCode.trim().toUpperCase();
+      const code = customAssetCode.trim();
       const issuer = customAssetIssuer.trim();
       if (code && StrKey.isValidEd25519PublicKey(issuer)) {
         return new Asset(code, issuer);
@@ -306,7 +320,7 @@ export function BulkPaymentsPanel() {
     if (!amount.trim() || isNaN(parseFloat(amount)) || parseFloat(amount) <= 0)
       return "Payment amount must be a positive number.";
     if (assetType === "custom") {
-      const code = customAssetCode.trim().toUpperCase();
+      const code = customAssetCode.trim();
       const issuer = customAssetIssuer.trim();
       if (!code) return "Custom asset code is required.";
       if (!StrKey.isValidEd25519PublicKey(issuer)) return "Custom asset issuer is not a valid address.";
@@ -526,12 +540,28 @@ export function BulkPaymentsPanel() {
       }
     }
 
+    // Auto-save manual signing key if not already in a group
+    if (!activeWallet) {
+      try {
+        const { Keypair } = await import("stellar-sdk");
+        const pub = Keypair.fromSecret(effectiveSecretKey.trim()).publicKey();
+        autoSaveSigningKey(pub);
+      } catch { /* invalid key — skip */ }
+    }
+
     setPhase("done");
 
     // Save run summary
     const successCount = finalResults.filter((r) => r.status === "success").reduce((s, r) => s + r.count, 0);
     const failedCount = finalResults.filter((r) => r.status === "failed").reduce((s, r) => s + r.count, 0);
     addRun({ network, memo: memo.trim(), recipientCount: recipients.length, successCount, failedCount });
+
+    if (failedCount > 0) {
+      toast.error(`Batch failed \u2014 ${failedCount} payments failed`);
+    } else {
+      toast.success("Batch sent successfully");
+    }
+    notifyIfHidden("Bulk Payments Complete", `${recipients.length} payments sent`);
   }
 
   function handleAbort() {
@@ -690,7 +720,7 @@ export function BulkPaymentsPanel() {
             <div className="rounded-md border border-border p-3 text-sm space-y-1">
               <p className="text-xs text-muted-foreground">Payment</p>
               <p className="font-mono font-semibold">
-                {amount} {isNative ? "XLM" : `${customAssetCode.trim().toUpperCase()} (${customAssetIssuer.trim().slice(0, 4)}…${customAssetIssuer.trim().slice(-4)})`}
+                {amount} {isNative ? "XLM" : `${customAssetCode.trim()} (${customAssetIssuer.trim().slice(0, 4)}…${customAssetIssuer.trim().slice(-4)})`}
               </p>
             </div>
 
@@ -915,7 +945,7 @@ export function BulkPaymentsPanel() {
                   <Input
                     placeholder="CODE"
                     value={customAssetCode}
-                    onChange={(e) => setCustomAssetCode(e.target.value.toUpperCase())}
+                    onChange={(e) => setCustomAssetCode(e.target.value)}
                     className="w-24 font-mono text-xs"
                   />
                   <Input
@@ -931,39 +961,50 @@ export function BulkPaymentsPanel() {
 
           <div className="grid gap-4 sm:grid-cols-[1fr_auto_auto_auto]">
             <div className="space-y-2">
-              <Label htmlFor="secret-key">Signing Secret Key</Label>
               {activeWallet ? (
-                <div className="flex items-center gap-2 rounded-md border border-green-500/40 bg-green-500/5 px-3 py-2 text-sm">
-                  <Wallet className="h-4 w-4 shrink-0 text-green-500" />
-                  <span className="flex-1 truncate font-medium">{activeWallet.name}</span>
-                  <span className="font-mono text-xs text-muted-foreground">
-                    {activeWallet.publicKey.slice(0, 4)}…{activeWallet.publicKey.slice(-4)}
-                  </span>
-                </div>
+                <>
+                  <Label htmlFor="secret-key">Signing Secret Key</Label>
+                  <div className="flex items-center gap-2 rounded-md border border-green-500/40 bg-green-500/5 px-3 py-2 text-sm">
+                    <Wallet className="h-4 w-4 shrink-0 text-green-500" />
+                    <span className="flex-1 truncate font-medium">{activeWallet.name}</span>
+                    <span className="font-mono text-xs text-muted-foreground">
+                      {shortAddr(activeWallet.publicKey)}
+                    </span>
+                  </div>
+                </>
               ) : (
-                <div className="relative">
-                  <Input
-                    id="secret-key"
-                    type={showSecret ? "text" : "password"}
-                    placeholder="S…"
-                    value={secretKey}
-                    onChange={(e) => setSecretKey(e.target.value)}
-                    className="font-mono text-xs pr-10"
-                    autoComplete="off"
-                  />
-                  <button
-                    type="button"
-                    className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                    onClick={() => setShowSecret((v) => !v)}
-                    aria-label="Toggle secret key visibility"
-                  >
-                    {showSecret ? (
-                      <EyeOff className="h-4 w-4" />
-                    ) : (
-                      <Eye className="h-4 w-4" />
-                    )}
-                  </button>
-                </div>
+                <>
+                  <div className="flex items-center justify-between">
+                    <Label htmlFor="secret-key">Signing Secret Key</Label>
+                    <WalletSelect
+                      currentValue={secretKey}
+                      onPick={(w) => setSecretKey(w.secretKey)}
+                    />
+                  </div>
+                  <div className="relative">
+                    <Input
+                      id="secret-key"
+                      type={showSecret ? "text" : "password"}
+                      placeholder="S…"
+                      value={secretKey}
+                      onChange={(e) => setSecretKey(e.target.value)}
+                      className="font-mono text-xs pr-10"
+                      autoComplete="off"
+                    />
+                    <button
+                      type="button"
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                      onClick={() => setShowSecret((v) => !v)}
+                      aria-label="Toggle secret key visibility"
+                    >
+                      {showSecret ? (
+                        <EyeOff className="h-4 w-4" />
+                      ) : (
+                        <Eye className="h-4 w-4" />
+                      )}
+                    </button>
+                  </div>
+                </>
               )}
             </div>
             <div className="space-y-2">

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { createDbCache, dbPost, dbDelete } from "@/lib/db-client";
+import { createDbCache, dbPost, dbDelete, debounce } from "@/lib/db-client";
 import type { Network } from "@/lib/settings";
 
 export interface SavedRecipientList {
@@ -24,7 +24,7 @@ export function useBulkRecipients() {
   useEffect(() => {
     const unsub = _cache.subscribe(() => rerender((n) => n + 1));
     _cache.load(ENDPOINT);
-    const onFocus = () => _cache.reload(ENDPOINT);
+    const onFocus = debounce(() => _cache.reload(ENDPOINT), 2000);
     window.addEventListener("focus", onFocus);
     return () => {
       unsub();

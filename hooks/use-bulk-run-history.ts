@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { createDbCache, dbPost } from "@/lib/db-client";
+import { createDbCache, dbPost, debounce } from "@/lib/db-client";
 import type { Network } from "@/lib/settings";
 
 export interface BulkRunSummary {
@@ -23,7 +23,12 @@ export function useBulkRunHistory() {
   useEffect(() => {
     const unsub = _cache.subscribe(() => rerender((n) => n + 1));
     _cache.load(ENDPOINT);
-    return unsub;
+    const onFocus = debounce(() => _cache.reload(ENDPOINT), 2000);
+    window.addEventListener("focus", onFocus);
+    return () => {
+      unsub();
+      window.removeEventListener("focus", onFocus);
+    };
   }, []);
 
   const runs = _cache.get();

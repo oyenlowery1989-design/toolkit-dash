@@ -6,28 +6,32 @@
  * Extract a user-friendly error message from an unknown thrown value.
  */
 export function getErrorMessage(err: unknown): string {
-  if (err instanceof Error) return err.message;
   if (typeof err === "string") return err;
+  if (err instanceof Error) {
+    // Horizon 400 errors carry result_codes in the response body
+    const codes = (err as any)?.response?.data?.extras?.result_codes;
+    if (codes) {
+      const tx: string = codes.transaction ?? "";
+      const ops: string[] = codes.operations ?? [];
+      const parts: string[] = [];
+      if (tx) parts.push(`tx: ${tx}`);
+      if (ops.length) parts.push(`ops: ${ops.join(", ")}`);
+      if (parts.length) return `${err.message} — ${parts.join(" | ")}`;
+    }
+    return err.message;
+  }
   return "An unexpected error occurred.";
 }
 
 /**
  * Format an ISO-8601 timestamp as a relative "time ago" string.
  */
-export function timeAgo(isoDate: string): string {
-  const diff = Math.floor((Date.now() - new Date(isoDate).getTime()) / 1000);
+export function timeAgo(isoDate: string | number): string {
+  const diff = Math.floor((Date.now() - (typeof isoDate === "number" ? isoDate : new Date(isoDate).getTime())) / 1000);
   if (diff < 60) return `${diff}s ago`;
   if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
   if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
   return `${Math.floor(diff / 86400)}d ago`;
-}
-
-/**
- * Truncate a Stellar key or hash for display: `GABCD…WXYZ`.
- */
-export function shortKey(key: string, head = 8, tail = 6): string {
-  if (key.length <= head + tail + 1) return key;
-  return `${key.slice(0, head)}…${key.slice(-tail)}`;
 }
 
 /**

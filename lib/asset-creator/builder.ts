@@ -42,7 +42,6 @@ export const StandardStrategy: CreationStrategy = {
 
       if (stepId === "fund-accounts") {
         // Check which accounts already exist — only create missing ones
-        const fundingKp = Keypair.fromSecret(form.resolvedFundingSecretKey);
         const [issuerExists, distribExists] = await Promise.all([
           accountExists(server, form.issuerPublicKey),
           accountExists(server, form.distributorPublicKey),
@@ -52,6 +51,7 @@ export const StandardStrategy: CreationStrategy = {
         // If both already exist, nothing to do
         if (issuerExists && distribExists) continue;
 
+        const fundingKp = Keypair.fromSecret(form.resolvedFundingSecretKey);
         const fundingAccount = await server.loadAccount(fundingKp.publicKey());
         if (signal.aborted) throw new DOMException("Aborted", "AbortError");
 

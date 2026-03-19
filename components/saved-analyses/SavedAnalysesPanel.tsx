@@ -32,27 +32,8 @@ import { useSavedAnalyses } from "@/hooks/use-saved-analyses";
 import type { SavedAnalysis } from "@/hooks/use-saved-analyses";
 import { ShortAddress } from "@/components/asset-lookup";
 import { formatXlm } from "@/lib/format";
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-function timeAgo(timestamp: number): string {
-  const diff = Date.now() - timestamp;
-  const minutes = Math.floor(diff / 60_000);
-  if (minutes < 1) return "just now";
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  if (days < 30) return `${days}d ago`;
-  return new Date(timestamp).toLocaleDateString();
-}
-
-const NETWORK_LABELS: Record<string, string> = {
-  public: "Mainnet",
-  testnet: "Testnet",
-};
+import { timeAgo } from "@/lib/stellar-helpers";
+import { NETWORK_LABELS } from "@/lib/settings";
 
 // ---------------------------------------------------------------------------
 // DestinationsTable — used in card expanded view
@@ -195,7 +176,7 @@ function AnalysisCard({ analysis }: { analysis: SavedAnalysis }) {
           <p className="text-xs text-muted-foreground mt-0.5">
             <span className="font-mono">{analysis.assetCode}</span>
             {" · "}
-            {NETWORK_LABELS[analysis.network] ?? analysis.network}
+            {NETWORK_LABELS[analysis.network as keyof typeof NETWORK_LABELS] ?? analysis.network}
             {" · "}
             {timeAgo(analysis.timestamp)}
           </p>
@@ -403,7 +384,7 @@ function TableView({ analyses }: { analyses: SavedAnalysis[] }) {
           {sorted.map((a) => (
             <tr key={a.id} className="border-b last:border-0 hover:bg-muted/20 transition-colors">
               <td className="px-3 py-2 font-mono font-semibold text-xs whitespace-nowrap">
-                {a.assetCode.toUpperCase()}
+                {a.assetCode}
               </td>
               <td className="px-3 py-2 text-xs">
                 {a.distribAddresses[0] ? (
@@ -413,7 +394,7 @@ function TableView({ analyses }: { analyses: SavedAnalysis[] }) {
                 )}
               </td>
               <td className="px-3 py-2 text-xs text-muted-foreground whitespace-nowrap">
-                {NETWORK_LABELS[a.network] ?? a.network}
+                {NETWORK_LABELS[a.network as keyof typeof NETWORK_LABELS] ?? a.network}
               </td>
               <td className="px-3 py-2 text-right tabular-nums font-mono text-xs">
                 {formatXlm(a.result.totalXlmProceeds)}
@@ -483,7 +464,7 @@ function AggregateStats({ analyses }: { analyses: SavedAnalysis[] }) {
         { label: "Total Outgoing XLM", value: formatXlm(totalOutgoing) + " XLM" },
         { label: "Unique Assets", value: String(uniqueAssets) },
         { label: "Unique Issuers", value: String(uniqueIssuers) },
-        { label: "Top Earner", value: top.assetCode.toUpperCase(), sub: formatXlm(top.result.totalXlmProceeds) + " XLM" },
+        { label: "Top Earner", value: top.assetCode, sub: formatXlm(top.result.totalXlmProceeds) + " XLM" },
       ].map(({ label, value, sub }) => (
         <Card key={label}>
           <CardHeader className="py-3 px-4">
@@ -625,10 +606,7 @@ export function SavedAnalysesPanel() {
             Saved Analyses
           </h1>
           <p className="text-sm text-muted-foreground mt-1">
-            {analyses.length} saved {analyses.length === 1 ? "analysis" : "analyses"}
-            {analyses.length > 0 && (
-              <> · auto-saved from Bulk Asset Sales scans</>
-            )}
+            Auto-saved XLM proceeds analyses. Sort, filter, tag, and compare results across assets — including cross-asset destination tracking to reveal shared banks and exchanges.
           </p>
         </div>
         {analyses.length > 0 && (

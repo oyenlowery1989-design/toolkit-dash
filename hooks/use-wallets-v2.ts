@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { createDbCache, dbPost, dbPatch, dbDelete } from "@/lib/db-client";
+import { createDbCache, dbPost, dbPatch, dbDelete, debounce } from "@/lib/db-client";
 
 export interface WalletEntry {
   id: string;
@@ -26,7 +26,7 @@ export function useWalletsV2() {
   useEffect(() => {
     const unsub = _cache.subscribe(() => rerender((n) => n + 1));
     _cache.load(ENDPOINT);
-    const onFocus = () => _cache.reload(ENDPOINT);
+    const onFocus = debounce(() => _cache.reload(ENDPOINT), 2000);
     window.addEventListener("focus", onFocus);
     return () => {
       unsub();
@@ -53,10 +53,15 @@ export function useWalletsV2() {
     dbPatch(ENDPOINT, { id, name });
   }, []);
 
+  const moveWallet = useCallback((id: string, folderId: string) => {
+    _cache.set(_cache.get().map((w) => (w.id === id ? { ...w, folderId } : w)));
+    dbPatch(ENDPOINT, { id, folderId });
+  }, []);
+
   const removeWallet = useCallback((id: string) => {
     _cache.set(_cache.get().filter((w) => w.id !== id));
     dbDelete(ENDPOINT, id);
   }, []);
 
-  return { wallets, addWallet, renameWallet, removeWallet };
+  return { wallets, addWallet, renameWallet, moveWallet, removeWallet };
 }

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useWalletsV2 } from "./use-wallets-v2";
+import { authHeaders, waitForAuth } from "@/lib/db-client";
 
 const LS_KEY = "active_wallet_id";
 const STATE_ENDPOINT = "/api/db/app-state";
@@ -24,7 +25,7 @@ export function setActiveWalletId(id: string | null) {
   // Persist to DB (fire and forget); empty string = clear
   fetch(STATE_ENDPOINT, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify({ key: LS_KEY, value: id ?? "" }),
   }).catch(() => {});
   notifyAll();
@@ -52,7 +53,7 @@ export function useActiveWallet() {
 
     // Reconcile with DB (handles case where localStorage was cleared)
     if (!_dbLoaded) {
-      fetch(STATE_ENDPOINT)
+      waitForAuth().then(() => fetch(STATE_ENDPOINT, { headers: authHeaders() }))
         .then((r) => r.json())
         .then((state: Record<string, string>) => {
           _dbLoaded = true;

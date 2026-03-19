@@ -73,8 +73,33 @@ export function Step4Result({ results, groupId, network, onRetry, onStartOver }:
         ))}
       </div>
 
-      {/* Group link */}
-      {groupId && (
+      {/* Group link + next-step actions */}
+      {allSuccess && (
+        <div className="flex flex-wrap gap-2">
+          {groupId && (
+            <a
+              href={`/groups?open=${groupId}`}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              <Button variant="default" className="bg-green-600 hover:bg-green-700 gap-2">
+                Open Group → <ExternalLink className="h-4 w-4" />
+              </Button>
+            </a>
+          )}
+          <a href="/asset-manager">
+            <Button variant="outline" className="gap-2">
+              Manage asset (Token Control) →
+            </Button>
+          </a>
+          <a href="/soroban">
+            <Button variant="outline" className="gap-2">
+              Wrap with Soroban →
+            </Button>
+          </a>
+        </div>
+      )}
+      {!allSuccess && groupId && (
         <a
           href={`/groups?open=${groupId}`}
           target="_blank"

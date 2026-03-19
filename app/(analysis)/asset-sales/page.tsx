@@ -8,8 +8,7 @@ export default function ProceedsInvestigatorPage() {
       <div>
         <h1 className="text-3xl font-bold tracking-tight">Asset Sales</h1>
         <p className="text-muted-foreground mt-2">
-          Analyze custom asset sales into XLM with all-time proceeds and
-          distribution insights.
+          Calculate all-time XLM proceeds from a single asset's distributor — see total sold, total outgoing, on-hand balance, and top destination addresses.
         </p>
       </div>
 

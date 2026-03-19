@@ -14,7 +14,7 @@
 - Stellar asset codes are **case-sensitive on the ledger** — `WhipSim` ≠ `WHIPSIM`.
 - **Never force-uppercase asset codes** from URL params or user input — preserve original case.
 - All asset code comparisons in fetchers must use `.toUpperCase()` on both sides for case-insensitive matching.
-- Display can uppercase for UI consistency, but the actual code sent to Horizon must match on-chain case.
+- **Never force-uppercase in display** — always render the code exactly as stored/entered (e.g. `wUSDC`, not `WUSDC`).
 
 ## Stellar / Horizon API Rules
 - **ALWAYS** use `/accounts/{address}/operations` — NEVER `/operations?account={address}`.
@@ -60,13 +60,19 @@
 | `bulk-payments` | Working — secret key field replaced by active wallet indicator when wallet connected |
 | `ghost-payments` | Working — secret key field replaced by active wallet indicator when wallet connected |
 | `asset-creator` | Working — 4-step wizard: accounts, asset config, preflight, execution; auto-saves to Asset Groups |
+| `asset-manager` | Working — shared asset input panel + Asset Flags tab + Holders tab (trustlines + sell offers combined) |
+| `account-funder` | Working — bulk keypair generator + createAccount funder; Direct/Sponsored/Close tabs; save to Asset Group |
+| `trustline-manager` | Working — Single tab (add/remove/drain) + Bulk tab (N assets × M accounts matrix); auto-delete toggle |
+| `soroban` | Working — SAC deploy wizard for wrapping existing classic assets |
 | `dex-orderbook` | Working — bid/ask tables, stats cards, depth chart (recharts) |
 | `wallet-manager` | Working — folders + wallets + connect/disconnect; header switcher added |
-| `payments` | Working — single payment builder with address book integration |
+| `my-wallet` | Working — connected wallet overview: XLM/Available/Reserved/30d-net-flow cards, reserve breakdown popup, home domain (editable inline), thresholds+sequence, account flags (AUTH_REQUIRED etc), inflation dest, signers, claimable balances (claim), assets+trustlines (DEX/Send/Remove icons), open offers, payment history (in/out), recent txs, merge account (danger zone), quick actions — all sections collapsible via `Section` component |
+| `payments` | Working — Send (multi-leg, Max, remove-trustline + offer cancel), Path (strict-receive + strict-send), Claimable Balance, Fee Bump; ShortAddress on all destinations |
 | `address-book` | Working, signed off |
 | `saved-analyses` | Working, signed off |
 | `settings` | Working — network/Horizon URL + theme config |
 | `transactions` | Working — transaction explorer/viewer |
+| `auto-send-groups` | Working — scheduled XLM distribution groups; see full section below |
 
 ## DB-Backed Hooks (SQLite)
 - All critical user data hooks use `createDbCache<T>()` from `lib/db-client.ts`.
@@ -199,6 +205,17 @@ Full `autoCreate` URL param spec:
 - Reuses: `runBulkPayments` runner, `estimateCost`, `fetchAllHolders`, `useAssetGroups`, `useBulkRecipients`
 - Do NOT add a ghost toggle to Bulk Payments — keep modules separate for clarity
 
+## Payments
+- Route: `app/(tools)/payments/page.tsx` — single file (~1800 lines), no separate components
+- **4 tabs**: Send, Path, Claimable Balance, Fee Bump
+- **Send tab**: multi-leg (asset + amount + destination per leg); wallet picker per leg; address book; Max button (XLM reserves 1 XLM); ShortAddress badge on valid destinations
+- **Remove Trustline** (Send tab, non-native only): checkbox per leg; on check → auto-fills max balance; amber warning if amount < full balance; pre-flight fetches open offers via `server.offers().forAccount().limit(200).call()`, adds `manageSellOffer(amount=0)` cancel ops for any offer where asset is selling side; op order per leg: [cancel ops…] → payment → changeTrust(limit=0); `legCancelCountsRef` tracks cancel counts for correct op-index error mapping
+- **Path tab**: strict-receive (exact dest, max send) and strict-send (exact send, min receive) toggle; calls `strictReceivePaths` / `strictSendPaths`; builds `pathPaymentStrictReceive` / `pathPaymentStrictSend`
+- **Claimable Balance tab**: asset picker + amount + N claimants (all unconditional); `Operation.createClaimableBalance`
+- **Fee Bump tab**: paste inner XDR → live parse (op count + fee); `TransactionBuilder.buildFeeBumpTransaction(pubKey, baseFee, innerTx, networkPassphrase)`; Memo/Fee cards hidden on this tab
+- **Trustline recovery**: detects op_no_trust with correct legOpIndex mapping (accounts for cancel + changeTrust ops); prompts "Add trustline & retry"; shows live status during retry
+- **Error messages**: `getErrorMessage` in `lib/stellar-helpers.ts` extracts `result_codes` from Horizon 400 → "tx: tx_failed | ops: op_underfunded"
+
 ## Asset Creator
 - Route: `app/(tools)/asset-creator/page.tsx`
 - Panel: `components/asset-creator/AssetCreatorPanel.tsx`
@@ -216,6 +233,57 @@ Full `autoCreate` URL param spec:
 - **Execution progress**: live per-step checklist shown during execution (onStep wired, not a no-op)
 - **fund-accounts smart**: checks each account individually before creating — handles pre-existing accounts gracefully
 - **Mainnet safety**: funding wallet balance checked in preflight; missing funding key blocks execute with clear message
+
+## Asset Manager
+- Route: `app/(tools)/asset-manager/page.tsx`
+- Panel: `components/asset-manager/AssetManagerPanel.tsx`
+- Tabs: `FlagsTab.tsx`, `HoldersTab.tsx`
+- Lib: `lib/asset-manager/index.ts`
+- **Shared state**: `assetCode`, `issuer`, `secretKey` are owned by `AssetManagerPanel` and passed as props to all tabs — entered once, persisted while switching tabs, cleared by the X button (shown when `isReady`)
+- **`isReady`** = `assetCode.trim().length > 0 && StrKey.isValidEd25519PublicKey(issuer.trim())` — tabs only render when ready
+- **Group picker**: loads `assetCode + issuer` from any saved asset group; shown when `groups.length > 0`
+- **Wallet**: shows green wallet indicator when `activeWallet` is set; `secretKey = activeWallet?.secretKey ?? manualSecretKey.trim()`
+- **FlagsTab** — `{ issuer, secretKey }` props; Load/Reload flags, toggle AUTH_REQUIRED / AUTH_REVOCABLE / AUTH_CLAWBACK_ENABLED / AUTH_IMMUTABLE with single TX each
+- **HoldersTab** — `{ assetCode, issuer, secretKey }` props; runs `fetchTrustlineHolders` + `fetchSellOffers` concurrently via `Promise.allSettled`; merges into unified `HolderRow`; filter pills (All / Sellers / Frozen); action buttons (🔓 Unfreeze / – Restrict / 🔒 Freeze); amber highlight on rows with sell offers; Export CSV
+- `TrustlineAction`: `"authorize" | "freeze" | "maintain_only"` — maps to `set_trust_line_flags` flags
+- `AUTH_FLAGS`: REQUIRED=1, REVOCABLE=2, IMMUTABLE=4, CLAWBACK_ENABLED=8
+
+## Account Funder
+- Route: `app/(tools)/account-funder/page.tsx`
+- Panel: `components/account-funder/AccountFunderPanel.tsx`
+- **Purpose**: Generate N new Stellar keypairs and fund them in one step from a parent account
+- **Parent**: existing saved wallet (picker) OR freshly generated keypair
+- **Children**: N new accounts created by the parent via `createAccount`
+- **Three creation modes**: Direct (parent pays reserve), Sponsored (begin/end sponsoring), Close (close sponsorship)
+- **Network**: from `useSettings()` — `resolveNetworkPassphrase(settings.network)` (NOT the whole `settings` object)
+- Save parent + all children to one Asset Group on completion
+- Keys generated client-side in browser
+
+## Trustline Manager
+- Route: `app/(tools)/trustline-manager/page.tsx`
+- Panel: `components/trustline-manager/TrustlineManagerPanel.tsx`
+- Tabs: `SingleTrustlineTab.tsx`, `BulkTrustlineTab.tsx`
+- Lib: `lib/trustline-manager/index.ts`
+- **Single tab**: add or remove one trustline at a time; drain-before-remove (sends balance to destination then removes); auto-populate drain destination from active wallet
+- **Bulk tab**: N assets × M accounts — progress grid; auto-delete toggle; drain option with destination; static warning note about offers
+- **Offer detection**: in remove mode, `fetchAccountOffersForAsset` checks both selling AND buying sides (debounced 900ms) — both block trustline removal with `op_line_full`
+- **Offer cancel**: amber panel shows offer table (ID, selling, buying, amount, price); manual "Cancel N offers" button + auto-cancel in `handleSubmit`
+- `cancelOffersBatch`: uses `manageSellOffer amount=0` with correct asset fields from `AccountOffer._rawSelling/_rawBuying`; batches 100 ops/tx
+- `drainAndRemoveTrustline`: custom assets send balance + `change_trust limit=0` in one tx; XLM uses `accountMerge`
+- `MAX_TRUST_LIMIT = "922337203685.4775807"`
+- **`AccountOffer` type**: `{ id, sellingLabel, buyingLabel, amount, price, _rawSelling, _rawBuying }` — raw fields: `{ type, code?, issuer? }` for reconstructing Asset objects
+
+## Soroban Contracts
+- Route: `app/(tools)/soroban/page.tsx`
+- Panel: `components/soroban/SorobanPanel.tsx`
+- Lib: `lib/soroban/sac.ts`
+- **Purpose**: Wrap an existing classic Stellar asset with a Stellar Asset Contract (SAC) — does NOT create a new asset
+- `computeSacAddress(assetCode, issuer, network)` — deterministic, no network call; uses `Asset.contractId(networkPassphrase)`
+- `checkSacDeployed(contractId, network, signal?)` — queries Soroban RPC `getLedgerEntries` for contract instance key
+- `deploySac(options)` — `invokeHostFunction` tx with `HostFunctionTypeCreateContract` + `contractIdPreimageFromAsset`; simulate → assemble → sign → submit → poll 30×2s
+- `SOROBAN_RPC_URLS` constants for public/testnet/futurenet; `resolveRpcUrl(network, localRpcUrl?)` helper
+- Contract ID shown instantly (deterministic); deploy button requires wallet or secret key
+- SAC vs classic: SAC has Soroban token interface (`balance`, `transfer`, `approve`) — but most wallets (Lobstr, Solar) still show the underlying classic asset balance, not the SAC balance; users transacting via DEX/Horizon see classic asset as usual
 
 ## Intermediary Tracer — Tab Status
 | Tab | Status |
@@ -241,8 +309,78 @@ Full `autoCreate` URL param spec:
 - Old `/api/db/wallets` route removed — only `wallets-v2` is active; `hooks/use-wallets.ts` is a re-export shim (still referenced by `app/page.tsx`)
 - `shortAddr()` canonical location: `lib/format.ts` — import from there, do not define inline in components
 
+## My Wallet Page
+- Route: `app/(tools)/my-wallet/page.tsx` — all UI in one file, no separate components
+- **`Section` component** (defined inline in the file): collapsible card wrapper with chevron toggle, badge, and optional `right` slot (for external links, etc.)
+- **Always use `Section` for any new card-style panel** in this page — never use raw `<div className="rounded-xl border...">` with a manual header
+- `defaultOpen` prop: `true` for primary data (XLM, assets), `false` for secondary (offers, txs, quick actions, signers)
+- Claimable balances: can only be **claimed**, not deleted — recipients have no cancel action on Stellar protocol level
+
 ## Shared Utilities
 - `lib/format.ts` — `formatXlm()`, `parseAddresses()`, `shortAddr()` (4+4 addr format)
 - `lib/db-client.ts` — `createDbCache<T>()`, `dbPost/dbPatch/dbDelete` (all log errors to console now, not silent swallow)
 - `lib/address-resolver.ts` — `resolveAddress()` pure function
+
+## Auto-Send Groups
+- Route: `app/(tools)/auto-send-groups/page.tsx`
+- Panel: `components/auto-send-groups/AutoSendGroupsPanel.tsx` (~1500+ lines, all UI in one file)
+- Lib: `lib/auto-send/types.ts`, `runner.ts`, `scheduler.ts`
+- Hook: `hooks/use-auto-send-groups.ts` — DB-backed cache; exposes `isLoaded` for loading gate
+- API routes:
+  - `/api/db/auto-send-groups` — CRUD for groups + destinations
+  - `/api/auto-send/run` — manual run, dry-run (preview), test run, refresh-scheduler
+  - `/api/auto-send/history` — last 200 run log entries; `?totals=1` returns per-destination lifetime aggregates
+  - `/api/auto-send/balance` — live XLM balance for a group's wallet via Horizon
+  - `/api/auto-send/stats` — panel-level aggregate stats
+  - `/api/auto-send/scheduler-status` — returns `{ serverless: boolean }` to warn when on Vercel
+
+### Persistence — Dual-Mode (Supabase + SQLite)
+- **Deployed (Vercel)**: `isSupabaseOnly()` returns true → all routes use Supabase. Vercel serverless has ephemeral SQLite (read-only bundle), so Supabase is mandatory for persistence.
+- **Local dev**: SQLite only (`stellar-toolkit.db`); Supabase not required.
+- All 4 auto-send API routes handle both modes: `/api/db/auto-send-groups`, `/api/auto-send/run`, `/api/auto-send/history`, `/api/auto-send/stats`
+- Supabase tables have `user_id` column for multi-user isolation; SQLite tables do not (single-user local tool)
+- Destination upsert pattern: always SELECT existing id by `(group_id, destination)` first, then upsert with that id — avoids UNIQUE constraint collision when re-adding same address with new UUID
+- `isSupabaseOnly()` is true when `DB_PROVIDER=supabase` OR `VERCEL` env is set + Supabase is configured
+
+### DB Tables
+- `auto_send_groups`: `id, name, network, secret_key, interval_minutes, enabled, batch_send, batch_memo, min_reserve, min_sender_threshold, preview_only, last_failure_at, created_at`
+- `auto_send_destinations`: `id, group_id, destination, percentage, is_remainder, is_paused, label, memo, min_threshold, max_cap, position`
+- `auto_send_run_log`: `id, group_id, wallet_address, destination, amount_sent, status, error, ran_at, tx_hash`
+- Supabase versions of all 3 tables also have `user_id TEXT NOT NULL`
+
+### Scheduler
+- `lib/auto-send/scheduler.ts` — node-cron singleton; started from `instrumentation.ts` on server boot
+- `global._autoSendStarted` + `global._autoSendTasks` — singleton guards; survive HMR
+- `startScheduler()` called from `instrumentation.ts` (nodejs runtime only, skipped on Vercel)
+- `refreshScheduler()` called after group create (if interval set), enable toggle, interval change, or delete
+- `minutesToCronExpression(minutes)` — `*/N * * * *` for <60m, `0 */N * * *` for hours
+- Intervals: 1m, 15m, 30m, 1h, 3h, 6h, 12h, 24h (Manual = no cron)
+- **CRITICAL**: `createGroup` MUST call `refreshScheduler` if `intervalMinutes` is set — otherwise scheduler never picks up new groups
+
+### Runner (`lib/auto-send/runner.ts`)
+- `runGroup(group)` — executes the group; batch or separate mode
+- `previewGroup(group)` — calculates amounts without sending; returns `GroupPreview`
+- `calcAmounts(spendable, destinations)` — two-pass: fixed-% first (excluding paused), then remainder gets leftover + any surplus from maxCap clamps
+- `skipReason(spendable, amount, minThreshold, paused)` — returns skip reason string or undefined
+- `extractError(err)` — extracts real Horizon result_codes from SDK 400 errors
+- `FEE_BUDGET = 1.0` XLM — deducted from spendable in BOTH `runGroup` AND `previewGroup` (must stay in sync)
+- `DEFAULT_MIN_RESERVE = 10.0` XLM — kept in wallet, not spent
+- Separate mode stops on first failure (`aborted` flag) — remaining destinations logged as `"Aborted — earlier payment failed"`
+- `previewOnly` groups: scheduler calls `previewGroup` instead of `runGroup`, logs with status `"preview"`
+
+### Key Design Decisions
+- **Fee budget flat 1 XLM** (not actual fee × N) — conservative safety buffer; simplifies calculation
+- **Stop on first failure in separate mode** — prevents imbalanced distributions that would repeat every run
+- **Max cap surplus redistributed to remainder** — if fixed-% dest is capped below calc'd amount, surplus goes to REST destination
+- **previewGroup and runGroup MUST use identical spendable formula** — any change to one must be mirrored in the other
+- **Run result persists across card collapse/expand** — stored in module-level `Map<string, GroupRunResult>`, not component state
+- **`createGroup` always disabled by default on duplicate** — copy starts with `enabled: false`
+- **Stranded XLM warning** shown when: `destCount > 0 && !hasRemainder && !overBudget && totalPct < 100`
+- **Loading gate**: panel renders spinner until `isLoaded` (from `_cache.isLoaded()`) is true
+
+### Status Badges (collapsed header)
+- Green `✓ sent` — last run had `sentCount > 0`
+- Red `✗ failed` — last run had `failedCount > 0`
+- Yellow `~ skipped` — all skipped, nothing sent or failed
+- `lastFailureAt` (group field) — set by scheduler on failure, cleared on full success; shows red banner in expanded card
 

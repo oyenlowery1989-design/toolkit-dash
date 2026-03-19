@@ -2,10 +2,19 @@
 
 import { useRef, useState, useCallback, useEffect } from "react";
 import { useSearchParams } from "next/navigation";
-import { Asset, StrKey, Keypair } from "stellar-sdk";
+import { Asset, StrKey, Keypair, TransactionBuilder, Operation, Memo } from "stellar-sdk";
 import { Ghost } from "lucide-react";
 import { useAssetGroups } from "@/hooks/use-asset-groups";
 import { useActiveWallet } from "@/hooks/use-active-wallet";
+import { WalletSelect, WalletAppendSelect } from "@/components/ui/wallet-select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { useAutoSaveSigningKey } from "@/hooks/use-auto-save-signing-key";
 import {
   Card,
   CardContent,
@@ -34,7 +43,7 @@ import {
   X,
   XCircle,
 } from "lucide-react";
-import { useSettings, type Network } from "@/lib/settings";
+import { useSettings, resolveNetworkPassphrase, type Network } from "@/lib/settings";
 import { getErrorMessage } from "@/lib/stellar-helpers";
 import { ShortAddress } from "@/components/asset-lookup";
 import { downloadCSV } from "@/lib/csv-export";
@@ -44,7 +53,9 @@ import { runBulkPayments } from "@/lib/bulk-payments/runner";
 import type { BatchResult, AssetSource } from "@/lib/bulk-payments/types";
 import { useBulkRecipients } from "@/hooks/use-bulk-recipients";
 import { useHorizonServer } from "@/hooks/use-horizon-server";
-import { formatXlm, parseAddresses as parseValidAddresses } from "@/lib/format";
+import { formatXlm, parseAddresses as parseValidAddresses, shortAddr } from "@/lib/format";
+import { toast } from "sonner";
+import { notifyIfHidden } from "@/lib/notifications";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -68,7 +79,7 @@ function parseAssetPairs(text: string): { assetCode: string; issuer: string }[] 
     if (!trimmed) continue;
     const match = trimmed.match(/([A-Za-z0-9]{1,12}):([A-Z2-7]{56})/);
     if (!match) continue;
-    const assetCode = match[1].toUpperCase();
+    const assetCode = match[1];
     const issuer = match[2];
     if (!StrKey.isValidEd25519PublicKey(issuer)) continue;
     const key = `${assetCode}:${issuer}`;
@@ -91,7 +102,9 @@ function explorerTxUrl(network: Network, hash: string): string {
 // Ghost mode types
 // ---------------------------------------------------------------------------
 
-type GhostMode = "no_trust" | "underfunded";
+type GhostMode = "no_trust" | "underfunded" | "trustline_touch";
+
+const MAX_TRUST_LIMIT = "922337203685.4775807";
 
 interface GhostModeInfo {
   id: GhostMode;
@@ -126,6 +139,18 @@ const GHOST_MODES: GhostModeInfo[] = [
     errorCode: "op_underfunded",
     worksFor: "Existing addresses only (native XLM)",
   },
+  {
+    id: "trustline_touch",
+    label: "Trustline Touch",
+    tagline: "change_trust — on-chain proof, transaction succeeds",
+    description:
+      "Each sender submits a change_trust(asset, MAX_LIMIT) transaction with your memo. " +
+      "The transaction SUCCEEDS and is permanently visible on Horizon and Stellar.Expert. " +
+      "No balance changes — this is a no-op if the trustline already exists at max limit. " +
+      "Proves the sender signed and submitted a transaction at a specific time with your memo.",
+    errorCode: "tx_success",
+    worksFor: "Sender accounts only (no recipients needed)",
+  },
 ];
 
 // ---------------------------------------------------------------------------
@@ -134,13 +159,14 @@ const GHOST_MODES: GhostModeInfo[] = [
 
 function GhostBanner({ mode }: { mode: GhostMode }) {
   const info = GHOST_MODES.find((m) => m.id === mode)!;
+  const isTrustline = mode === "trustline_touch";
   return (
-    <div className="rounded-md bg-orange-500/10 border border-orange-500/40 p-4 flex items-start gap-3">
-      <Ghost className="h-5 w-5 text-orange-500 shrink-0 mt-0.5" />
+    <div className={`rounded-md p-4 flex items-start gap-3 ${isTrustline ? "bg-blue-500/10 border border-blue-500/40" : "bg-orange-500/10 border border-orange-500/40"}`}>
+      <Ghost className={`h-5 w-5 shrink-0 mt-0.5 ${isTrustline ? "text-blue-500" : "text-orange-500"}`} />
       <div className="space-y-1">
-        <p className="text-sm font-semibold text-orange-500">
-          Ghost Payment Mode —{" "}
-          <span className="font-mono text-orange-400 text-xs">{info.errorCode}</span>
+        <p className={`text-sm font-semibold ${isTrustline ? "text-blue-500" : "text-orange-500"}`}>
+          {isTrustline ? "Trustline Touch Mode" : "Ghost Payment Mode"} —{" "}
+          <span className={`font-mono text-xs ${isTrustline ? "text-blue-400" : "text-orange-400"}`}>{info.errorCode}</span>
         </p>
         <p className="text-xs text-muted-foreground">{info.description}</p>
       </div>
@@ -215,6 +241,7 @@ function BatchRow({
 // ---------------------------------------------------------------------------
 
 type Phase = "configure" | "preview" | "sending" | "done";
+type SenderMode = "single" | "round-robin" | "all-to-all" | "rotate";
 
 export function GhostPaymentsPanel() {
   const searchParams = useSearchParams();
@@ -222,10 +249,15 @@ export function GhostPaymentsPanel() {
 
   const { activeWallet } = useActiveWallet();
 
+  const { autoSave: autoSaveSigningKey } = useAutoSaveSigningKey();
+
   // --- Form state ---
   const [memo, setMemo] = useState("");
   const [secretKey, setSecretKey] = useState("");
+
   const effectiveSecretKey = activeWallet?.secretKey ?? secretKey;
+  const [senderMode, setSenderMode] = useState<SenderMode>("single");
+  const [multipleKeysText, setMultipleKeysText] = useState("");
   const [batchSize, setBatchSize] = useState(100);
   const [feeMultiplier, setFeeMultiplier] = useState(1);
   const [showSecret, setShowSecret] = useState(false);
@@ -255,6 +287,8 @@ export function GhostPaymentsPanel() {
   const [ghostMode, setGhostMode] = useState<GhostMode>("no_trust");
   // For underfunded mode: computed amount that exceeds balance, set at preview time
   const [underfundedAmount, setUnderfundedAmount] = useState<string | null>(null);
+  const [repeatTimes, setRepeatTimes] = useState(1);
+  const [currentRound, setCurrentRound] = useState<number>(0);
 
   // Auto-fill ghost asset (GHOST:SENDER_ADDRESS) when secret key is entered.
   // Only in no_trust mode. Recipients have no trust line → op_no_trust → fails on-chain.
@@ -275,6 +309,11 @@ export function GhostPaymentsPanel() {
     if (ghostMode === "underfunded") {
       setAssetType("xlm");
       setUnderfundedAmount(null);
+    } else if (ghostMode === "trustline_touch") {
+      // Clear auto-filled GHOST asset; user supplies asset for trustline touch
+      setCustomAssetCode("");
+      setCustomAssetIssuer("");
+      setAssetType("custom");
     } else {
       // Reapply ghost asset auto-fill
       try {
@@ -343,7 +382,7 @@ export function GhostPaymentsPanel() {
 
   function getPaymentAsset(): Asset {
     if (assetType === "custom") {
-      const code = customAssetCode.trim().toUpperCase();
+      const code = customAssetCode.trim();
       const issuer = customAssetIssuer.trim();
       if (code && StrKey.isValidEd25519PublicKey(issuer)) {
         return new Asset(code, issuer);
@@ -356,12 +395,18 @@ export function GhostPaymentsPanel() {
   const isNative = paymentAsset.isNative();
   const memoBytes = byteLength(memo);
   const parsedAmount = parseFloat(amount) || 0;
-  const cost = estimateCost(
+  const costPerRound = estimateCost(
     recipients.length,
     batchSize,
     feeMultiplier,
     isNative ? parsedAmount : 0,
   );
+  const cost = {
+    ...costPerRound,
+    totalXlm: costPerRound.totalXlm * repeatTimes,
+    feesXlm: costPerRound.feesXlm * repeatTimes,
+    paymentsXlm: costPerRound.paymentsXlm * repeatTimes,
+  };
 
   // ---------------------------------------------------------------------------
   // Validation
@@ -371,16 +416,36 @@ export function GhostPaymentsPanel() {
     return new Set(parseValidAddresses(excludeText));
   }
 
+  function parseMultipleKeys(): string[] {
+    return multipleKeysText
+      .split(/[\n,]+/)
+      .map((s) => s.trim())
+      .filter((s) => s.startsWith("S") && s.length === 56);
+  }
+
   function validateForm(): string | null {
     if (memoBytes > MEMO_MAX_BYTES)
       return `Memo exceeds ${MEMO_MAX_BYTES} bytes (currently ${memoBytes}).`;
-    if (!effectiveSecretKey.trim()) return "Signing secret key is required.";
-    if (!effectiveSecretKey.trim().startsWith("S") || effectiveSecretKey.trim().length !== 56)
-      return "Secret key must start with S and be 56 characters.";
+    if (senderMode === "single") {
+      if (!effectiveSecretKey.trim()) return "Signing secret key is required.";
+      if (!effectiveSecretKey.trim().startsWith("S") || effectiveSecretKey.trim().length !== 56)
+        return "Secret key must start with S and be 56 characters.";
+    } else {
+      const keys = parseMultipleKeys();
+      if (keys.length < 2) return "Enter at least 2 secret keys for multi-sender mode.";
+    }
+    if (ghostMode === "trustline_touch") {
+      const code = customAssetCode.trim();
+      const issuer = customAssetIssuer.trim();
+      if (!code) return "Asset code is required for trustline touch.";
+      if (!StrKey.isValidEd25519PublicKey(issuer))
+        return "Asset issuer is not a valid address.";
+      return null;
+    }
     if (!amount.trim() || isNaN(parseFloat(amount)) || parseFloat(amount) <= 0)
       return "Payment amount must be a positive number.";
     if (assetType === "custom") {
-      const code = customAssetCode.trim().toUpperCase();
+      const code = customAssetCode.trim();
       const issuer = customAssetIssuer.trim();
       if (!code) return "Custom asset code is required.";
       if (!StrKey.isValidEd25519PublicKey(issuer))
@@ -390,6 +455,11 @@ export function GhostPaymentsPanel() {
   }
 
   function getSenderPublicKey(): string | null {
+    if (senderMode !== "single") {
+      const keys = parseMultipleKeys();
+      if (keys.length === 0) return null;
+      try { return Keypair.fromSecret(keys[0]).publicKey(); } catch { return null; }
+    }
     try {
       return Keypair.fromSecret(effectiveSecretKey.trim()).publicKey();
     } catch {
@@ -501,6 +571,25 @@ export function GhostPaymentsPanel() {
     }
     setError(null);
 
+    // trustline_touch doesn't use recipients — skip recipient validation
+    if (ghostMode === "trustline_touch") {
+      setPhase("preview");
+      try {
+        const senderPub = getSenderPublicKey();
+        if (senderPub) {
+          setBalanceLoading(true);
+          const account = await horizonServer.loadAccount(senderPub);
+          const native = account.balances.find((b) => b.asset_type === "native");
+          setBalanceXlm(native ? parseFloat(native.balance) : 0);
+        }
+      } catch {
+        setBalanceXlm(null);
+      } finally {
+        setBalanceLoading(false);
+      }
+      return;
+    }
+
     if (sourceTab === "manual") {
       const recipErr = buildManualRecipients();
       if (recipErr) {
@@ -557,23 +646,84 @@ export function GhostPaymentsPanel() {
   // Send
   // ---------------------------------------------------------------------------
 
-  async function handleSend() {
+  async function handleTrustlineTouch() {
     abortRef.current?.abort();
     abortRef.current = new AbortController();
 
-    const newBatches: string[][] = [];
-    for (let i = 0; i < recipients.length; i += batchSize) {
-      newBatches.push(recipients.slice(i, i + batchSize));
-    }
+    setPhase("sending");
+    setError(null);
+    setCurrentRound(1);
 
-    const initial: BatchResult[] = newBatches.map((b, i) => ({
+    const senderKeys =
+      senderMode === "single"
+        ? [effectiveSecretKey.trim()]
+        : parseMultipleKeys();
+
+    const asset = new Asset(customAssetCode.trim(), customAssetIssuer.trim());
+    const networkPassphrase = resolveNetworkPassphrase(network);
+    const memoText = memo.trim();
+
+    // One batch result per sender key
+    const initial: BatchResult[] = senderKeys.map((_, i) => ({
       batchIndex: i,
-      count: b.length,
+      count: 1,
       status: "pending",
     }));
     setBatchResults(initial);
+
+    for (let i = 0; i < senderKeys.length; i++) {
+      if (abortRef.current.signal.aborted) break;
+      const key = senderKeys[i];
+
+      setBatchResults((prev) => {
+        const next = [...prev];
+        next[i] = { ...next[i], status: "sending" };
+        return next;
+      });
+
+      try {
+        const keypair = Keypair.fromSecret(key);
+        const account = await horizonServer.loadAccount(keypair.publicKey());
+        const txBuilder = new TransactionBuilder(account, {
+          fee: String(100 * feeMultiplier),
+          networkPassphrase,
+        })
+          .addOperation(Operation.changeTrust({ asset, limit: MAX_TRUST_LIMIT }))
+          .setTimeout(180);
+        if (memoText) txBuilder.addMemo(Memo.text(memoText));
+        const tx = txBuilder.build();
+        tx.sign(keypair);
+        const result = await horizonServer.submitTransaction(tx);
+        const hash = (result as { hash?: string }).hash ?? "";
+        setBatchResults((prev) => {
+          const next = [...prev];
+          next[i] = { ...next[i], status: "success", txHash: hash };
+          return next;
+        });
+      } catch (err) {
+        if (abortRef.current.signal.aborted) break;
+        setBatchResults((prev) => {
+          const next = [...prev];
+          next[i] = { ...next[i], status: "failed", error: getErrorMessage(err) };
+          return next;
+        });
+      }
+    }
+
+    setPhase("done");
+  }
+
+  async function handleSend() {
+    if (ghostMode === "trustline_touch") {
+      return handleTrustlineTouch();
+    }
+
+    abortRef.current?.abort();
+    abortRef.current = new AbortController();
+
     setPhase("sending");
     setError(null);
+    setCurrentRound(1);
 
     // For underfunded mode, override amount + asset
     const sendAmount =
@@ -583,34 +733,116 @@ export function GhostPaymentsPanel() {
     const sendAsset =
       ghostMode === "underfunded" ? Asset.native() : getPaymentAsset();
 
+    const senderKeys =
+      senderMode === "single"
+        ? [effectiveSecretKey.trim()]
+        : parseMultipleKeys();
+
+    // Build a flat list of { key, recipients } runs to execute sequentially.
+    // Each run maps to a separate block of BatchResults displayed to the user.
+    type SendRun = { key: string; recips: string[]; label: string };
+    const runs: SendRun[] = [];
+
+    if (senderMode === "single") {
+      for (let r = 1; r <= repeatTimes; r++) {
+        runs.push({ key: senderKeys[0], recips: recipients, label: repeatTimes > 1 ? `Round ${r}` : "Send" });
+      }
+    } else if (senderMode === "round-robin") {
+      // Split recipients evenly across senders
+      const chunkSize = Math.ceil(recipients.length / senderKeys.length);
+      for (let r = 1; r <= repeatTimes; r++) {
+        senderKeys.forEach((key, ki) => {
+          const slice = recipients.slice(ki * chunkSize, (ki + 1) * chunkSize);
+          if (slice.length > 0)
+            runs.push({ key, recips: slice, label: `Round ${r} · Sender ${ki + 1}` });
+        });
+      }
+    } else if (senderMode === "all-to-all") {
+      // Every sender sends to ALL recipients
+      for (let r = 1; r <= repeatTimes; r++) {
+        senderKeys.forEach((key, ki) => {
+          runs.push({ key, recips: recipients, label: `Round ${r} · Sender ${ki + 1}` });
+        });
+      }
+    } else if (senderMode === "rotate") {
+      // Each repeat round uses the next key in the list (cycles)
+      for (let r = 1; r <= repeatTimes; r++) {
+        const key = senderKeys[(r - 1) % senderKeys.length];
+        runs.push({ key, recips: recipients, label: `Round ${r} (key ${((r - 1) % senderKeys.length) + 1})` });
+      }
+    }
+
+    // Initialise all batch result rows up front (one block per run)
+    const allBatches: BatchResult[] = [];
+    let offset = 0;
+    const runOffsets: number[] = [];
+    for (const run of runs) {
+      runOffsets.push(offset);
+      for (let i = 0; i < run.recips.length; i += batchSize) {
+        allBatches.push({ batchIndex: offset + Math.floor(i / batchSize), count: Math.min(batchSize, run.recips.length - i), status: "pending" });
+      }
+      offset += Math.ceil(run.recips.length / batchSize);
+    }
+    setBatchResults(allBatches);
+
     try {
-      await runBulkPayments({
-        horizonUrl,
-        network,
-        secretKey: effectiveSecretKey.trim(),
-        recipients,
-        memo: memo.trim(),
-        batchSize,
-        feeMultiplier,
-        amount: sendAmount,
-        asset: sendAsset,
-        ghost: true,
-        signal: abortRef.current.signal,
-        onBatchUpdate: (result) => {
-          setBatchResults((prev) => {
-            const next = [...prev];
-            next[result.batchIndex] = result;
-            return next;
-          });
-        },
-      });
+      for (let ri = 0; ri < runs.length; ri++) {
+        if (abortRef.current.signal.aborted) break;
+        const run = runs[ri];
+        setCurrentRound(ri + 1);
+        await runBulkPayments({
+          horizonUrl,
+          network,
+          secretKey: run.key,
+          recipients: run.recips,
+          memo: memo.trim(),
+          batchSize,
+          feeMultiplier,
+          amount: sendAmount,
+          asset: sendAsset,
+          ghost: true,
+          signal: abortRef.current.signal,
+          onBatchUpdate: (result) => {
+            setBatchResults((prev) => {
+              const next = [...prev];
+              next[runOffsets[ri] + result.batchIndex] = {
+                ...result,
+                batchIndex: runOffsets[ri] + result.batchIndex,
+              };
+              return next;
+            });
+          },
+        });
+      }
     } catch (err) {
       if (!abortRef.current.signal.aborted) {
         setError(getErrorMessage(err));
       }
     }
 
+    // Auto-save manual signing key if not already in a group
+    if (!activeWallet && senderMode === "single") {
+      try {
+        const { Keypair } = await import("stellar-sdk");
+        const pub = Keypair.fromSecret(effectiveSecretKey.trim()).publicKey();
+        autoSaveSigningKey(pub);
+      } catch { /* invalid key — skip */ }
+    }
+
     setPhase("done");
+
+    // Toast + browser notification
+    setBatchResults((prev) => {
+      const failedCount = prev.filter((r) => r.status === "failed").reduce((s, r) => s + r.count, 0);
+      const successCount = prev.filter((r) => r.status === "success").reduce((s, r) => s + r.count, 0);
+      if (failedCount > 0) {
+        toast.error(`Batch failed \u2014 ${failedCount} payments failed`);
+      } else {
+        toast.success("Batch sent successfully");
+      }
+      notifyIfHidden("Ghost Payments Complete", `${successCount} payments sent`);
+      return prev;
+    });
   }
 
   function handleAbort() {
@@ -626,6 +858,7 @@ export function GhostPaymentsPanel() {
     setFetchProgress(null);
     setBalanceXlm(null);
     setError(null);
+    setCurrentRound(0);
   }
 
   // ---------------------------------------------------------------------------
@@ -674,25 +907,38 @@ export function GhostPaymentsPanel() {
             <CardTitle>Review before ghost send</CardTitle>
             <CardDescription>
               Confirm the details below. Mode:{" "}
-              <span className="font-mono text-orange-400">
+              <span className={`font-mono ${ghostMode === "trustline_touch" ? "text-blue-400" : "text-orange-400"}`}>
                 {GHOST_MODES.find((m) => m.id === ghostMode)?.errorCode}
               </span>{" "}
-              on <strong>{network}</strong> — no funds will move.
+              on <strong>{network}</strong>.{" "}
+              {ghostMode === "trustline_touch" ? "Transaction will succeed — no balance changes." : "No funds will move."}
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="grid gap-3 sm:grid-cols-2 text-sm">
               <div className="rounded-md bg-muted/50 p-3 space-y-1">
-                <p className="text-xs text-muted-foreground">Recipients</p>
+                <p className="text-xs text-muted-foreground">
+                  {ghostMode === "trustline_touch" ? "Senders" : "Recipients"}
+                </p>
                 <p className="text-2xl font-bold font-mono">
-                  {recipients.length.toLocaleString()}
+                  {ghostMode === "trustline_touch"
+                    ? (senderMode === "single" ? 1 : parseMultipleKeys().length).toLocaleString()
+                    : recipients.length.toLocaleString()}
                 </p>
               </div>
               <div className="rounded-md bg-muted/50 p-3 space-y-1">
                 <p className="text-xs text-muted-foreground">
-                  Batches ({batchSize} ops each)
+                  {ghostMode === "trustline_touch"
+                    ? "Transactions"
+                    : repeatTimes > 1
+                    ? `Batches × ${repeatTimes} rounds`
+                    : `Batches (${batchSize} ops each)`}
                 </p>
-                <p className="text-2xl font-bold font-mono">{cost.batches}</p>
+                <p className="text-2xl font-bold font-mono">
+                  {ghostMode === "trustline_touch"
+                    ? (senderMode === "single" ? 1 : parseMultipleKeys().length).toLocaleString()
+                    : costPerRound.batches * repeatTimes}
+                </p>
               </div>
               <div className="rounded-md bg-muted/50 p-3 space-y-1">
                 <p className="text-xs text-muted-foreground">Transaction fees</p>
@@ -715,8 +961,17 @@ export function GhostPaymentsPanel() {
             </div>
 
             <div className="rounded-md border border-border p-3 text-sm space-y-1">
-              <p className="text-xs text-muted-foreground">Payment</p>
-              {ghostMode === "underfunded" ? (
+              <p className="text-xs text-muted-foreground">{ghostMode === "trustline_touch" ? "Trustline" : "Payment"}</p>
+              {ghostMode === "trustline_touch" ? (
+                <div className="space-y-1">
+                  <p className="font-mono font-semibold">
+                    {customAssetCode.trim()} ({customAssetIssuer.trim().slice(0, 4)}…{customAssetIssuer.trim().slice(-4)})
+                  </p>
+                  <p className="text-xs text-blue-500">
+                    change_trust to MAX_LIMIT — no balance change
+                  </p>
+                </div>
+              ) : ghostMode === "underfunded" ? (
                 <div className="space-y-1">
                   <p className="font-mono font-semibold">
                     {underfundedAmount ?? "…"} XLM
@@ -730,12 +985,12 @@ export function GhostPaymentsPanel() {
                   {amount}{" "}
                   {isNative
                     ? "XLM"
-                    : `${customAssetCode.trim().toUpperCase()} (${customAssetIssuer.trim().slice(0, 4)}…${customAssetIssuer.trim().slice(-4)})`}
+                    : `${customAssetCode.trim()} (${customAssetIssuer.trim().slice(0, 4)}…${customAssetIssuer.trim().slice(-4)})`}
                 </p>
               )}
             </div>
 
-            {recipients.length > 0 && (
+            {recipients.length > 0 && ghostMode !== "trustline_touch" && (
               <div className="rounded-md border border-border p-3 text-sm space-y-2">
                 <p className="text-xs text-muted-foreground">
                   First recipients (sample)
@@ -793,7 +1048,7 @@ export function GhostPaymentsPanel() {
           <CardFooter className="flex gap-2">
             <Button onClick={handleSend}>
               <Ghost className="mr-2 h-4 w-4" />
-              Ghost Send
+              {ghostMode === "trustline_touch" ? "Touch Trustlines" : "Ghost Send"}
             </Button>
             <Button variant="outline" onClick={() => setPhase("configure")}>
               Back
@@ -834,7 +1089,7 @@ export function GhostPaymentsPanel() {
             </CardTitle>
             {phase === "sending" && (
               <CardDescription>
-                Batch {Math.min(sent + failed + 1, total)} of {total}
+                Run {currentRound} — Batch {Math.min(sent + failed + 1, total)} of {total}
               </CardDescription>
             )}
           </CardHeader>
@@ -844,7 +1099,7 @@ export function GhostPaymentsPanel() {
                 <thead>
                   <tr className="border-b bg-muted/40">
                     <th className="text-left px-3 py-2">Batch</th>
-                    <th className="text-left px-3 py-2">Recipients</th>
+                    <th className="text-left px-3 py-2">{ghostMode === "trustline_touch" ? "Sender" : "Recipients"}</th>
                     <th className="text-left px-3 py-2">Status</th>
                     <th className="text-left px-3 py-2">Proof (Tx Hash)</th>
                   </tr>
@@ -897,7 +1152,7 @@ export function GhostPaymentsPanel() {
       <GhostBanner mode={ghostMode} />
 
       {/* Mode selector */}
-      <div className="grid gap-3 sm:grid-cols-2">
+      <div className="grid gap-3 sm:grid-cols-3">
         {GHOST_MODES.map((m) => (
           <button
             key={m.id}
@@ -927,6 +1182,82 @@ export function GhostPaymentsPanel() {
           </button>
         ))}
       </div>
+
+      {/* Sender Mode */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Sender Mode</CardTitle>
+          <CardDescription>
+            Choose how many accounts will send and how recipients are distributed.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Tabs value={senderMode} onValueChange={(v) => setSenderMode(v as SenderMode)}>
+            <TabsList className="mb-4 grid grid-cols-4 w-full">
+              <TabsTrigger value="single">Single</TabsTrigger>
+              <TabsTrigger value="round-robin">Round-Robin</TabsTrigger>
+              <TabsTrigger value="all-to-all">All → All</TabsTrigger>
+              <TabsTrigger value="rotate">Rotate</TabsTrigger>
+            </TabsList>
+            <TabsContent value="single">
+              <p className="text-sm text-muted-foreground">
+                One account sends to all recipients. Uses the secret key or connected wallet below.
+              </p>
+            </TabsContent>
+            <TabsContent value="round-robin" className="space-y-2">
+              <p className="text-sm text-muted-foreground mb-2">
+                Recipients are split evenly across all senders. Each sender handles its own slice.
+              </p>
+              <Label htmlFor="multi-keys-rr">Secret Keys (one per line)</Label>
+              <textarea
+                id="multi-keys-rr"
+                className="w-full min-h-28 rounded-md border border-input bg-transparent px-3 py-2 text-sm font-mono"
+                placeholder={"S...\nS..."}
+                value={multipleKeysText}
+                onChange={(e) => setMultipleKeysText(e.target.value)}
+              />
+              <p className="text-xs text-muted-foreground">{parseMultipleKeys().length} valid keys</p>
+              <WalletAppendSelect
+                onAppend={(sk) => setMultipleKeysText((prev) => prev ? prev + "\n" + sk : sk)}
+              />
+            </TabsContent>
+            <TabsContent value="all-to-all" className="space-y-2">
+              <p className="text-sm text-muted-foreground mb-2">
+                Every sender pays every recipient. N senders × M recipients = N×M transactions total.
+              </p>
+              <Label htmlFor="multi-keys-ata">Secret Keys (one per line)</Label>
+              <textarea
+                id="multi-keys-ata"
+                className="w-full min-h-28 rounded-md border border-input bg-transparent px-3 py-2 text-sm font-mono"
+                placeholder={"S...\nS..."}
+                value={multipleKeysText}
+                onChange={(e) => setMultipleKeysText(e.target.value)}
+              />
+              <p className="text-xs text-muted-foreground">{parseMultipleKeys().length} valid keys</p>
+              <WalletAppendSelect
+                onAppend={(sk) => setMultipleKeysText((prev) => prev ? prev + "\n" + sk : sk)}
+              />
+            </TabsContent>
+            <TabsContent value="rotate" className="space-y-2">
+              <p className="text-sm text-muted-foreground mb-2">
+                Each repeat round uses the next key in the list (cycles). Requires Repeat × ≥ 2.
+              </p>
+              <Label htmlFor="multi-keys-rot">Secret Keys (one per line)</Label>
+              <textarea
+                id="multi-keys-rot"
+                className="w-full min-h-28 rounded-md border border-input bg-transparent px-3 py-2 text-sm font-mono"
+                placeholder={"S...\nS..."}
+                value={multipleKeysText}
+                onChange={(e) => setMultipleKeysText(e.target.value)}
+              />
+              <p className="text-xs text-muted-foreground">{parseMultipleKeys().length} valid keys</p>
+              <WalletAppendSelect
+                onAppend={(sk) => setMultipleKeysText((prev) => prev ? prev + "\n" + sk : sk)}
+              />
+            </TabsContent>
+          </Tabs>
+        </CardContent>
+      </Card>
 
       {/* Memo + key */}
       <Card>
@@ -959,104 +1290,143 @@ export function GhostPaymentsPanel() {
             />
           </div>
 
-          <div className="grid gap-4 sm:grid-cols-2">
+          {ghostMode === "trustline_touch" ? (
             <div className="space-y-2">
-              <Label htmlFor="amount">Amount per Recipient</Label>
-              <Input
-                id="amount"
-                type="number"
-                min="0.0000001"
-                step="0.0000001"
-                value={amount}
-                onChange={(e) => setAmount(e.target.value)}
-                className="font-mono"
-                placeholder="0.0000001"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label>Asset</Label>
+              <Label>Asset to Touch</Label>
               <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={() => setAssetType("xlm")}
-                  className={`flex-1 rounded-md border px-3 py-1.5 text-sm transition-colors ${
-                    assetType === "xlm"
-                      ? "bg-primary text-primary-foreground border-primary"
-                      : "border-border hover:bg-muted/50"
-                  }`}
-                >
-                  XLM
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setAssetType("custom")}
-                  className={`flex-1 rounded-md border px-3 py-1.5 text-sm transition-colors ${
-                    assetType === "custom"
-                      ? "bg-primary text-primary-foreground border-primary"
-                      : "border-border hover:bg-muted/50"
-                  }`}
-                >
-                  Custom
-                </button>
+                <Input
+                  placeholder="CODE"
+                  value={customAssetCode}
+                  onChange={(e) => setCustomAssetCode(e.target.value)}
+                  className="w-24 font-mono text-xs"
+                />
+                <Input
+                  placeholder="ISSUER (G…)"
+                  value={customAssetIssuer}
+                  onChange={(e) => setCustomAssetIssuer(e.target.value.trim())}
+                  className="font-mono text-xs"
+                />
               </div>
-              {assetType === "custom" && (
-                <div className="flex gap-2 pt-1">
-                  <Input
-                    placeholder="CODE"
-                    value={customAssetCode}
-                    onChange={(e) =>
-                      setCustomAssetCode(e.target.value.toUpperCase())
-                    }
-                    className="w-24 font-mono text-xs"
-                  />
-                  <Input
-                    placeholder="ISSUER (G…)"
-                    value={customAssetIssuer}
-                    onChange={(e) =>
-                      setCustomAssetIssuer(e.target.value.trim())
-                    }
-                    className="font-mono text-xs"
-                  />
-                </div>
-              )}
+              <p className="text-xs text-muted-foreground">
+                Each sender will submit change_trust(asset, MAX_LIMIT) with your memo. No balance changes.
+              </p>
             </div>
-          </div>
-
-          <div className="grid gap-4 sm:grid-cols-[1fr_auto_auto_auto]">
-            <div className="space-y-2">
-              <Label htmlFor="secret-key">Signing Secret Key</Label>
-              {activeWallet ? (
-                <div className="flex items-center gap-2 rounded-md border border-green-500/40 bg-green-500/5 px-3 py-2 text-sm">
-                  <Wallet className="h-4 w-4 shrink-0 text-green-500" />
-                  <span className="flex-1 truncate font-medium">{activeWallet.name}</span>
-                  <span className="font-mono text-xs text-muted-foreground">
-                    {activeWallet.publicKey.slice(0, 4)}…{activeWallet.publicKey.slice(-4)}
-                  </span>
-                </div>
-              ) : (
-                <div className="relative">
-                  <Input
-                    id="secret-key"
-                    type={showSecret ? "text" : "password"}
-                    placeholder="S…"
-                    value={secretKey}
-                    onChange={(e) => setSecretKey(e.target.value)}
-                    className="font-mono text-xs pr-10"
-                    autoComplete="off"
-                  />
+          ) : (
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-2">
+                <Label htmlFor="amount">Amount per Recipient</Label>
+                <Input
+                  id="amount"
+                  type="number"
+                  min="0.0000001"
+                  step="0.0000001"
+                  value={amount}
+                  onChange={(e) => setAmount(e.target.value)}
+                  className="font-mono"
+                  placeholder="0.0000001"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Asset</Label>
+                <div className="flex gap-2">
                   <button
                     type="button"
-                    className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                    onClick={() => setShowSecret((v) => !v)}
-                    aria-label="Toggle secret key visibility"
+                    onClick={() => setAssetType("xlm")}
+                    className={`flex-1 rounded-md border px-3 py-1.5 text-sm transition-colors ${
+                      assetType === "xlm"
+                        ? "bg-primary text-primary-foreground border-primary"
+                        : "border-border hover:bg-muted/50"
+                    }`}
                   >
-                    {showSecret ? (
-                      <EyeOff className="h-4 w-4" />
-                    ) : (
-                      <Eye className="h-4 w-4" />
+                    XLM
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setAssetType("custom")}
+                    className={`flex-1 rounded-md border px-3 py-1.5 text-sm transition-colors ${
+                      assetType === "custom"
+                        ? "bg-primary text-primary-foreground border-primary"
+                        : "border-border hover:bg-muted/50"
+                    }`}
+                  >
+                    Custom
+                  </button>
+                </div>
+                {assetType === "custom" && (
+                  <div className="flex gap-2 pt-1">
+                    <Input
+                      placeholder="CODE"
+                      value={customAssetCode}
+                      onChange={(e) =>
+                        setCustomAssetCode(e.target.value)
+                      }
+                      className="w-24 font-mono text-xs"
+                    />
+                    <Input
+                      placeholder="ISSUER (G…)"
+                      value={customAssetIssuer}
+                      onChange={(e) =>
+                        setCustomAssetIssuer(e.target.value.trim())
+                      }
+                      className="font-mono text-xs"
+                    />
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          <div className="grid gap-4 sm:grid-cols-[1fr_auto_auto_auto]">
+            {senderMode !== "single" && (
+              <p className="text-xs text-muted-foreground col-span-full">
+                Secret keys are set in the Sender Mode card above.
+              </p>
+            )}
+            <div className={`space-y-2 ${senderMode !== "single" ? "hidden" : ""}`}>
+              {activeWallet ? (
+                <>
+                  <Label htmlFor="secret-key">Signing Secret Key</Label>
+                  <div className="flex items-center gap-2 rounded-md border border-green-500/40 bg-green-500/5 px-3 py-2 text-sm">
+                    <Wallet className="h-4 w-4 shrink-0 text-green-500" />
+                    <span className="flex-1 truncate font-medium">{activeWallet.name}</span>
+                    <span className="font-mono text-xs text-muted-foreground">
+                      {shortAddr(activeWallet.publicKey)}
+                    </span>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="flex items-center justify-between">
+                    <Label htmlFor="secret-key">Signing Secret Key</Label>
+                    <WalletSelect
+                      currentValue={secretKey}
+                      onPick={(w) => setSecretKey(w.secretKey)}
+                    />
+                  </div>
+                  <div className="relative">
+                    <Input
+                      id="secret-key"
+                      type={showSecret ? "text" : "password"}
+                      placeholder="S…"
+                      value={secretKey}
+                      onChange={(e) => setSecretKey(e.target.value)}
+                      className="font-mono text-xs pr-10"
+                      autoComplete="off"
+                    />
+                    <button
+                      type="button"
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                      onClick={() => setShowSecret((v) => !v)}
+                      aria-label="Toggle secret key visibility"
+                    >
+                      {showSecret ? (
+                        <EyeOff className="h-4 w-4" />
+                      ) : (
+                        <Eye className="h-4 w-4" />
                     )}
                   </button>
                 </div>
+                </>
               )}
             </div>
             <div className="space-y-2">
@@ -1100,12 +1470,35 @@ export function GhostPaymentsPanel() {
                 className="w-20"
               />
             </div>
+            <div className="space-y-2">
+              <Label
+                htmlFor="repeat-times"
+                title="Send to all recipients this many times in sequence"
+              >
+                Repeat ×
+              </Label>
+              <Input
+                id="repeat-times"
+                type="number"
+                min={1}
+                max={100}
+                value={repeatTimes}
+                onChange={(e) => {
+                  const v = Math.min(
+                    100,
+                    Math.max(1, parseInt(e.target.value) || 1),
+                  );
+                  setRepeatTimes(v);
+                }}
+                className="w-20"
+              />
+            </div>
           </div>
         </CardContent>
       </Card>
 
-      {/* Recipients */}
-      <Card>
+      {/* Recipients — hidden for trustline_touch (no recipients needed) */}
+      {ghostMode !== "trustline_touch" && <Card>
         <CardHeader>
           <CardTitle>Recipients</CardTitle>
           <CardDescription>
@@ -1410,7 +1803,7 @@ export function GhostPaymentsPanel() {
             )}
           </div>
         </CardContent>
-      </Card>
+      </Card>}
 
       {error && (
         <p className="text-sm text-destructive flex items-center gap-2">

@@ -255,6 +255,9 @@ export function AssetLookupPanel({
   const [issuerInfo, setIssuerInfo] = useState<IssuerInfo | null>(null);
   const [issuerInfoError, setIssuerInfoError] = useState<string | null>(null);
 
+  // SAC deployment status (async, non-blocking)
+  const [sacDeployed, setSacDeployed] = useState<boolean | null>(null);
+
   // Distribution inference state
   const [isInferring, setIsInferring] = useState(false);
   const [distribCandidates, setDistribCandidates] = useState<
@@ -564,7 +567,7 @@ export function AssetLookupPanel({
     // Extract the CODE:ISSUER segment from anywhere in the string
     const match = raw.match(/([A-Za-z0-9]{1,12}):([A-Z2-7]{56})/);
     if (!match) return false;
-    const code = match[1].toUpperCase();
+    const code = match[1];
     const addr = match[2];
     if (!StrKey.isValidEd25519PublicKey(addr)) return false;
     setAssetCode(code);
@@ -575,7 +578,7 @@ export function AssetLookupPanel({
   };
 
   const handleAssetCodeChange = (value: string) => {
-    const normalized = value.toUpperCase();
+    const normalized = value;
     setAssetCode(normalized);
     if (touched.assetCode) {
       setValidationErrors((prev) => ({
@@ -662,6 +665,7 @@ export function AssetLookupPanel({
     setDistribXlm({});
     setCrawlHolderCount(0);
     setCrawlPageCount(0);
+    setSacDeployed(null);
   };
 
   const handleSearch = async () => {
@@ -713,11 +717,32 @@ export function AssetLookupPanel({
     realCreatorAbortRef.current?.abort();
     setCrawlHolderCount(0);
     setCrawlPageCount(0);
+    setSacDeployed(null);
 
     try {
       const serverUrl = resolveHorizonUrl(settings);
       const server = new Horizon.Server(serverUrl);
       const asset = new Asset(assetCode, issuer);
+
+      // Fire SAC check async — non-blocking, updates badge when resolved
+      if (settings.network !== "local") {
+        import("@/lib/soroban/sac").then(({ computeSacAddress }) => {
+          try {
+            const contractId = computeSacAddress(assetCode, issuer, settings.network);
+            fetch("/api/soroban/check", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ contractId, network: settings.network }),
+              signal: controller.signal,
+            })
+              .then((r) => r.json())
+              .then((d) => { if (d.deployed !== undefined) setSacDeployed(d.deployed); })
+              .catch(() => {});
+          } catch {
+            // computeSacAddress can throw for invalid inputs — ignore
+          }
+        });
+      }
 
       // Fetch issuer info in parallel with the holder crawl start
       fetchIssuerInfo(server, issuer, controller.signal)
@@ -1429,6 +1454,22 @@ export function AssetLookupPanel({
                       {issuerInfo.authImmutable ? "Immutable" : "Mutable"}
                     </span>
                   </div>
+
+                  {/* SAC badge */}
+                  {sacDeployed !== null && (
+                    <a
+                      href={`/soroban?assetCode=${encodeURIComponent(assetCode)}&issuer=${encodeURIComponent(issuer)}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center gap-1.5 text-xs"
+                      title={sacDeployed ? "Stellar Asset Contract deployed — click to view" : "SAC not yet deployed — click to deploy"}
+                    >
+                      <Layers className={`h-3.5 w-3.5 shrink-0 ${sacDeployed ? "text-green-400" : "text-muted-foreground/60"}`} />
+                      <span className={sacDeployed ? "text-green-400" : "text-muted-foreground"}>
+                        {sacDeployed ? "SAC deployed" : "No SAC"}
+                      </span>
+                    </a>
+                  )}
                 </div>
 
                 {/* Save to Group button */}

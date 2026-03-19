@@ -37,6 +37,7 @@ import {
   X,
   XCircle,
 } from "lucide-react";
+import { useActiveWallet } from "@/hooks/use-active-wallet";
 import {
   useSettings,
   resolveHorizonUrl,
@@ -46,14 +47,12 @@ import {
   formatAsset,
   formatBalance,
   getErrorMessage,
-  shortKey,
   timeAgo,
 } from "@/lib/stellar-helpers";
+import { shortAddr, formatXlm } from "@/lib/format";
 import { ShortAddress } from "@/components/asset-lookup";
-import { formatXlm } from "@/lib/format";
 import { useSavedSearches } from "@/hooks/use-saved-searches";
 import { useKnownIntermediaries } from "@/hooks/use-known-intermediaries";
-import { useKnownCreators } from "@/hooks/use-known-creators";
 import { useAssetGroups } from "@/hooks/use-asset-groups";
 import type { GroupMemberRole } from "@/lib/asset-groups/types";
 import { ROLE_LABELS } from "@/lib/asset-groups/types";
@@ -71,6 +70,16 @@ import {
 import { downloadCSV } from "@/lib/csv-export";
 import { fetchAddressInvestigation } from "@/lib/proceeds-investigator/fetchers";
 import type { AddressInvestigationResult } from "@/lib/proceeds-investigator/types";
+import {
+  findFunderCandidates,
+  fetchAccountCreation,
+} from "@/lib/intermediary-tracer/fetchers";
+import { fetchAccountCreator } from "@/lib/asset-lookup";
+import {
+  ChainDisplay,
+  ChainState,
+  fetchHomeDomain,
+} from "@/components/shared/ChainDisplay";
 
 const DISPLAY_PAGE_SIZE = 10;
 const CLAIMABLE_DISPLAY_PAGE_SIZE = 5;
@@ -228,7 +237,7 @@ function resolveAssetWithIssuer(
   const assetIssuer = String(r[`${prefix}_issuer`] ?? "");
   if (!assetCode) return "unknown";
   if (!assetIssuer) return assetCode;
-  return `${assetCode}:${shortKey(assetIssuer, 6, 6)}`;
+  return `${assetCode}:${shortAddr(assetIssuer)}`;
 }
 
 function describeOperation(r: Record<string, unknown>): {
@@ -445,7 +454,7 @@ function formatClaimableAsset(asset: string): string {
   const [code, issuer] = asset.split(":");
   if (!code) return asset;
   if (!issuer) return code;
-  return `${code}:${shortKey(issuer, 6, 6)}`;
+  return `${code}:${shortAddr(issuer)}`;
 }
 
 function exportCounterparties(
@@ -484,8 +493,8 @@ export function AddressInvestigatorTab() {
   const { settings } = useSettings();
   const { upsert: upsertSearch } = useSavedSearches();
   const { entries: knownIntermediaries } = useKnownIntermediaries();
-  const { entries: knownCreators } = useKnownCreators();
   const { groups, upsertMember } = useAssetGroups();
+  const { activeWallet } = useActiveWallet();
   const [address, setAddress] = useState(
     () => urlAddress ?? addressHistoryGetSnapshot()[0]?.address ?? "",
   );
@@ -532,8 +541,101 @@ export function AddressInvestigatorTab() {
   } | null>(null);
   const [dialogGroupId, setDialogGroupId] = useState<string>("");
   const [dialogRole, setDialogRole] = useState<GroupMemberRole>("bank");
+  const [addressChain, setAddressChain] = useState<ChainState>({ status: "idle", chain: [] });
+  const realCreatorAbortRef = useRef<AbortController | null>(null);
 
   const abortRef = useRef<AbortController | null>(null);
+
+  const traceChainStep = async (
+    targetAddress: string,
+    signal: AbortSignal,
+    setChain: React.Dispatch<React.SetStateAction<ChainState>>,
+    horizonUrl: string,
+    currentKnownIntermediaries: typeof knownIntermediaries,
+  ) => {
+    setChain((prev) => ({ ...prev, status: "loading", searching: targetAddress }));
+    try {
+      const creation = await fetchAccountCreation(horizonUrl, targetAddress, signal);
+      if (signal.aborted) return;
+
+      let creator: string;
+      let pagingToken: string | undefined;
+      let createdAt: string | undefined;
+      let startingBalance: number | undefined;
+
+      if (creation) {
+        creator = creation.funder;
+        pagingToken = creation.pagingToken;
+        createdAt = creation.createdAt;
+        startingBalance = creation.startingBalance;
+      } else {
+        const server = new Horizon.Server(horizonUrl);
+        const fallback = await fetchAccountCreator(server, targetAddress, signal);
+        if (signal.aborted) return;
+        if (!fallback) {
+          setChain((prev) => ({
+            ...prev,
+            status: "done",
+            searching: undefined,
+            chain: [...prev.chain, { creator: targetAddress, creatorType: "pruned" }],
+          }));
+          return;
+        }
+        creator = fallback;
+      }
+
+      const creatorIsIntermediary = currentKnownIntermediaries.some((e) => e.address === creator);
+
+      if (creatorIsIntermediary && pagingToken && createdAt && startingBalance !== undefined) {
+        const [{ candidates, noNativeCandidates }, creatorDomain] = await Promise.all([
+          findFunderCandidates(horizonUrl, creator, pagingToken, createdAt, startingBalance, 300, 5, signal),
+          fetchHomeDomain(horizonUrl, creator, signal),
+        ]);
+        if (signal.aborted) return;
+        const top = candidates[0];
+        const realOwnerDomain = top?.address
+          ? await fetchHomeDomain(horizonUrl, top.address, signal)
+          : undefined;
+        if (signal.aborted) return;
+        setChain((prev) => ({
+          ...prev,
+          status: "done",
+          searching: undefined,
+          chain: [...prev.chain, {
+            creator,
+            creatorType: "intermediary",
+            realOwner: top?.address,
+            confidence: top?.confidence,
+            noNative: top ? false : noNativeCandidates,
+            homeDomain: creatorDomain,
+            realOwnerHomeDomain: realOwnerDomain,
+          }],
+        }));
+      } else if (creatorIsIntermediary) {
+        const creatorDomain = await fetchHomeDomain(horizonUrl, creator, signal);
+        if (signal.aborted) return;
+        setChain((prev) => ({
+          ...prev,
+          status: "done",
+          searching: undefined,
+          chain: [...prev.chain, { creator, creatorType: "intermediary", realOwner: undefined, noNative: false, homeDomain: creatorDomain }],
+        }));
+      } else {
+        const creatorDomain = await fetchHomeDomain(horizonUrl, creator, signal);
+        if (signal.aborted) return;
+        setChain((prev) => ({
+          ...prev,
+          status: "done",
+          searching: undefined,
+          chain: [...prev.chain, { creator, creatorType: "direct", homeDomain: creatorDomain }],
+        }));
+      }
+    } catch {
+      if (!signal.aborted) {
+        setChain((prev) => ({ ...prev, status: "error", searching: undefined, error: "Lookup failed" }));
+      }
+    }
+  };
 
   const isCustomAssetSelection = paymentAssetSelection === "custom";
 
@@ -689,7 +791,7 @@ export function AddressInvestigatorTab() {
               | undefined) ?? []
           ).map(
             (claimant) =>
-              `${shortKey(claimant.destination)} (${summarizePredicate(claimant.predicate)})`,
+              `${shortAddr(claimant.destination)} (${summarizePredicate(claimant.predicate)})`,
           );
 
           rows.push({
@@ -751,6 +853,8 @@ export function AddressInvestigatorTab() {
     setPaymentAssetQuery("");
     setSearched(true);
     setProgressText("Initializing scan...");
+    realCreatorAbortRef.current?.abort();
+    setAddressChain({ status: "idle", chain: [] });
 
     try {
       const horizonBase = resolveHorizonUrl(settings);
@@ -792,7 +896,7 @@ export function AddressInvestigatorTab() {
 
       if (abortRef.current.signal.aborted) return;
       setResult(investigation);
-      setHomeDomain((accountDetails as unknown as Record<string, unknown>).home_domain as string ?? null);
+      setHomeDomain((accountDetails as { home_domain?: string }).home_domain ?? null);
       upsertHistory({ address: account, network: settings.network });
       upsertSearch({ type: "address", value: account, network: settings.network });
       setOperations(operationsSummary.operations);
@@ -819,7 +923,7 @@ export function AddressInvestigatorTab() {
             "asset_issuer" in balance ? (balance.asset_issuer ?? "") : "";
           return {
             value: `${code}:${issuer}`,
-            label: `${code}:${shortKey(issuer, 8, 6)}`,
+            label: `${code}:${shortAddr(issuer)}`,
             code: code.toUpperCase(),
             issuer,
           };
@@ -952,7 +1056,18 @@ export function AddressInvestigatorTab() {
         <CardContent className="space-y-4">
           <div className="grid gap-4 md:grid-cols-[1fr_auto]">
             <div className="space-y-2">
-              <Label htmlFor="investigator-address">Address</Label>
+              <div className="flex items-center justify-between">
+                <Label htmlFor="investigator-address">Address</Label>
+                {activeWallet && (
+                  <button
+                    type="button"
+                    onClick={() => setAddress(activeWallet.publicKey)}
+                    className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+                  >
+                    Use my wallet
+                  </button>
+                )}
+              </div>
               <Input
                 id="investigator-address"
                 placeholder="G..."
@@ -1076,7 +1191,37 @@ export function AddressInvestigatorTab() {
             >
               Stellar.Expert ↗
             </a>
+            {addressChain.status === "idle" && (
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-6 px-2 text-xs"
+                onClick={() => {
+                  realCreatorAbortRef.current?.abort();
+                  realCreatorAbortRef.current = new AbortController();
+                  traceChainStep(result.account, realCreatorAbortRef.current.signal, setAddressChain, resolveHorizonUrl(settings), knownIntermediaries);
+                }}
+              >
+                Who created?
+              </Button>
+            )}
           </div>
+
+          {addressChain.chain.length > 0 || addressChain.status === "loading" || addressChain.status === "error" ? (
+            <ChainDisplay
+              chain={addressChain}
+              network={(settings.network === "public" || settings.network === "testnet") ? settings.network : "testnet"}
+              assetCode=""
+              issuer=""
+              horizonUrl={resolveHorizonUrl(settings)}
+              knownIntermediaryAddrs={new Set(knownIntermediaries.map((e) => e.address))}
+              onContinue={(addr) => {
+                realCreatorAbortRef.current?.abort();
+                realCreatorAbortRef.current = new AbortController();
+                traceChainStep(addr, realCreatorAbortRef.current.signal, setAddressChain, resolveHorizonUrl(settings), knownIntermediaries);
+              }}
+            />
+          ) : null}
 
           <div className="grid gap-4 md:grid-cols-3">
             <Card>
@@ -1128,7 +1273,7 @@ export function AddressInvestigatorTab() {
                           {row.asset}
                         </td>
                         <td className="px-3 py-2 font-mono text-xs whitespace-nowrap">
-                          {row.issuer ? shortKey(row.issuer) : "—"}
+                          {row.issuer ? shortAddr(row.issuer) : "—"}
                         </td>
                         <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap">
                           {formatBalance(row.balance)}
@@ -1206,7 +1351,7 @@ export function AddressInvestigatorTab() {
                             {row.asset}
                           </td>
                           <td className="px-3 py-2 font-mono text-xs whitespace-nowrap">
-                            {row.sponsor ? shortKey(row.sponsor) : "—"}
+                            {row.sponsor ? shortAddr(row.sponsor) : "—"}
                           </td>
                           <td
                             className="px-3 py-2 text-xs"
@@ -1294,11 +1439,11 @@ export function AddressInvestigatorTab() {
                             {row.count}
                           </td>
                           <td className="px-3 py-2 text-right">
-                            {row.address !== "NETWORK_FEES" && (
+                            {row.address !== "NETWORK_FEES" && groups.length > 0 && (
                               <button
                                 title="Add to group"
                                 onClick={() => {
-                                  setDialogGroupId(groups[0]?.id ?? "");
+                                  setDialogGroupId(groups[0].id);
                                   setDialogRole("bank");
                                   setGroupDialog({ address: row.address, role: "bank" });
                                 }}
@@ -1383,11 +1528,11 @@ export function AddressInvestigatorTab() {
                             {row.count}
                           </td>
                           <td className="px-3 py-2 text-right">
-                            {row.address !== "NETWORK_FEES" && (
+                            {row.address !== "NETWORK_FEES" && groups.length > 0 && (
                               <button
                                 title="Add to group"
                                 onClick={() => {
-                                  setDialogGroupId(groups[0]?.id ?? "");
+                                  setDialogGroupId(groups[0].id);
                                   setDialogRole("bank");
                                   setGroupDialog({ address: row.address, role: "bank" });
                                 }}

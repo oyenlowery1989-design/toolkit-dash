@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import type { KnownCreator } from "@/lib/intermediary-tracer/types";
-import { createDbCache, dbPost, dbDelete } from "@/lib/db-client";
+import { createDbCache, dbPost, dbDelete, debounce } from "@/lib/db-client";
 
 const ENDPOINT = "/api/db/known-creators";
 const _cache = createDbCache<KnownCreator>();
@@ -21,7 +21,12 @@ export function useKnownCreators() {
   useEffect(() => {
     const unsub = _cache.subscribe(() => rerender((n) => n + 1));
     _cache.load(ENDPOINT);
-    return unsub;
+    const onFocus = debounce(() => _cache.reload(ENDPOINT), 2000);
+    window.addEventListener("focus", onFocus);
+    return () => {
+      unsub();
+      window.removeEventListener("focus", onFocus);
+    };
   }, []);
 
   const entries = _cache.get();

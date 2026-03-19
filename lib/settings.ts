@@ -26,7 +26,7 @@ export const HORIZON_URLS: Record<Exclude<Network, "local">, string> = {
 };
 
 export const NETWORK_LABELS: Record<Network, string> = {
-  public: "Public Network",
+  public: "Mainnet",
   testnet: "Testnet",
   futurenet: "Futurenet",
   local: "Local (Standalone)",

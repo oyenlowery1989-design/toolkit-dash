@@ -37,6 +37,7 @@ import {
 import { useKnownIntermediaries } from "@/hooks/use-known-intermediaries";
 import { useKnownCreators } from "@/hooks/use-known-creators";
 import { useAssetGroups } from "@/hooks/use-asset-groups";
+import { toast } from "sonner";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -458,6 +459,7 @@ export function AddressBookPanel() {
           prefillNotes={prefillNotes}
           onSave={(entry) => {
             upsert(entry);
+            toast.success("Address saved");
             setShowAddForm(false);
             setPrefillAddress(undefined);
             setPrefillLabel(undefined);
@@ -590,7 +592,7 @@ export function AddressBookPanel() {
                       key={entry.publicKey}
                       entry={entry}
                       onEdit={() => setEditKey(entry.publicKey)}
-                      onRemove={() => remove(entry.publicKey)}
+                      onRemove={() => { remove(entry.publicKey); toast.success("Address removed"); }}
                     />
                   ),
                 )

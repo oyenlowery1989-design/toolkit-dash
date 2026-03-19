@@ -125,8 +125,6 @@ export default function DashboardPage() {
 
   // Initial fetch + re-fetch when network changes.
   useEffect(() => {
-    // fetchData only calls setState after await — this disable is not a silent suppression.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchData();
     return () => {
       abortRef.current?.abort();

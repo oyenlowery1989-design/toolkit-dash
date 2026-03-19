@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
+import { toast } from "sonner";
 import { StrKey } from "stellar-sdk";
 import {
   AlertTriangle,
@@ -36,6 +37,9 @@ import { getErrorMessage } from "@/lib/stellar-helpers";
 import { scanIntermediaryCreations } from "@/lib/intermediary-tracer/fetchers";
 import { detectClusters } from "@/lib/intermediary-tracer/matcher";
 import { useKnownIntermediaries } from "@/hooks/use-known-intermediaries";
+import { useKnownCreators } from "@/hooks/use-known-creators";
+import { useCreatorChildren } from "@/hooks/use-creator-children";
+import type { CreatorChild } from "@/lib/intermediary-tracer/types";
 import { useSavedSearches } from "@/hooks/use-saved-searches";
 import { useIntermediaryHistory, intermediaryHistoryGetSnapshot } from "@/hooks/use-intermediary-history";
 import { LogPanel } from "./LogPanel";
@@ -92,6 +96,8 @@ function exportCsv(results: CreatedAccountEntry[], intermediary: string) {
 export function ScanIntermediaryTab() {
   const { settings } = useSettings();
   const { entries: knownEntries } = useKnownIntermediaries();
+  const { entries: knownCreatorEntries } = useKnownCreators();
+  const { saveChildren, forCreator } = useCreatorChildren();
   const { upsert: upsertHistory } = useSavedSearches();
   const { history: recentSearches, upsert: upsertRecent, remove: removeRecent } = useIntermediaryHistory();
   const abortRef = useRef<AbortController | null>(null);
@@ -108,8 +114,12 @@ export function ScanIntermediaryTab() {
   const [results, setResults] = useState<CreatedAccountEntry[]>([]);
   const [logs, setLogs] = useState<string[]>([]);
   const [hasStarted, setHasStarted] = useState(false);
+  const [savingCluster, setSavingCluster] = useState<string | null>(null); // funder addr being saved
+  const [savedClusters, setSavedClusters] = useState<Set<string>>(new Set());
 
   const addrValid = StrKey.isValidEd25519PublicKey(address.trim());
+  const knownIntermediaryAddrs = new Set(knownEntries.map((e) => e.address));
+  const knownCreatorAddrs = new Set(knownCreatorEntries.map((e) => e.address));
 
   const addLog = (msg: string) => setLogs((prev) => [...prev, msg]);
 
@@ -155,6 +165,10 @@ export function ScanIntermediaryTab() {
           return [...prev, entry];
         }),
       );
+      // Toast on successful completion (not abort)
+      if (!abortRef.current?.signal.aborted) {
+        setResults((prev) => { toast.success(`Scan complete \u2014 ${prev.length} accounts found`); return prev; });
+      }
     } catch (e) {
       if (!abortRef.current?.signal.aborted) {
         const msg = getErrorMessage(e);
@@ -163,6 +177,42 @@ export function ScanIntermediaryTab() {
       }
     } finally {
       setRunning(false);
+    }
+  };
+
+  const handleSaveCluster = async (funderAddr: string, childAddrs: string[]) => {
+    setSavingCluster(funderAddr);
+    try {
+      const network = settings.network;
+      const intermediaryAddr = address.trim();
+      // Build child rows — include homeDomain from existing results
+      const children: CreatorChild[] = childAddrs.map((childAddr) => {
+        const resultRow = results.find((r) => r.account === childAddr);
+        return {
+          id: crypto.randomUUID(),
+          creatorAddress: funderAddr,
+          childAddress: childAddr,
+          network,
+          viaIntermediary: intermediaryAddr,
+          createdOnChain: resultRow?.createdAt,
+          confidence: resultRow?.topFunder?.confidence,
+          startingBalance: resultRow?.startingBalance,
+          homeDomain: resultRow?.homeDomain,
+          discoveredAt: Date.now(),
+        };
+      });
+      const { added } = await saveChildren(children);
+      setSavedClusters((prev) => new Set([...prev, funderAddr]));
+      const alreadyKnown = children.length - added;
+      const msg = alreadyKnown > 0
+        ? `Saved ${added} new · ${alreadyKnown} already known`
+        : `Saved ${added} accounts`;
+      setError(null);
+      addLog(`Cluster saved for ${funderAddr.slice(0, 8)}… — ${msg}`);
+    } catch (e) {
+      setError(getErrorMessage(e));
+    } finally {
+      setSavingCluster(null);
     }
   };
 
@@ -346,7 +396,17 @@ export function ScanIntermediaryTab() {
                     </td>
                     <td className="px-3 py-2 font-mono">
                       {r.topFunder ? (
-                        <ShortAddress address={r.topFunder.address} network={settings.network as "public" | "testnet"} />
+                        <div className="space-y-0.5">
+                          <ShortAddress address={r.topFunder.address} network={settings.network as "public" | "testnet"} />
+                          {(knownIntermediaryAddrs.has(r.topFunder.address) || knownCreatorAddrs.has(r.topFunder.address)) && r.topFunder.address !== address.trim() && (
+                            <span
+                              className="inline-flex items-center gap-1 text-[10px] text-amber-500"
+                              title="This funder is itself a known intermediary or creator — this is not the end-user. Scan this account to find the real origin."
+                            >
+                              ↑ scan this funder for real origin
+                            </span>
+                          )}
+                        </div>
                       ) : r.topFunder === undefined ? (
                         <span className="text-muted-foreground animate-pulse">searching…</span>
                       ) : r.noNativeCandidates ? (
@@ -400,15 +460,44 @@ export function ScanIntermediaryTab() {
             <p className="text-xs text-muted-foreground">
               These addresses appear as the probable funder for multiple accounts — possible mass account creation.
             </p>
-            <div className="space-y-1">
-              {sorted.map(([addr, data]) => (
-                <div key={addr} className="flex items-center gap-3 text-xs">
-                  <ShortAddress address={addr} network={settings.network as "public" | "testnet"} />
-                  <span className="text-muted-foreground">
-                    {data.count} accounts · {data.totalFunded.toFixed(2)} XLM total
-                  </span>
-                </div>
-              ))}
+            <div className="space-y-1.5">
+              {sorted.map(([addr, data]) => {
+                const childAddrs = enriched
+                  .filter((r) => r.topFunder?.address === addr)
+                  .map((r) => r.account);
+                const alreadySaved = savedClusters.has(addr);
+                const existingCount = forCreator(addr, settings.network).length;
+                const isSaving = savingCluster === addr;
+                return (
+                  <div key={addr} className="flex items-center gap-3 text-xs flex-wrap">
+                    <ShortAddress address={addr} network={settings.network as "public" | "testnet"} />
+                    <span className="text-muted-foreground">
+                      {data.count} accounts · {data.totalFunded.toFixed(2)} XLM total
+                    </span>
+                    {existingCount > 0 && !alreadySaved && (
+                      <span className="text-muted-foreground/60">({existingCount} already saved)</span>
+                    )}
+                    <button
+                      type="button"
+                      disabled={isSaving}
+                      onClick={() => handleSaveCluster(addr, childAddrs)}
+                      className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 font-medium transition-colors ${
+                        alreadySaved
+                          ? "bg-green-500/10 text-green-500 border border-green-500/30"
+                          : "bg-primary/10 text-primary border border-primary/30 hover:bg-primary/20"
+                      }`}
+                    >
+                      {isSaving ? (
+                        <Loader2 className="h-2.5 w-2.5 animate-spin" />
+                      ) : alreadySaved ? (
+                        "✓ Saved"
+                      ) : (
+                        `+ Save ${childAddrs.length} accounts`
+                      )}
+                    </button>
+                  </div>
+                );
+              })}
             </div>
           </div>
         );

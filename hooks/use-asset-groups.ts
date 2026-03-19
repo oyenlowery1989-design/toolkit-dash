@@ -1,22 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { createDbCache, dbPost, dbPatch } from "@/lib/db-client";
-
-function dbDeleteGroup(id: string) {
-  fetch(ENDPOINT, {
-    method: "DELETE",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ key: id, type: "group" }),
-  }).catch(() => {});
-}
-function dbDeleteMember(id: string) {
-  fetch(ENDPOINT, {
-    method: "DELETE",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ key: id, type: "member" }),
-  }).catch(() => {});
-}
+import { createDbCache, dbPost, dbPatch, authHeaders, debounce } from "@/lib/db-client";
 import type {
   AssetGroup,
   GroupMember,
@@ -24,6 +9,21 @@ import type {
 } from "@/lib/asset-groups/types";
 
 const ENDPOINT = "/api/db/groups";
+
+function dbDeleteGroup(id: string) {
+  fetch(ENDPOINT, {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ key: id, type: "group" }),
+  }).catch(() => {});
+}
+function dbDeleteMember(id: string) {
+  fetch(ENDPOINT, {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ key: id, type: "member" }),
+  }).catch(() => {});
+}
 const _cache = createDbCache<AssetGroup>();
 
 export function getAssetGroupsSnapshot(): AssetGroup[] {
@@ -42,7 +42,7 @@ export function useAssetGroups() {
     _cache.load(ENDPOINT);
 
     // Re-sync when user returns to this tab (e.g. after saving a group in a new tab)
-    const onFocus = () => _cache.reload(ENDPOINT);
+    const onFocus = debounce(() => _cache.reload(ENDPOINT), 2000);
     window.addEventListener("focus", onFocus);
     return () => {
       unsub();

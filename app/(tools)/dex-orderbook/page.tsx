@@ -94,7 +94,7 @@ function buildAsset(code: string, issuer: string): Asset {
 function assetDisplayName(code: string): string {
   return code.toUpperCase() === "XLM" && code.length <= 3
     ? "XLM"
-    : code.toUpperCase();
+    : code;
 }
 
 // ---------------------------------------------------------------------------
@@ -260,7 +260,7 @@ export default function OrderbookPage() {
       <div>
         <h1 className="text-3xl font-bold tracking-tight">DEX Orderbook</h1>
         <p className="text-muted-foreground mt-2">
-          View bids and asks for any Stellar DEX trading pair.
+          Live bid/ask tables, spread stats, and depth chart for any Stellar DEX pair. Choose from presets or enter any asset code and issuer.
         </p>
       </div>
 
@@ -295,7 +295,7 @@ export default function OrderbookPage() {
                 <Input
                   placeholder="Asset code (e.g. XLM)"
                   value={sellCode}
-                  onChange={(e) => setSellCode(e.target.value.toUpperCase())}
+                  onChange={(e) => setSellCode(e.target.value)}
                   className="font-mono"
                 />
                 <Input
@@ -316,7 +316,7 @@ export default function OrderbookPage() {
                 <Input
                   placeholder="Asset code (e.g. USDC)"
                   value={buyCode}
-                  onChange={(e) => setBuyCode(e.target.value.toUpperCase())}
+                  onChange={(e) => setBuyCode(e.target.value)}
                   className="font-mono"
                 />
                 <Input

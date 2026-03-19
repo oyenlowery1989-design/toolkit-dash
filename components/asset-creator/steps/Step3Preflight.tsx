@@ -105,8 +105,11 @@ export function Step3Preflight({ form, completedSteps, onBack, onComplete }: Pro
   const hasBlockingFail = checks.some((c) => c.blocking && c.status === "fail");
   const hasWarning = checks.some((c) => !c.blocking && c.status === "warning");
 
-  // Validate funding key present on mainnet
-  const needsFundingKey = form.network !== "testnet" && !form.resolvedFundingSecretKey;
+  // Validate funding key present on mainnet — only needed if accounts don't already exist
+  const bothAccountsExist =
+    checks.some((c) => c.id === `exists-${form.issuerPublicKey}` && c.status === "pass") &&
+    checks.some((c) => c.id === `exists-${form.distributorPublicKey}` && c.status === "pass");
+  const needsFundingKey = form.network !== "testnet" && !form.resolvedFundingSecretKey && !bothAccountsExist;
   const canExecute = !checking && !running && !hasBlockingFail && !needsFundingKey && (!hasWarning || warningAcked);
 
   const handleExecute = async () => {
