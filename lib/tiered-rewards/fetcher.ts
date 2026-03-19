@@ -9,19 +9,20 @@ const HORIZON_URLS: Record<string, string> = {
   futurenet: "https://horizon-futurenet.stellar.org",
 };
 
-const MAX_RETRIES = 3;
+const MAX_ATTEMPTS = 3;
 const RETRY_BASE_MS = 500;
 
 /**
  * Fetches all trustline holders of assetCode:assetIssuer via Horizon.
  * Excludes the issuer account itself and zero-balance accounts.
- * Aborts entire scan if any page fails after MAX_RETRIES.
+ * Aborts entire scan if any page fails after MAX_ATTEMPTS attempts.
  */
 export async function fetchHolders(
   assetCode: string,
   assetIssuer: string,
   network: string,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  onLog?: (msg: string) => void
 ): Promise<HolderEntry[]> {
   const horizonUrl = HORIZON_URLS[network] ?? HORIZON_URLS.public;
   const server = new Server(horizonUrl);
@@ -34,7 +35,9 @@ export async function fetchHolders(
 
     let page: any;
     let lastErr: unknown;
-    for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+      const url = `${horizonUrl}/accounts?asset=${assetCode}:${assetIssuer}&limit=200${cursor ? `&cursor=${cursor}` : ""}`;
+      onLog?.(`  GET ${url}`);
       try {
         let builder = server.accounts().forAsset({ code: assetCode, issuer: assetIssuer } as any).limit(200);
         if (cursor) builder = (builder as any).cursor(cursor);
@@ -43,7 +46,7 @@ export async function fetchHolders(
         break;
       } catch (err) {
         lastErr = err;
-        if (attempt < MAX_RETRIES - 1) {
+        if (attempt < MAX_ATTEMPTS - 1) {
           await new Promise((resolve) => setTimeout(resolve, RETRY_BASE_MS * Math.pow(2, attempt)));
         }
       }
@@ -77,8 +80,11 @@ export async function fetchHolders(
       if (balance <= 0) continue;
 
       holders.push({ address: record.id, balance });
-      cursor = record.paging_token;
     }
+
+    // Always advance cursor from the last record — must happen outside the filter block
+    // to prevent infinite loop when an entire page is filtered out (issuer/zero-balance)
+    cursor = records[records.length - 1].paging_token;
 
     if (records.length < 200) break;
   }
