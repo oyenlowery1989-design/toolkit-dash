@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { menuItems, isSeparator } from "@/lib/navigation";
+import { menuItems, isSeparator, isSection } from "@/lib/navigation";
 import type { MenuItem } from "@/lib/navigation";
 import { cn } from "@/lib/utils";
 import { VisuallyHidden } from "@radix-ui/react-visually-hidden";
@@ -17,7 +17,7 @@ export function CommandPalette() {
   const inputRef = useRef<HTMLInputElement>(null);
 
   const navItems = menuItems.filter(
-    (entry): entry is MenuItem => !isSeparator(entry),
+    (entry): entry is MenuItem => !isSeparator(entry) && !isSection(entry),
   );
   const filtered = query
     ? navItems.filter((item) =>
