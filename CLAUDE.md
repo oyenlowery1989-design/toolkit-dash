@@ -47,6 +47,27 @@
 - Propose improvements to the user even if not asked — list them briefly after completing work.
 - Track unfinished features (e.g. `detectClusters` in matcher.ts) and surface them in reviews.
 
+## Standard Module Layout
+- `AppLayout` already wraps all pages in `container mx-auto p-4 md:p-8 max-w-7xl` — **do not add another `max-w-*` or extra padding in `page.tsx`**.
+- Every new page must follow this shell:
+  ```tsx
+  export default function MyPage() {
+    return (
+      <div className="space-y-6">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight">Title</h1>
+          <p className="text-muted-foreground mt-2">Description.</p>
+        </div>
+        <Suspense fallback={<LoadingSpinner />}>
+          <MyPanel />
+        </Suspense>
+      </div>
+    );
+  }
+  ```
+- Always use shared UI components: `<Input>`, `<Button>`, `<Select>` from `@/components/ui`; `<WalletSelect>` for wallet pickers; `<ShortAddress>` for any Stellar address display.
+- Never use raw HTML `<input>`, `<button>`, `<select>` in module UI.
+
 ## Module Inventory
 | Module | Status |
 |---|---|
@@ -73,6 +94,8 @@
 | `settings` | Working — network/Horizon URL + theme config |
 | `transactions` | Working — transaction explorer/viewer |
 | `auto-send-groups` | Working — scheduled XLM distribution groups; see full section below |
+| `tiered-rewards` | Working — tiered per-holder reward distribution; multi-asset tiers; scheduled or manual; batch/separate mode; JSON import; preview modal; run history |
+| `wallet-balances` | Planned — live XLM balance across all saved wallets; filter by folder or asset group; sort by balance; inline add wallet; copy/connect/investigate actions |
 
 ## DB-Backed Hooks (SQLite)
 - All critical user data hooks use `createDbCache<T>()` from `lib/db-client.ts`.
@@ -80,7 +103,6 @@
 - API routes live at `/api/db/{table}`. DB file: `stellar-toolkit.db` in project root.
 - **Do NOT use localStorage for new persistent data** — add a table to `lib/db.ts` and an API route.
 - Intentional localStorage: `use-search-history` factory, `address-generator` page (ephemeral keys, never persisted to DB by design), `use-active-wallet` (mirrors DB for instant restore on mount).
-- `lib/local-store.ts` is orphaned — safe to delete.
 
 ## Snapshot Helpers
 - `getSavedSearchesSnapshot()`, `getBulkRunSnapshot()`, `getSavedAnalysesSnapshot()` return `[]` until `load()` completes.

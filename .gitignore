@@ -7,3 +7,12 @@ coverage/
 !.env.example
 
 .vercel
+
+# Claude Code agent worktrees (temporary, auto-cleaned)
+.claude/worktrees/
+
+# PAI memory (local only)
+MEMORY/
+
+# Brainstorm companion mockups (local only)
+.superpowers/
