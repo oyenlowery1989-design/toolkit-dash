@@ -16,3 +16,6 @@ MEMORY/
 
 # Brainstorm companion mockups (local only)
 .superpowers/
+
+# Git worktrees
+.worktrees/
