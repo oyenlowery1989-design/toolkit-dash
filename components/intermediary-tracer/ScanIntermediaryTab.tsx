@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { StrKey } from "stellar-sdk";
 import {
@@ -121,6 +121,12 @@ export function ScanIntermediaryTab() {
   const knownIntermediaryAddrs = new Set(knownEntries.map((e) => e.address));
   const knownCreatorAddrs = new Set(knownCreatorEntries.map((e) => e.address));
 
+  useEffect(() => {
+    return () => {
+      abortRef.current?.abort();
+    };
+  }, []);
+
   const addLog = (msg: string) => setLogs((prev) => [...prev, msg]);
 
   const handleRun = async () => {
@@ -128,7 +134,8 @@ export function ScanIntermediaryTab() {
     if (!addrValid) return;
 
     abortRef.current?.abort();
-    abortRef.current = new AbortController();
+    const controller = new AbortController();
+    abortRef.current = controller;
 
     setRunning(true);
     setError(null);
@@ -147,13 +154,13 @@ export function ScanIntermediaryTab() {
       upsertRecent({ address: addr, network: settings.network as "public" | "testnet", name: knownName });
       upsertHistory({ type: "intermediary-scan", value: addr, network: settings.network, intermediaryName: knownName });
 
-      await scanIntermediaryCreations(
+      const finalResults = await scanIntermediaryCreations(
         horizonUrl,
         addr,
         fromDate,
         parseInt(windowSec),
         parseInt(tolerancePct),
-        abortRef.current.signal,
+        controller.signal,
         addLog,
         (entry) => setResults((prev) => {
           const idx = prev.findIndex((r) => r.account === entry.account);
@@ -166,11 +173,11 @@ export function ScanIntermediaryTab() {
         }),
       );
       // Toast on successful completion (not abort)
-      if (!abortRef.current?.signal.aborted) {
-        setResults((prev) => { toast.success(`Scan complete \u2014 ${prev.length} accounts found`); return prev; });
+      if (!controller.signal.aborted) {
+        toast.success(`Scan complete \u2014 ${finalResults.length} accounts found`);
       }
     } catch (e) {
-      if (!abortRef.current?.signal.aborted) {
+      if (!controller.signal.aborted) {
         const msg = getErrorMessage(e);
         setError(msg);
         addLog(`ERROR: ${msg}`);
@@ -333,7 +340,15 @@ export function ScanIntermediaryTab() {
             Start Scan
           </Button>
           {running && (
-            <Button variant="outline" onClick={() => abortRef.current?.abort()}>Stop</Button>
+            <Button
+              variant="outline"
+              onClick={() => {
+                abortRef.current?.abort();
+                setRunning(false);
+              }}
+            >
+              Stop
+            </Button>
           )}
           {results.length > 0 && !running && (
             <Button variant="outline" onClick={() => exportCsv(results, address.trim())}>

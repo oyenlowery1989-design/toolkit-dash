@@ -546,6 +546,13 @@ export function AddressInvestigatorTab() {
 
   const abortRef = useRef<AbortController | null>(null);
 
+  useEffect(() => {
+    return () => {
+      abortRef.current?.abort();
+      realCreatorAbortRef.current?.abort();
+    };
+  }, []);
+
   const traceChainStep = async (
     targetAddress: string,
     signal: AbortSignal,
@@ -833,7 +840,8 @@ export function AddressInvestigatorTab() {
     }
 
     abortRef.current?.abort();
-    abortRef.current = new AbortController();
+    const controller = new AbortController();
+    abortRef.current = controller;
 
     setLoading(true);
     setError(null);
@@ -869,7 +877,7 @@ export function AddressInvestigatorTab() {
         fetchAddressInvestigation(
           horizonBase,
           account,
-          abortRef.current.signal,
+          controller.signal,
           (progress) => {
             setProgressText(
               `${progress.phase} (${progress.records.toLocaleString()} records)`,
@@ -879,7 +887,7 @@ export function AddressInvestigatorTab() {
         fetchAllOperations(
           account,
           settings.network,
-          abortRef.current.signal,
+          controller.signal,
           (pages, records) => {
             setProgressText(
               `Loading all transactions… page ${pages} (${records.toLocaleString()} records)`,
@@ -890,11 +898,11 @@ export function AddressInvestigatorTab() {
         fetchClaimableBalancesForAccount(
           account,
           settings.network,
-          abortRef.current.signal,
+          controller.signal,
         ),
       ]);
 
-      if (abortRef.current.signal.aborted) return;
+      if (controller.signal.aborted) return;
       setResult(investigation);
       setHomeDomain((accountDetails as { home_domain?: string }).home_domain ?? null);
       upsertHistory({ address: account, network: settings.network });
@@ -967,7 +975,7 @@ export function AddressInvestigatorTab() {
       setBalancesTrustlines(balanceRows);
       setProgressText("Completed.");
     } catch (e) {
-      if (abortRef.current?.signal.aborted) {
+      if (controller.signal.aborted) {
         setProgressText("Canceled.");
         return;
       }

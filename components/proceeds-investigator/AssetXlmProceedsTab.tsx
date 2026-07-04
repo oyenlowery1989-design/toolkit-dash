@@ -137,6 +137,13 @@ export function AssetXlmProceedsTab() {
 
   useEffect(() => { requestNotificationPermission(); }, []);
 
+  useEffect(() => {
+    return () => {
+      abortRef.current?.abort();
+      inferAbortRef.current?.abort();
+    };
+  }, []);
+
   const tryParseAssetPair = (raw: string): boolean => {
     const match = raw.match(/([A-Za-z0-9]{1,12}):([A-Z2-7]{56})/);
     if (!match) return false;
@@ -267,7 +274,8 @@ export function AssetXlmProceedsTab() {
     }
 
     abortRef.current?.abort();
-    abortRef.current = new AbortController();
+    const controller = new AbortController();
+    abortRef.current = controller;
 
     setLoading(true);
     setError(null);
@@ -286,7 +294,7 @@ export function AssetXlmProceedsTab() {
         assetCode.trim(),
         issuer.trim(),
         resolvedAccounts,
-        abortRef.current.signal,
+        controller.signal,
         (progress) => {
           const hitsPart = progress.hits !== undefined ? ` · ${progress.hits.toLocaleString()} hits` : "";
           setProgressText(
@@ -297,7 +305,7 @@ export function AssetXlmProceedsTab() {
         parsedTo,
       );
 
-      if (abortRef.current.signal.aborted) return;
+      if (controller.signal.aborted) return;
       setResult(summary);
       const trimCode = assetCode.trim();
       const trimIssuer = issuer.trim();
@@ -315,8 +323,14 @@ export function AssetXlmProceedsTab() {
         "https://api.coingecko.com/api/v3/simple/price?ids=stellar&vs_currencies=usd",
       )
         .then((res) => res.json())
-        .then((data) => setXlmUsdPrice(data?.stellar?.usd ?? null))
-        .catch(() => setXlmUsdPrice(null));
+        .then((data) => {
+          if (controller.signal.aborted) return;
+          setXlmUsdPrice(data?.stellar?.usd ?? null);
+        })
+        .catch(() => {
+          if (controller.signal.aborted) return;
+          setXlmUsdPrice(null);
+        });
 
       setProgressText("Completed.");
       notifyIfHidden(
@@ -324,7 +338,7 @@ export function AssetXlmProceedsTab() {
         `${formatXlm(summary.totalXlmProceeds)} XLM proceeds · ${formatXlm(summary.totalAssetSold)} sold`,
       );
     } catch (e) {
-      if (abortRef.current?.signal.aborted) {
+      if (controller.signal.aborted) {
         setProgressText("Canceled.");
         return;
       }
