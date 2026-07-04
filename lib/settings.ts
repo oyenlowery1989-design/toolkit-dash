@@ -101,9 +101,13 @@ function getSnapshot(): Settings {
   const raw = localStorage.getItem(STORAGE_KEY);
   if (raw === cachedRaw) return cachedSnapshot;
   cachedRaw = raw;
-  cachedSnapshot = raw
-    ? { ...DEFAULT_SETTINGS, ...JSON.parse(raw) }
-    : DEFAULT_SETTINGS;
+  try {
+    cachedSnapshot = raw
+      ? { ...DEFAULT_SETTINGS, ...JSON.parse(raw) }
+      : DEFAULT_SETTINGS;
+  } catch {
+    cachedSnapshot = DEFAULT_SETTINGS;
+  }
   return cachedSnapshot;
 }
 

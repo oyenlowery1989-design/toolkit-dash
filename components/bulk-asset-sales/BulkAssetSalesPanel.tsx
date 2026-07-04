@@ -323,23 +323,30 @@ function DestinationsTable({
 // ---------------------------------------------------------------------------
 
 export function BulkAssetSalesPanel() {
-  const [initialState] = useState(getInitialRowsState);
-
   const { settings } = useSettings();
   const { groups } = useAssetGroups();
   const { upsert: upsertSearch } = useSavedSearches();
   const { saveAnalysis } = useSavedAnalyses();
   const [assetsText, setAssetsText] = useState("");
-  const [rows, setRows] = useState<AssetRow[]>(initialState.rows);
+  const [rows, setRows] = useState<AssetRow[]>([]);
   const [running, setRunning] = useState(false);
   const [parseError, setParseError] = useState<string | null>(null);
-  const [interrupted, setInterrupted] = useState(initialState.interrupted);
+  const [interrupted, setInterrupted] = useState(false);
   const [allSaved, setAllSaved] = useState(false);
   const [xlmUsdPrice, setXlmUsdPrice] = useState<number | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     requestNotificationPermission();
+  }, []);
+
+  // SSR output must be empty state; apply any persisted rows after mount.
+  useEffect(() => {
+    const persisted = getInitialRowsState();
+    if (persisted.rows.length || persisted.interrupted) {
+      setRows(persisted.rows);
+      setInterrupted(persisted.interrupted);
+    }
   }, []);
 
   const updateRow = (index: number, patch: Partial<AssetRow>) => {

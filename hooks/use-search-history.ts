@@ -44,7 +44,11 @@ export function createSearchHistory<T extends SearchHistoryEntry>(
     const raw = localStorage.getItem(storageKey);
     if (raw === cachedRaw) return cachedSnapshot;
     cachedRaw = raw;
-    cachedSnapshot = raw ? (JSON.parse(raw) as T[]) : [];
+    try {
+      cachedSnapshot = raw ? (JSON.parse(raw) as T[]) : [];
+    } catch {
+      cachedSnapshot = [];
+    }
     return cachedSnapshot;
   }
 

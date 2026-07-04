@@ -47,6 +47,7 @@ export function useActiveWallet() {
       const lsId = localStorage.getItem(LS_KEY);
       if (lsId) {
         _activeId = lsId;
+        selfHealedRef.current = false;
         notifyAll();
       }
     }
@@ -60,6 +61,7 @@ export function useActiveWallet() {
           const dbId = state[LS_KEY] ?? null;
           if (dbId && dbId !== _activeId) {
             _activeId = dbId;
+            selfHealedRef.current = false;
             if (typeof window !== "undefined") localStorage.setItem(LS_KEY, dbId);
             notifyAll();
           }
@@ -73,6 +75,7 @@ export function useActiveWallet() {
       const newId = e.newValue ?? null;
       if (newId !== _activeId) {
         _activeId = newId;
+        if (newId !== null) selfHealedRef.current = false;
         notifyAll();
       }
     }
@@ -110,7 +113,10 @@ export function useActiveWallet() {
     };
   }, [wallets, activeWallet]);
 
-  const connect = useCallback((id: string) => setActiveWalletId(id), []);
+  const connect = useCallback((id: string) => {
+    selfHealedRef.current = false;
+    setActiveWalletId(id);
+  }, []);
   const disconnect = useCallback(() => setActiveWalletId(null), []);
 
   return { activeWallet, activeId: _activeId, connect, disconnect };
