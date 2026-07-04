@@ -288,55 +288,108 @@ function initDb(): Database.Database {
   `);
 
   // ── Auto-send migrations ──────────────────────────────────────────────────
-  try {
-    const autoSendGroupCols = (db.pragma("table_info(auto_send_groups)") as { name: string }[]).map((c) => c.name);
-    if (autoSendGroupCols.length > 0 && !autoSendGroupCols.includes("secret_key")) {
+  const autoSendGroupCols = (db.pragma("table_info(auto_send_groups)") as { name: string }[]).map((c) => c.name);
+  const autoSendDestCols = (db.pragma("table_info(auto_send_destinations)") as { name: string }[]).map((c) => c.name);
+  const autoSendLogCols = (db.pragma("table_info(auto_send_run_log)") as { name: string }[]).map((c) => c.name);
+
+  if (autoSendGroupCols.length > 0 && !autoSendGroupCols.includes("secret_key")) {
+    try {
       db.exec(`ALTER TABLE auto_send_groups ADD COLUMN secret_key TEXT NOT NULL DEFAULT ''`);
+    } catch (err) {
+      console.error("[db] auto-send migration failed for secret_key (non-fatal):", err);
     }
-    if (autoSendGroupCols.length > 0 && !autoSendGroupCols.includes("batch_send")) {
+  }
+  if (autoSendGroupCols.length > 0 && !autoSendGroupCols.includes("batch_send")) {
+    try {
       db.exec(`ALTER TABLE auto_send_groups ADD COLUMN batch_send INTEGER NOT NULL DEFAULT 0`);
+    } catch (err) {
+      console.error("[db] auto-send migration failed for batch_send (non-fatal):", err);
     }
-    if (autoSendGroupCols.length > 0 && !autoSendGroupCols.includes("batch_memo")) {
+  }
+  if (autoSendGroupCols.length > 0 && !autoSendGroupCols.includes("batch_memo")) {
+    try {
       db.exec(`ALTER TABLE auto_send_groups ADD COLUMN batch_memo TEXT`);
+    } catch (err) {
+      console.error("[db] auto-send migration failed for batch_memo (non-fatal):", err);
     }
-    if (autoSendGroupCols.length > 0 && !autoSendGroupCols.includes("min_reserve")) {
+  }
+  if (autoSendGroupCols.length > 0 && !autoSendGroupCols.includes("min_reserve")) {
+    try {
       db.exec(`ALTER TABLE auto_send_groups ADD COLUMN min_reserve REAL NOT NULL DEFAULT 10.0`);
+    } catch (err) {
+      console.error("[db] auto-send migration failed for min_reserve (non-fatal):", err);
     }
-    const autoSendDestCols = (db.pragma("table_info(auto_send_destinations)") as { name: string }[]).map((c) => c.name);
-    if (autoSendDestCols.length > 0 && !autoSendDestCols.includes("memo")) {
+  }
+  if (autoSendDestCols.length > 0 && !autoSendDestCols.includes("memo")) {
+    try {
       db.exec(`ALTER TABLE auto_send_destinations ADD COLUMN memo TEXT`);
+    } catch (err) {
+      console.error("[db] auto-send migration failed for memo (non-fatal):", err);
     }
-    if (autoSendDestCols.length > 0 && !autoSendDestCols.includes("min_threshold")) {
+  }
+  if (autoSendDestCols.length > 0 && !autoSendDestCols.includes("min_threshold")) {
+    try {
       db.exec(`ALTER TABLE auto_send_destinations ADD COLUMN min_threshold REAL NOT NULL DEFAULT 0`);
+    } catch (err) {
+      console.error("[db] auto-send migration failed for min_threshold (non-fatal):", err);
     }
-    if (autoSendDestCols.length > 0 && !autoSendDestCols.includes("is_remainder")) {
+  }
+  if (autoSendDestCols.length > 0 && !autoSendDestCols.includes("is_remainder")) {
+    try {
       db.exec(`ALTER TABLE auto_send_destinations ADD COLUMN is_remainder INTEGER NOT NULL DEFAULT 0`);
+    } catch (err) {
+      console.error("[db] auto-send migration failed for is_remainder (non-fatal):", err);
     }
-    if (autoSendDestCols.length > 0 && !autoSendDestCols.includes("is_paused")) {
+  }
+  if (autoSendDestCols.length > 0 && !autoSendDestCols.includes("is_paused")) {
+    try {
       db.exec(`ALTER TABLE auto_send_destinations ADD COLUMN is_paused INTEGER NOT NULL DEFAULT 0`);
+    } catch (err) {
+      console.error("[db] auto-send migration failed for is_paused (non-fatal):", err);
     }
-    // run_log migrations
-    const autoSendLogCols = (db.pragma("table_info(auto_send_run_log)") as { name: string }[]).map((c) => c.name);
-    if (autoSendLogCols.length > 0 && !autoSendLogCols.includes("tx_hash")) {
+  }
+  // run_log migrations
+  if (autoSendLogCols.length > 0 && !autoSendLogCols.includes("tx_hash")) {
+    try {
       db.exec(`ALTER TABLE auto_send_run_log ADD COLUMN tx_hash TEXT`);
+    } catch (err) {
+      console.error("[db] auto-send migration failed for tx_hash (non-fatal):", err);
     }
-    // group preview_only
-    if (autoSendGroupCols.length > 0 && !autoSendGroupCols.includes("preview_only")) {
+  }
+  // group preview_only
+  if (autoSendGroupCols.length > 0 && !autoSendGroupCols.includes("preview_only")) {
+    try {
       db.exec(`ALTER TABLE auto_send_groups ADD COLUMN preview_only INTEGER NOT NULL DEFAULT 0`);
+    } catch (err) {
+      console.error("[db] auto-send migration failed for preview_only (non-fatal):", err);
     }
-    // group min_sender_threshold
-    if (autoSendGroupCols.length > 0 && !autoSendGroupCols.includes("min_sender_threshold")) {
+  }
+  // group min_sender_threshold
+  if (autoSendGroupCols.length > 0 && !autoSendGroupCols.includes("min_sender_threshold")) {
+    try {
       db.exec(`ALTER TABLE auto_send_groups ADD COLUMN min_sender_threshold REAL NOT NULL DEFAULT 0`);
+    } catch (err) {
+      console.error("[db] auto-send migration failed for min_sender_threshold (non-fatal):", err);
     }
-    // group last_failure_at
-    if (autoSendGroupCols.length > 0 && !autoSendGroupCols.includes("last_failure_at")) {
+  }
+  // group last_failure_at
+  if (autoSendGroupCols.length > 0 && !autoSendGroupCols.includes("last_failure_at")) {
+    try {
       db.exec(`ALTER TABLE auto_send_groups ADD COLUMN last_failure_at INTEGER`);
+    } catch (err) {
+      console.error("[db] auto-send migration failed for last_failure_at (non-fatal):", err);
     }
-    // destination max_cap
-    if (autoSendDestCols.length > 0 && !autoSendDestCols.includes("max_cap")) {
+  }
+  // destination max_cap
+  if (autoSendDestCols.length > 0 && !autoSendDestCols.includes("max_cap")) {
+    try {
       db.exec(`ALTER TABLE auto_send_destinations ADD COLUMN max_cap REAL NOT NULL DEFAULT 0`);
+    } catch (err) {
+      console.error("[db] auto-send migration failed for max_cap (non-fatal):", err);
     }
-    // Migrate auto_send_wallets → auto_send_destinations if old table still exists
+  }
+  // Migrate auto_send_wallets → auto_send_destinations if old table still exists
+  try {
     const allTables = (db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as { name: string }[]).map((t) => t.name);
     if (allTables.includes("auto_send_wallets") && !allTables.includes("auto_send_destinations")) {
       db.exec(`
@@ -355,24 +408,40 @@ function initDb(): Database.Database {
       `);
     }
   } catch (err) {
-    console.error("[db] auto-send migration failed (non-fatal):", err);
+    console.error("[db] auto-send wallet table migration failed (non-fatal):", err);
   }
 
   // ── Tiered rewards migrations ─────────────────────────────────────────────
-  try {
-    const trCols = (db.pragma("table_info(tiered_reward_configs)") as { name: string }[]).map((c) => c.name);
-    if (trCols.length > 0) {
-      if (!trCols.includes("batch_send"))
+  const trCols = (db.pragma("table_info(tiered_reward_configs)") as { name: string }[]).map((c) => c.name);
+  if (trCols.length > 0) {
+    if (!trCols.includes("batch_send")) {
+      try {
         db.exec(`ALTER TABLE tiered_reward_configs ADD COLUMN batch_send INTEGER NOT NULL DEFAULT 1`);
-      if (!trCols.includes("memo"))
-        db.exec(`ALTER TABLE tiered_reward_configs ADD COLUMN memo TEXT`);
-      if (!trCols.includes("fee_multiplier"))
-        db.exec(`ALTER TABLE tiered_reward_configs ADD COLUMN fee_multiplier REAL NOT NULL DEFAULT 1.0`);
-      if (!trCols.includes("exclude_addresses"))
-        db.exec(`ALTER TABLE tiered_reward_configs ADD COLUMN exclude_addresses TEXT`);
+      } catch (err) {
+        console.error("[db] tiered-rewards migration failed for batch_send (non-fatal):", err);
+      }
     }
-  } catch (err) {
-    console.error("[db] tiered-rewards migration failed (non-fatal):", err);
+    if (!trCols.includes("memo")) {
+      try {
+        db.exec(`ALTER TABLE tiered_reward_configs ADD COLUMN memo TEXT`);
+      } catch (err) {
+        console.error("[db] tiered-rewards migration failed for memo (non-fatal):", err);
+      }
+    }
+    if (!trCols.includes("fee_multiplier")) {
+      try {
+        db.exec(`ALTER TABLE tiered_reward_configs ADD COLUMN fee_multiplier REAL NOT NULL DEFAULT 1.0`);
+      } catch (err) {
+        console.error("[db] tiered-rewards migration failed for fee_multiplier (non-fatal):", err);
+      }
+    }
+    if (!trCols.includes("exclude_addresses")) {
+      try {
+        db.exec(`ALTER TABLE tiered_reward_configs ADD COLUMN exclude_addresses TEXT`);
+      } catch (err) {
+        console.error("[db] tiered-rewards migration failed for exclude_addresses (non-fatal):", err);
+      }
+    }
   }
 
   // ── Known creators migration: add parent_address column if missing ────────
