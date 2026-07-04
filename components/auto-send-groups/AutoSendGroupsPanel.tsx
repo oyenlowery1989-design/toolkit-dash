@@ -64,6 +64,20 @@ function derivePublicKey(secretKey: string): string | null {
   }
 }
 
+// Rejects with an AbortError once `signal` fires — lets `await Promise.race([waitForAuth(), abortRejection(signal)])`
+// bound an otherwise-unbounded wait (e.g. an auth hang) to the same 60s watchdog that guards the fetch itself.
+function abortRejection(signal: AbortSignal): Promise<never> {
+  return new Promise((_, reject) => {
+    const fail = () => {
+      const err = new Error("Timed out waiting for auth");
+      err.name = "AbortError";
+      reject(err);
+    };
+    if (signal.aborted) { fail(); return; }
+    signal.addEventListener("abort", fail, { once: true });
+  });
+}
+
 function intervalLabel(minutes: number | null): string {
   if (!minutes) return "Manual";
   if (minutes < 60) return `Every ${minutes}m`;
@@ -481,7 +495,7 @@ function EditGroupForm({ group, onDone }: { group: { id: string; name: string; n
         </div>
       </div>
       <div className="flex gap-2">
-        <button type="submit" disabled={!name.trim() || !pubkey} className="flex items-center gap-1.5 px-3 py-1.5 rounded bg-violet-600 hover:bg-violet-500 disabled:opacity-40 text-white text-sm font-medium">
+        <button type="submit" disabled={!name.trim() || !keyValid} className="flex items-center gap-1.5 px-3 py-1.5 rounded bg-violet-600 hover:bg-violet-500 disabled:opacity-40 text-white text-sm font-medium">
           <Save size={12} /> Save
         </button>
         <button type="button" onClick={onDone} className="px-3 py-1.5 rounded bg-white/10 hover:bg-white/15 text-white/60 text-sm">Cancel</button>
@@ -748,6 +762,18 @@ function GroupCard({ groupId, runAllStatus }: { groupId: string; runAllStatus?: 
     if (expanded && balance === null) fetchBalance();
   }, [expanded, balance, fetchBalance]);
 
+  // Stale balance would otherwise linger from a previous wallet after a network change — refetch on next expand.
+  // (Secret-key changes are covered separately by EditGroupForm's onDone, since secretKey always reads back as ""
+  // from the API and can't be used as a change-detection dependency here.)
+  useEffect(() => {
+    setBalance(null);
+  }, [group?.network]);
+
+  // A dismissed failure banner must resurface for a NEW failure, not stay hidden forever.
+  useEffect(() => {
+    setDismissedFailure(false);
+  }, [group?.lastFailureAt]);
+
   // Auto-refresh countdown every 10s (shows seconds when < 2m remaining)
   useEffect(() => {
     if (!group?.intervalMinutes) return;
@@ -771,19 +797,27 @@ function GroupCard({ groupId, runAllStatus }: { groupId: string; runAllStatus?: 
     setPreviewError(null);
     setRunResult(null);
     setExpanded(true);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 60000);
     try {
-      await waitForAuth();
+      await Promise.race([waitForAuth(), abortRejection(controller.signal)]);
       const res = await fetch("/api/auto-send/run", {
         method: "POST",
         headers: { "Content-Type": "application/json", ...authHeaders() },
         body: JSON.stringify({ groupId: group!.id, dryRun: true }),
+        signal: controller.signal,
       });
       const data = await res.json();
       if (data.error) setPreviewError(data.error);
       else setPreview(data as GroupPreview);
     } catch (err) {
-      setPreviewError(err instanceof Error ? err.message : "Failed to load preview");
+      if (err instanceof Error && err.name === "AbortError") {
+        setPreviewError("Request timed out after 60s");
+      } else {
+        setPreviewError(err instanceof Error ? err.message : "Failed to load preview");
+      }
     } finally {
+      clearTimeout(timeout);
       setChecking(false);
     }
   }
@@ -795,7 +829,7 @@ function GroupCard({ groupId, runAllStatus }: { groupId: string; runAllStatus?: 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 60000);
     try {
-      await waitForAuth();
+      await Promise.race([waitForAuth(), abortRejection(controller.signal)]);
       const res = await fetch("/api/auto-send/run", {
         method: "POST",
         headers: { "Content-Type": "application/json", ...authHeaders() },
@@ -844,7 +878,7 @@ function GroupCard({ groupId, runAllStatus }: { groupId: string; runAllStatus?: 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 60000);
     try {
-      await waitForAuth();
+      await Promise.race([waitForAuth(), abortRejection(controller.signal)]);
       const res = await fetch("/api/auto-send/run", {
         method: "POST",
         headers: { "Content-Type": "application/json", ...authHeaders() },
@@ -1047,7 +1081,16 @@ function GroupCard({ groupId, runAllStatus }: { groupId: string; runAllStatus?: 
         {/* Delete */}
         {confirmDelete ? (
           <div className="flex items-center gap-1">
-            <button onClick={() => deleteGroup(group.id)} className="px-2 py-1 rounded bg-red-600 hover:bg-red-500 text-white text-xs">Confirm</button>
+            <button
+              onClick={() => {
+                _runResults.delete(group.id);
+                _testResults.delete(group.id);
+                deleteGroup(group.id);
+              }}
+              className="px-2 py-1 rounded bg-red-600 hover:bg-red-500 text-white text-xs"
+            >
+              Confirm
+            </button>
             <button onClick={() => setConfirmDelete(false)} className="px-2 py-1 rounded bg-white/10 text-white/50 text-xs">Cancel</button>
           </div>
         ) : (
@@ -1105,7 +1148,7 @@ function GroupCard({ groupId, runAllStatus }: { groupId: string; runAllStatus?: 
 
           {/* Inline group editor */}
           {editingGroup && (
-            <EditGroupForm group={group} onDone={() => setEditingGroup(false)} />
+            <EditGroupForm group={group} onDone={() => { setEditingGroup(false); setBalance(null); }} />
           )}
 
           {/* Preview error */}
