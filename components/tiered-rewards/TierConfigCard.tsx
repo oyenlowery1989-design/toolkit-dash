@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { ChevronDown, ChevronRight, AlertTriangle, Loader2, Upload, Wallet, Eye, EyeOff, History, Settings2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -123,21 +123,35 @@ export function TierConfigCard({ config, onUpdate, onDelete, onUpsertTier, onDel
 
   // Exclude addresses local edit
   const [excludeDraft, setExcludeDraft] = useState((config.excludeAddresses ?? []).join("\n"));
+  const excludeFocusedRef = useRef(false);
 
   const { activeWallet } = useActiveWallet();
 
   useEffect(() => {
-    if (activeTab === "history" && expanded) {
-      setHistoryLoading(true);
-      waitForAuth().then(() =>
-        fetch(`/api/tiered-rewards/history?configId=${config.id}`, { headers: authHeaders() })
-          .then((r) => r.json())
-          .then((d) => { setHistory(Array.isArray(d) ? d : []); })
-          .catch(() => {})
-          .finally(() => setHistoryLoading(false))
-      );
-    }
+    if (!(activeTab === "history" && expanded)) return;
+    let cancelled = false;
+    setHistoryLoading(true);
+    (async () => {
+      try {
+        await waitForAuth();
+        const res = await fetch(`/api/tiered-rewards/history?configId=${config.id}`, { headers: authHeaders() });
+        const d = await res.json();
+        if (!cancelled) setHistory(Array.isArray(d) ? d : []);
+      } catch {
+        // ignore — history stays empty/unchanged
+      } finally {
+        if (!cancelled) setHistoryLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
   }, [activeTab, expanded, config.id, historyRefreshKey]);
+
+  // Re-sync draft when config prop changes (e.g. focus-reload), but not while the user is actively editing.
+  useEffect(() => {
+    if (!excludeFocusedRef.current) {
+      setExcludeDraft((config.excludeAddresses ?? []).join("\n"));
+    }
+  }, [config.excludeAddresses]);
 
   const intervalLabel = config.intervalMinutes
     ? (INTERVAL_LABELS[config.intervalMinutes] ?? `every ${config.intervalMinutes}m`)
@@ -458,7 +472,9 @@ export function TierConfigCard({ config, onUpdate, onDelete, onUpsertTier, onDel
                       placeholder={"GABC...ISSUER\nGDEF...TEAM"}
                       value={excludeDraft}
                       onChange={(e) => setExcludeDraft(e.target.value)}
+                      onFocus={() => { excludeFocusedRef.current = true; }}
                       onBlur={() => {
+                        excludeFocusedRef.current = false;
                         const addrs = excludeDraft.split("\n").map((s) => s.trim()).filter(Boolean);
                         onUpdate(config.id, { excludeAddresses: addrs });
                       }}

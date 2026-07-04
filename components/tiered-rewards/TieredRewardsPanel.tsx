@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Plus, Loader2, Wallet } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -37,6 +37,14 @@ export function TieredRewardsPanel() {
   const [newSecretKey, setNewSecretKey] = useState("");
   const [newInterval, setNewInterval] = useState("1440");
   const [createError, setCreateError] = useState<string | null>(null);
+  const newNetworkTouchedRef = useRef(false);
+
+  // Re-sync default network when settings hydrate later, unless the user already picked one.
+  useEffect(() => {
+    if (!newNetworkTouchedRef.current) {
+      setNewNetwork(settings.network ?? "public");
+    }
+  }, [settings.network]);
 
   const effectiveSecretKey = activeWallet?.secretKey ?? newSecretKey;
 
@@ -93,7 +101,7 @@ export function TieredRewardsPanel() {
             </div>
             <div>
               <Label className="text-xs">Network</Label>
-              <Select value={newNetwork} onValueChange={setNewNetwork}>
+              <Select value={newNetwork} onValueChange={(v) => { newNetworkTouchedRef.current = true; setNewNetwork(v); }}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="public">Mainnet</SelectItem>

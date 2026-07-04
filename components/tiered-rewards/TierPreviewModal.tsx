@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { AlertTriangle, CheckCircle2, Loader2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -20,6 +20,12 @@ interface Props {
 
 export function TierPreviewModal({ open, onClose, preview, loading, error, onExecute, executing, onExclude }: Props) {
   const [sessionExcluded, setSessionExcluded] = useState<Set<string>>(new Set());
+
+  // Reset session exclusions each time the modal (re)opens so a stale set from a
+  // previous preview doesn't carry over into a new one.
+  useEffect(() => {
+    if (open) setSessionExcluded(new Set());
+  }, [open]);
 
   function handleExclude(address: string) {
     setSessionExcluded((prev) => new Set([...prev, address]));
