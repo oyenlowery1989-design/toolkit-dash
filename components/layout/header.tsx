@@ -40,13 +40,16 @@ function WalletButton() {
       setBalance(null);
       return;
     }
+    let cancelled = false;
     const server = new Horizon.Server(horizonUrl);
     server.loadAccount(activeWallet.publicKey)
       .then((acc: { balances: Array<{ asset_type: string; balance: string }> }) => {
+        if (cancelled) return;
         const native = acc.balances.find((b: { asset_type: string }) => b.asset_type === "native");
         setBalance(native ? parseFloat(native.balance).toFixed(2) : "0.00");
       })
-      .catch(() => setBalance(null));
+      .catch(() => { if (!cancelled) setBalance(null); });
+    return () => { cancelled = true; };
   }, [activeWallet, horizonUrl]);
 
   // Close dropdown when clicking outside

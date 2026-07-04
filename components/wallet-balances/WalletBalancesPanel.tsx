@@ -118,6 +118,14 @@ export function WalletBalancesPanel() {
   // Abort controller for in-flight balance fetches
   const abortRef = useRef<AbortController | null>(null);
 
+  // Mounted guard — prevents setState after unmount for fetches (e.g. the
+  // add-wallet balance lookup) that aren't tied to abortRef's controller.
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
+
   // ---------------------------------------------------------------------------
   // Balance fetching — dep is walletKeys (stable across renames/reorders)
   // ---------------------------------------------------------------------------
@@ -161,7 +169,12 @@ export function WalletBalancesPanel() {
 
   async function retrySingle(publicKey: string) {
     setBalances((prev) => ({ ...prev, [publicKey]: "loading" }));
-    const result = await fetchXlmBalance(horizonUrl, publicKey);
+    // Reuse the panel's in-flight abort controller (if any) so a stale retry
+    // can't overwrite state after the bulk fetch was cancelled/superseded
+    // (refreshKey change) or the component unmounted.
+    const signal = abortRef.current?.signal;
+    const result = await fetchXlmBalance(horizonUrl, publicKey, signal);
+    if (signal?.aborted) return;
     setBalances((prev) => ({ ...prev, [publicKey]: result }));
   }
 
@@ -288,6 +301,7 @@ export function WalletBalancesPanel() {
     addWallet(newFolderId, newName.trim(), publicKey, newSecretKey.trim());
 
     const result = await fetchXlmBalance(horizonUrl, publicKey);
+    if (!mountedRef.current) return;
     setBalances((prev) => ({ ...prev, [publicKey]: result }));
 
     resetForm();

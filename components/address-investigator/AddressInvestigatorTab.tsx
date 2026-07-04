@@ -498,11 +498,7 @@ export function AddressInvestigatorTab() {
   const [address, setAddress] = useState(
     () => urlAddress ?? addressHistoryGetSnapshot()[0]?.address ?? "",
   );
-
-  // Sync address field if URL param changes (e.g. navigated from another module)
-  useEffect(() => {
-    if (urlAddress) setAddress(urlAddress);
-  }, [urlAddress]);
+  const lastUrlAddressRunRef = useRef<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [progressText, setProgressText] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -552,6 +548,43 @@ export function AddressInvestigatorTab() {
       realCreatorAbortRef.current?.abort();
     };
   }, []);
+
+  // Deep-link: when the URL ?address= param changes (e.g. "Investigate" from
+  // Wallet Balances), set the input, clear any stale result state from the
+  // previous address, and auto-run the investigation for the new address.
+  // Guarded so each distinct param value fires exactly once.
+  useEffect(() => {
+    if (!urlAddress) return;
+    if (lastUrlAddressRunRef.current === urlAddress) return;
+    lastUrlAddressRunRef.current = urlAddress;
+
+    setAddress(urlAddress);
+    setError(null);
+    setResult(null);
+    setOperations([]);
+    setVisibleCount(DISPLAY_PAGE_SIZE);
+    setCategoryFilter("all");
+    setPaymentAssetSelection("all");
+    setPaymentAssetQuery("");
+    setTrustlineAssetOptions([]);
+    setBalancesTrustlines([]);
+    setOpsFetchWarning(null);
+    setOpsFetchMeta(null);
+    setClaimableBalances([]);
+    setClaimableVisibleCount(CLAIMABLE_DISPLAY_PAGE_SIZE);
+    setClaimableWarning(null);
+    setHomeDomain(null);
+    setSearched(false);
+    setProgressText(null);
+    realCreatorAbortRef.current?.abort();
+    setAddressChain({ status: "idle", chain: [] });
+
+    handleRun(urlAddress);
+    // handleRun is intentionally omitted from deps — it's stable in shape
+    // (recreated each render) but re-invoking on its identity change would
+    // defeat the "once per param value" guard above.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [urlAddress]);
 
   const traceChainStep = async (
     targetAddress: string,
@@ -832,8 +865,8 @@ export function AddressInvestigatorTab() {
     };
   }
 
-  const handleRun = async () => {
-    const account = address.trim();
+  const handleRun = async (addressOverride?: string) => {
+    const account = (addressOverride ?? address).trim();
     if (!StrKey.isValidEd25519PublicKey(account)) {
       setError("Address is not a valid Stellar public key.");
       return;
@@ -1105,7 +1138,7 @@ export function AddressInvestigatorTab() {
           )}
         </CardContent>
         <CardFooter className="flex gap-2">
-          <Button onClick={handleRun} disabled={loading}>
+          <Button onClick={() => handleRun()} disabled={loading}>
             {loading ? (
               <Loader2 className="mr-2 h-4 w-4 animate-spin" />
             ) : (
