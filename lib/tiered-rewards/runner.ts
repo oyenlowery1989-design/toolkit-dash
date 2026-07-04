@@ -1,6 +1,7 @@
 import { Keypair, TransactionBuilder, Operation, Asset, Horizon, Memo } from "stellar-sdk";
 import type { TieredRewardConfig, TierAssignment, RunLogRow } from "./types";
 import { getDb } from "@/lib/db";
+import { withAccountLock, isBadSeq } from "@/lib/stellar-submit";
 
 const { Server } = Horizon;
 
@@ -188,6 +189,40 @@ async function runTier(
         }))
       );
     } catch (err) {
+      // Retry once on tx_bad_seq — reload account, rebuild the same batch, resubmit.
+      // Only fall through to the abort/no-trust handling if the retry also fails.
+      if (isBadSeq(err)) {
+        try {
+          const retryAccount = await server.loadAccount(senderAddress);
+          const retryBuilder = applyMemo(new TransactionBuilder(retryAccount, { fee: baseFee, networkPassphrase }));
+          for (const op of batch) {
+            retryBuilder.addOperation(
+              Operation.payment({
+                destination: op.holder,
+                asset: buildStellarAsset(op.assetCode, op.assetIssuer),
+                amount: op.amount.toFixed(7),
+              })
+            );
+          }
+          const retryTx = retryBuilder.setTimeout(30).build();
+          retryTx.sign(keypair);
+          const retryResponse = await server.submitTransaction(retryTx);
+          const retryTxHash = (retryResponse as { hash?: string }).hash;
+
+          insertLogRows(
+            batch.map((op) => ({
+              configId, tierNumber: tier.tierNumber, holderAddress: op.holder,
+              assetCode: op.assetCode, assetIssuer: op.assetIssuer,
+              amountSent: op.amount, status: "sent" as const, txHash: retryTxHash, ranAt,
+            }))
+          );
+          batchStart += BATCH_SIZE;
+          continue;
+        } catch (retryErr) {
+          err = retryErr;
+        }
+      }
+
       const opCodes = getOpResultCodes(err);
       const hasNoTrust = opCodes?.some((c) => c === "op_no_trust");
 
@@ -242,7 +277,24 @@ export interface RunResult {
   totalFailed: number;
 }
 
+/** Wrapped in a per-account mutex so concurrent runs (manual + scheduler) can't race
+ *  on the same sender account's sequence number. */
 export async function runConfig(
+  config: TieredRewardConfig,
+  assignments: TierAssignment[]
+): Promise<RunResult | { error: string }> {
+  if (!config.secretKey) return runConfigInner(config, assignments);
+  let keypair: Keypair;
+  try {
+    keypair = Keypair.fromSecret(config.secretKey);
+  } catch {
+    // Invalid secret key — let runConfigInner produce the same error result; no account to lock.
+    return runConfigInner(config, assignments);
+  }
+  return withAccountLock(keypair.publicKey(), () => runConfigInner(config, assignments));
+}
+
+async function runConfigInner(
   config: TieredRewardConfig,
   assignments: TierAssignment[]
 ): Promise<RunResult | { error: string }> {

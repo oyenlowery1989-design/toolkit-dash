@@ -210,6 +210,13 @@ export async function addTrustlineBulk(opts: AddTrustlineBulkOptions): Promise<v
             error: errMsg,
           });
         }
+
+        // Reload account so sequence number is correct for next batch
+        try {
+          account = await server.loadAccount(pubkey);
+        } catch {
+          break;
+        }
       }
     }
   }
@@ -405,6 +412,13 @@ export async function drainAndRemoveBulk(opts: DrainAndRemoveBulkOptions): Promi
         const errMsg = extractHorizonError(e);
         for (const a of batch) {
           onResult?.({ accountPubkey: pubkey, assetCode: a.code, issuer: a.issuer, status: "error", error: errMsg });
+        }
+
+        // Reload account so sequence number is correct for next batch
+        try {
+          account = await server.loadAccount(pubkey);
+        } catch {
+          break;
         }
       }
     }

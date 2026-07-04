@@ -8,6 +8,7 @@ import {
 } from "stellar-sdk";
 import type { AutoSendGroup, DestinationRunResult, GroupRunResult, GroupPreview } from "./types";
 import { getDb } from "@/lib/db";
+import { withAccountLock } from "@/lib/stellar-submit";
 const { Server } = Horizon;
 
 const HORIZON_URLS: Record<string, string> = {
@@ -182,8 +183,21 @@ export async function previewGroup(group: AutoSendGroup): Promise<GroupPreview |
 }
 
 /** Execute the group run. Separate mode sends one tx per destination with its own memo.
- *  Batch mode sends all destinations in a single transaction with optional group-level memo. */
+ *  Batch mode sends all destinations in a single transaction with optional group-level memo.
+ *  Wrapped below in a per-account mutex so concurrent runs (manual + scheduler) can't race
+ *  on the same account's sequence number. */
 export async function runGroup(group: AutoSendGroup): Promise<GroupRunResult> {
+  let keypair: Keypair;
+  try {
+    keypair = Keypair.fromSecret(group.secretKey);
+  } catch {
+    // Invalid secret key — let runGroupInner produce the same error result; no account to lock.
+    return runGroupInner(group);
+  }
+  return withAccountLock(keypair.publicKey(), () => runGroupInner(group));
+}
+
+async function runGroupInner(group: AutoSendGroup): Promise<GroupRunResult> {
   const horizonUrl = HORIZON_URLS[group.network] ?? HORIZON_URLS.public;
   const networkPassphrase = NETWORK_PASSPHRASES[group.network] ?? NETWORK_PASSPHRASES.public;
   const server = new Server(horizonUrl);
