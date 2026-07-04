@@ -124,6 +124,7 @@ export function TierConfigCard({ config, onUpdate, onDelete, onUpsertTier, onDel
   // Exclude addresses local edit
   const [excludeDraft, setExcludeDraft] = useState((config.excludeAddresses ?? []).join("\n"));
   const excludeFocusedRef = useRef(false);
+  const draftAtFocusRef = useRef(excludeDraft);
 
   const { activeWallet } = useActiveWallet();
 
@@ -472,9 +473,15 @@ export function TierConfigCard({ config, onUpdate, onDelete, onUpsertTier, onDel
                       placeholder={"GABC...ISSUER\nGDEF...TEAM"}
                       value={excludeDraft}
                       onChange={(e) => setExcludeDraft(e.target.value)}
-                      onFocus={() => { excludeFocusedRef.current = true; }}
+                      onFocus={() => { excludeFocusedRef.current = true; draftAtFocusRef.current = excludeDraft; }}
                       onBlur={() => {
                         excludeFocusedRef.current = false;
+                        if (excludeDraft === draftAtFocusRef.current) {
+                          // No edit made while focused — resync to the latest server value
+                          // instead of writing back the (possibly stale) draft.
+                          setExcludeDraft((config.excludeAddresses ?? []).join("\n"));
+                          return;
+                        }
                         const addrs = excludeDraft.split("\n").map((s) => s.trim()).filter(Boolean);
                         onUpdate(config.id, { excludeAddresses: addrs });
                       }}
