@@ -22,12 +22,18 @@ export interface TieredRewardConfig {
   assetCode: string;       // asset to scan holders for
   assetIssuer: string;
   network: string;         // "testnet" | "public" | "futurenet"
-  secretKey: string;
+  secretKey: string | null;  // null on GET responses — key stays server-side
+  /** True when a secret key is saved server-side; secretKey will be null on GET responses. */
+  hasKey?: boolean;
   intervalMinutes: number | null;  // null = manual only
   enabled: boolean;
   minReserve: number;              // default 10.0 XLM
   minSenderThreshold: number;      // default 0 (disabled)
   previewOnly: boolean;
+  batchSend: boolean;              // true = batch 100 ops/tx, false = 1 op/tx
+  memo: string | null;             // optional tx memo (max 28 chars)
+  feeMultiplier: number;           // base fee multiplier (default 1.0)
+  excludeAddresses: string[];      // addresses to exclude from rewards
   lastRunAt?: number;              // Unix ms
   lastFailureAt?: number;          // Unix ms
   createdAt: number;               // Unix ms
@@ -61,6 +67,7 @@ export interface RewardsPreview {
   costItems: TierCostItem[];
   blocked: boolean;        // true if any shortfall or missing trustline
   blockReasons: string[];
+  holderOnlyPreview?: true; // true when no secret key — cost/balance data unavailable
 }
 
 export interface RunLogRow {

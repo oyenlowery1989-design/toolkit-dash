@@ -23,6 +23,11 @@ async function loadSenderAssetBalances(
   const account = await server.loadAccount(senderAddress);
   for (const key of assetKeys) {
     const [code, issuer] = key.split(":");
+    // If sender IS the issuer, they can send unlimited — no trustline needed
+    if (issuer === senderAddress) {
+      result.set(key, { balance: Number.MAX_SAFE_INTEGER, hasTrustline: true });
+      continue;
+    }
     const entry = account.balances.find(
       (b: { asset_type: string; asset_code?: string; asset_issuer?: string }) =>
         (b.asset_type === "credit_alphanum4" || b.asset_type === "credit_alphanum12") &&
@@ -43,6 +48,29 @@ export async function calculatePreview(
 ): Promise<RewardsPreview | { error: string }> {
   const horizonUrl = HORIZON_URLS[config.network] ?? HORIZON_URLS.public;
   const server = new Server(horizonUrl);
+
+  // No key = holder-only preview (tier assignments without balance/cost check)
+  if (!config.secretKey) {
+    let holders;
+    try {
+      holders = await fetchHolders(config.assetCode, config.assetIssuer, config.network, signal);
+    } catch (err) {
+      return { error: err instanceof Error ? err.message : String(err) };
+    }
+    const excludeSet = new Set(config.excludeAddresses ?? []);
+    const filtered = holders.filter((h) => !excludeSet.has(h.address));
+    const assignments = assignHoldersToTiers(filtered, config.tiers);
+    return {
+      configId: config.id,
+      senderAddress: "",
+      xlmBalance: 0,
+      assignments,
+      costItems: [],
+      blocked: true,
+      blockReasons: ["Sender secret key required to check balances and execute"],
+      holderOnlyPreview: true,
+    };
+  }
 
   let keypair: Keypair;
   try {
@@ -69,7 +97,9 @@ export async function calculatePreview(
     return { error: err instanceof Error ? err.message : String(err) };
   }
 
-  const assignments = assignHoldersToTiers(holders, config.tiers);
+  const excludeSet = new Set(config.excludeAddresses ?? []);
+  const filteredHolders = holders.filter((h) => !excludeSet.has(h.address));
+  const assignments = assignHoldersToTiers(filteredHolders, config.tiers);
 
   const nonNativeKeys = new Set<string>();
   for (const assignment of assignments) {

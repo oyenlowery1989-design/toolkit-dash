@@ -1,6 +1,6 @@
 # Wallet Balances Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Build a standalone module that shows live XLM balances for all saved wallets, with folder/group filtering, sorting, inline wallet add, and per-row actions.
 
@@ -26,7 +26,7 @@
 - Create: `app/(tools)/wallet-balances/page.tsx`
 - Modify: `lib/navigation.ts`
 
-- [ ] **Step 1: Create the page file**
+- [x] **Step 1: Create the page file**
 
 ```tsx
 // app/(tools)/wallet-balances/page.tsx
@@ -58,7 +58,7 @@ export default function WalletBalancesPage() {
 }
 ```
 
-- [ ] **Step 2: Add navigation entry to `lib/navigation.ts`**
+- [x] **Step 2: Add navigation entry to `lib/navigation.ts`**
 
 Add `LayoutList` to the existing lucide-react import at the top of `lib/navigation.ts`:
 
@@ -79,7 +79,7 @@ Then insert after the Tiered Rewards entry (after `href: "/tiered-rewards"`):
   },
 ```
 
-- [ ] **Step 3: Create the panel stub so the page compiles**
+- [x] **Step 3: Create the panel stub so the page compiles**
 
 ```tsx
 // components/wallet-balances/WalletBalancesPanel.tsx
@@ -90,7 +90,7 @@ export function WalletBalancesPanel() {
 }
 ```
 
-- [ ] **Step 4: Verify it compiles**
+- [x] **Step 4: Verify it compiles**
 
 ```bash
 npx tsc --noEmit
@@ -98,7 +98,7 @@ npx tsc --noEmit
 
 Expected: no errors.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add app/(tools)/wallet-balances/page.tsx components/wallet-balances/WalletBalancesPanel.tsx lib/navigation.ts
@@ -112,7 +112,7 @@ git commit -m "feat(wallet-balances): add page shell and navigation entry"
 **Files:**
 - Modify: `components/wallet-balances/WalletBalancesPanel.tsx`
 
-- [ ] **Step 1: Replace stub with data wiring and stats bar**
+- [x] **Step 1: Replace stub with data wiring and stats bar**
 
 ```tsx
 // components/wallet-balances/WalletBalancesPanel.tsx
@@ -220,7 +220,7 @@ export function WalletBalancesPanel() {
 }
 ```
 
-- [ ] **Step 2: Verify no TypeScript errors**
+- [x] **Step 2: Verify no TypeScript errors**
 
 ```bash
 npx tsc --noEmit
@@ -228,7 +228,7 @@ npx tsc --noEmit
 
 Expected: no errors.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add components/wallet-balances/WalletBalancesPanel.tsx
@@ -242,7 +242,7 @@ git commit -m "feat(wallet-balances): add balance fetching and stats bar"
 **Files:**
 - Modify: `components/wallet-balances/WalletBalancesPanel.tsx`
 
-- [ ] **Step 1: Add filter + search state, imports, and toolbar UI**
+- [x] **Step 1: Add filter + search state, imports, and toolbar UI**
 
 Add to the existing imports at the top of the file:
 
@@ -345,7 +345,7 @@ Also update the empty-state condition to use `visibleWallets`:
       )}
 ```
 
-- [ ] **Step 2: Verify no TypeScript errors**
+- [x] **Step 2: Verify no TypeScript errors**
 
 ```bash
 npx tsc --noEmit
@@ -353,7 +353,7 @@ npx tsc --noEmit
 
 Expected: no errors.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add components/wallet-balances/WalletBalancesPanel.tsx
@@ -367,7 +367,7 @@ git commit -m "feat(wallet-balances): add filter toolbar and search"
 **Files:**
 - Modify: `components/wallet-balances/WalletBalancesPanel.tsx`
 
-- [ ] **Step 1: Add sort state and table UI**
+- [x] **Step 1: Add sort state and table UI**
 
 Add these imports at the top:
 
@@ -510,7 +510,7 @@ Replace the empty-state blocks with the full table (keep the empty-states, add t
       )}
 ```
 
-- [ ] **Step 2: Verify no TypeScript errors**
+- [x] **Step 2: Verify no TypeScript errors**
 
 ```bash
 npx tsc --noEmit
@@ -518,7 +518,7 @@ npx tsc --noEmit
 
 Expected: no errors.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add components/wallet-balances/WalletBalancesPanel.tsx
@@ -532,7 +532,7 @@ git commit -m "feat(wallet-balances): add wallet table with sort and actions"
 **Files:**
 - Modify: `components/wallet-balances/WalletBalancesPanel.tsx`
 
-- [ ] **Step 1: Add imports and form state**
+- [x] **Step 1: Add imports and form state**
 
 Add to existing imports (Input and Select already imported in Task 3 — only add new ones):
 
@@ -551,7 +551,7 @@ Add form state inside the component (after existing state):
   const [addLoading, setAddLoading] = useState(false);
 ```
 
-- [ ] **Step 2: Add handleAddWallet function**
+- [x] **Step 2: Add handleAddWallet function**
 
 (`addWallet` is already destructured from `useWalletsV2()` in Task 2.)
 
@@ -578,7 +578,7 @@ Add form state inside the component (after existing state):
   }
 ```
 
-- [ ] **Step 3: Add form UI after the table**
+- [x] **Step 3: Add form UI after the table**
 
 Add after the table block, still inside the outer `<div className="space-y-4">`:
 
@@ -618,7 +618,7 @@ Add after the table block, still inside the outer `<div className="space-y-4">`:
       )}
 ```
 
-- [ ] **Step 4: Verify no TypeScript errors**
+- [x] **Step 4: Verify no TypeScript errors**
 
 ```bash
 npx tsc --noEmit
@@ -626,7 +626,7 @@ npx tsc --noEmit
 
 Expected: no errors.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add components/wallet-balances/WalletBalancesPanel.tsx
@@ -641,7 +641,7 @@ git commit -m "feat(wallet-balances): add inline wallet form with keypair valida
 - Modify: `components/wallet-balances/WalletBalancesPanel.tsx`
 - Modify: `CLAUDE.md`
 
-- [ ] **Step 1: Fix stats to reflect visible (filtered) wallets**
+- [x] **Step 1: Fix stats to reflect visible (filtered) wallets**
 
 Replace the stats calculations to use `visibleWallets` instead of all `wallets`:
 
@@ -660,7 +660,7 @@ Also update the **Wallets** stat card to show `visibleWallets.length`:
           <p className="text-xl font-bold mt-0.5">{visibleWallets.length}</p>
 ```
 
-- [ ] **Step 2: Update CLAUDE.md module inventory**
+- [x] **Step 2: Update CLAUDE.md module inventory**
 
 Change the `wallet-balances` row from `Planned` to `Working`:
 
@@ -668,7 +668,7 @@ Change the `wallet-balances` row from `Planned` to `Working`:
 | `wallet-balances` | Working — live XLM balance across all saved wallets; filter by folder or asset group; sort by balance; inline add wallet; copy/connect/investigate actions |
 ```
 
-- [ ] **Step 3: Verify no TypeScript errors**
+- [x] **Step 3: Verify no TypeScript errors**
 
 ```bash
 npx tsc --noEmit
@@ -676,7 +676,7 @@ npx tsc --noEmit
 
 Expected: no errors.
 
-- [ ] **Step 4: Final commit**
+- [x] **Step 4: Final commit**
 
 ```bash
 git add components/wallet-balances/WalletBalancesPanel.tsx CLAUDE.md

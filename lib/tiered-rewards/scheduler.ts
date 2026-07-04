@@ -5,12 +5,14 @@
  */
 
 import type { ScheduledTask } from "node-cron";
-import type { TieredRewardConfig, Tier, RewardAsset } from "./types";
+import type { TieredRewardConfig } from "./types";
 
 declare global {
   var _tieredRewardsTasks: Map<string, ScheduledTask> | undefined;
   var _tieredRewardsStarted: boolean | undefined;
 }
+
+const _runningConfigs = new Set<string>();
 
 function getDb() {
   const { getDb: _getDb } = require("@/lib/db");
@@ -19,60 +21,8 @@ function getDb() {
 
 function loadEnabledConfigs(): TieredRewardConfig[] {
   try {
-    const db = getDb();
-    const configs = db
-      .prepare(
-        `SELECT * FROM tiered_reward_configs WHERE enabled = 1 AND interval_minutes IS NOT NULL ORDER BY created_at ASC`
-      )
-      .all() as Record<string, unknown>[];
-
-    return configs.map((c) => {
-      const tiers = db
-        .prepare(`SELECT * FROM tiered_reward_tiers WHERE config_id = ? ORDER BY position ASC`)
-        .all(c.id) as Record<string, unknown>[];
-
-      const mappedTiers: Tier[] = tiers.map((t) => {
-        const assets = db
-          .prepare(`SELECT * FROM tiered_reward_assets WHERE tier_id = ? ORDER BY rowid ASC`)
-          .all(t.id) as Record<string, unknown>[];
-
-        const mappedAssets: RewardAsset[] = assets.map((a) => ({
-          id: a.id as string,
-          tierId: a.tier_id as string,
-          assetCode: a.asset_code as string,
-          assetIssuer: (a.asset_issuer as string) ?? undefined,
-          amount: a.amount as number,
-        }));
-
-        return {
-          id: t.id as string,
-          configId: t.config_id as string,
-          tierNumber: t.tier_number as number,
-          minTokens: t.min_tokens as number,
-          maxTokens: (t.max_tokens as number) ?? undefined,
-          position: t.position as number,
-          assets: mappedAssets,
-        };
-      });
-
-      return {
-        id: c.id as string,
-        name: c.name as string,
-        assetCode: c.asset_code as string,
-        assetIssuer: c.asset_issuer as string,
-        network: (c.network as string) ?? "public",
-        secretKey: (c.secret_key as string) ?? "",
-        intervalMinutes: c.interval_minutes as number,
-        enabled: true,
-        minReserve: (c.min_reserve as number) ?? 10.0,
-        minSenderThreshold: (c.min_sender_threshold as number) ?? 0,
-        previewOnly: (c.preview_only as number) === 1,
-        lastRunAt: (c.last_run_at as number) ?? undefined,
-        lastFailureAt: (c.last_failure_at as number) ?? undefined,
-        createdAt: c.created_at as number,
-        tiers: mappedTiers,
-      };
-    });
+    const { loadEnabledConfigs: _load } = require("./db") as typeof import("./db");
+    return _load(getDb());
   } catch (err) {
     console.error("[tiered-rewards] Failed to load configs from DB:", err);
     return [];
@@ -107,6 +57,11 @@ function scheduleAll(): void {
     if (!config.intervalMinutes) continue;
     const expr = minutesToCronExpression(config.intervalMinutes);
     const task = cron.schedule(expr, async () => {
+      if (_runningConfigs.has(config.id)) {
+        console.warn(`[tiered-rewards] Config "${config.name}" still running — skipping tick`);
+        return;
+      }
+      _runningConfigs.add(config.id);
       console.log(`[tiered-rewards] Running config "${config.name}" (${config.id})`);
       try {
         const { calculatePreview } = await import("./calculator");
@@ -184,6 +139,8 @@ function scheduleAll(): void {
         }
       } catch (err) {
         console.error(`[tiered-rewards] Config "${config.name}" run failed:`, err);
+      } finally {
+        _runningConfigs.delete(config.id);
       }
     });
     tasks.set(config.id, task);
@@ -194,7 +151,5 @@ function scheduleAll(): void {
 /** Call after config changes to reload all schedules. */
 export function refreshTieredRewardsScheduler(): void {
   if (!global._tieredRewardsStarted) return;
-  global._tieredRewardsStarted = false;
-  global._tieredRewardsStarted = true;
   scheduleAll();
 }

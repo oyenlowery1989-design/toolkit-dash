@@ -95,7 +95,7 @@
 | `transactions` | Working — transaction explorer/viewer |
 | `auto-send-groups` | Working — scheduled XLM distribution groups; see full section below |
 | `tiered-rewards` | Working — tiered per-holder reward distribution; multi-asset tiers; scheduled or manual; batch/separate mode; JSON import; preview modal; run history |
-| `wallet-balances` | Planned — live XLM balance across all saved wallets; filter by folder or asset group; sort by balance; inline add wallet; copy/connect/investigate actions |
+| `wallet-balances` | Working — live XLM balance across all saved wallets; filter by folder or asset group; sort by balance; inline add wallet; copy/connect/investigate/send actions |
 
 ## DB-Backed Hooks (SQLite)
 - All critical user data hooks use `createDbCache<T>()` from `lib/db-client.ts`.
@@ -405,4 +405,19 @@ Full `autoCreate` URL param spec:
 - Red `✗ failed` — last run had `failedCount > 0`
 - Yellow `~ skipped` — all skipped, nothing sent or failed
 - `lastFailureAt` (group field) — set by scheduler on failure, cleared on full success; shows red banner in expanded card
+
+## Wallet Balances
+- Route: `app/(tools)/wallet-balances/page.tsx`
+- Panel: `components/wallet-balances/WalletBalancesPanel.tsx`
+- **Purpose**: Live XLM balance for every wallet in Wallet Manager; filter by folder or asset group; sort by balance; inline add wallet
+- **Data sources**: `useWalletsV2`, `useWalletFolders`, `useAssetGroups`, `useActiveWallet`, `useSettings` — no new DB tables
+- **Balance fetch**: `Promise.allSettled` — each wallet resolves independently; `BalanceState = Record<string, "loading" | "error" | number>`
+- **Stable fetch dep**: `walletKeys = useMemo(() => wallets.map(w => w.publicKey).sort().join(","), [wallets])` — prevents re-fetch on wallet rename/reorder
+- **AbortController**: `abortRef = useRef<AbortController | null>(null)` — abort previous fetch on dep change, abort on unmount
+- **Group map**: `walletGroupMap = useMemo(() => new Map<publicKey, {groupName, role}>(), [groups])` — O(1) per-row lookup instead of O(groups×members)
+- **Filter**: `filterMode` = `"all" | "folder" | "group"`; `filterId` holds selected id; `__all__` sentinel for Radix Select (empty string `""` is prohibited)
+- **Add wallet inline**: validates secret key via `Keypair.fromSecret()`; pre-seeds `"loading"` state before `addWallet()` to avoid undefined flash
+- **Secret key indicator**: `KeyRound` icon (yellow, `title` via wrapper `<span>`) if `wallet.secretKey` exists; `Eye` icon (muted) for watch-only wallets
+- **Actions per row**: Copy (2s feedback via `copiedId` state), Connect (`setActiveWallet`), Investigate (`/address-investigator?address=`), Send (`/payments`)
+- **Mobile**: `overflow-x-auto` outer + `min-w-[640px]` on header + rows
 

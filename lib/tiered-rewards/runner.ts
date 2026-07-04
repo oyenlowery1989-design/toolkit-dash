@@ -1,4 +1,4 @@
-import { Keypair, TransactionBuilder, Operation, Asset, Horizon } from "stellar-sdk";
+import { Keypair, TransactionBuilder, Operation, Asset, Horizon, Memo } from "stellar-sdk";
 import type { TieredRewardConfig, TierAssignment, RunLogRow } from "./types";
 import { getDb } from "@/lib/db";
 
@@ -40,6 +40,44 @@ function extractError(err: unknown): string {
   return err instanceof Error ? err.message.slice(0, 200) : String(err).slice(0, 200);
 }
 
+function getOpResultCodes(err: unknown): string[] | null {
+  try {
+    const e = err as Record<string, unknown>;
+    const ops = (e.response as any)?.data?.extras?.result_codes?.operations as string[] | undefined;
+    return ops ?? null;
+  } catch { return null; }
+}
+
+async function sendSingleOp(
+  server: InstanceType<typeof Server>,
+  keypair: Keypair,
+  networkPassphrase: string,
+  op: SendOp,
+  fee = "100",
+  memo: string | null = null
+): Promise<{ txHash?: string; error?: string; skipped?: boolean }> {
+  try {
+    const account = await server.loadAccount(keypair.publicKey());
+    let builder = new TransactionBuilder(account, { fee, networkPassphrase });
+    if (memo) builder = builder.addMemo(Memo.text(memo.slice(0, 28)));
+    builder.addOperation(
+      Operation.payment({
+        destination: op.holder,
+        asset: buildStellarAsset(op.assetCode, op.assetIssuer),
+        amount: op.amount.toFixed(7),
+      })
+    );
+    const tx = builder.setTimeout(30).build();
+    tx.sign(keypair);
+    const response = await server.submitTransaction(tx);
+    return { txHash: (response as { hash?: string }).hash };
+  } catch (err) {
+    const codes = getOpResultCodes(err);
+    if (codes?.[0] === "op_no_trust") return { skipped: true };
+    return { error: extractError(err) };
+  }
+}
+
 function insertLogRows(rows: Omit<RunLogRow, "id">[]): void {
   try {
     const db = getDb();
@@ -73,20 +111,48 @@ async function runTier(
   networkPassphrase: string,
   assignment: TierAssignment,
   configId: string | undefined,
-  ranAt: number
+  ranAt: number,
+  batchSend: boolean,
+  memo: string | null,
+  feeMultiplier: number,
+  excludeSet: Set<string>
 ): Promise<void> {
   const { tier, holders } = assignment;
-  if (holders.length === 0) return;
+  const eligible = holders.filter((h) => !excludeSet.has(h.address));
+  if (eligible.length === 0) return;
 
   const senderAddress = keypair.publicKey();
+  const baseFee = String(Math.round(100 * Math.max(1, feeMultiplier)));
 
   const ops: SendOp[] = [];
-  for (const holder of holders) {
+  for (const holder of eligible) {
     for (const asset of tier.assets) {
       ops.push({ holder: holder.address, assetCode: asset.assetCode, assetIssuer: asset.assetIssuer, amount: asset.amount });
     }
   }
 
+  function applyMemo(builder: TransactionBuilder): TransactionBuilder {
+    if (!memo) return builder;
+    const trimmed = memo.slice(0, 28);
+    return builder.addMemo(Memo.text(trimmed));
+  }
+
+  // Separate mode: always send 1 op per tx
+  if (!batchSend) {
+    for (const op of ops) {
+      const result = await sendSingleOp(server, keypair, networkPassphrase, op, baseFee, memo);
+      if (result.skipped) {
+        insertLogRows([{ configId, tierNumber: tier.tierNumber, holderAddress: op.holder, assetCode: op.assetCode, assetIssuer: op.assetIssuer, amountSent: 0, status: "skipped" as const, error: "No trustline for reward asset", ranAt }]);
+      } else if (result.error) {
+        insertLogRows([{ configId, tierNumber: tier.tierNumber, holderAddress: op.holder, assetCode: op.assetCode, assetIssuer: op.assetIssuer, amountSent: 0, status: "failed" as const, error: result.error, ranAt }]);
+      } else {
+        insertLogRows([{ configId, tierNumber: tier.tierNumber, holderAddress: op.holder, assetCode: op.assetCode, assetIssuer: op.assetIssuer, amountSent: op.amount, status: "sent" as const, txHash: result.txHash, ranAt }]);
+      }
+    }
+    return;
+  }
+
+  // Batch mode: up to BATCH_SIZE ops per tx
   let aborted = false;
   let batchStart = 0;
 
@@ -97,7 +163,7 @@ async function runTier(
 
     try {
       const account = await server.loadAccount(senderAddress);
-      const builder = new TransactionBuilder(account, { fee: "100", networkPassphrase });
+      const builder = applyMemo(new TransactionBuilder(account, { fee: baseFee, networkPassphrase }));
 
       for (const op of batch) {
         builder.addOperation(
@@ -116,53 +182,52 @@ async function runTier(
 
       insertLogRows(
         batch.map((op) => ({
-          configId,
-          tierNumber: tier.tierNumber,
-          holderAddress: op.holder,
-          assetCode: op.assetCode,
-          assetIssuer: op.assetIssuer,
-          amountSent: op.amount,
-          status: "sent" as const,
-          txHash,
-          ranAt,
+          configId, tierNumber: tier.tierNumber, holderAddress: op.holder,
+          assetCode: op.assetCode, assetIssuer: op.assetIssuer,
+          amountSent: op.amount, status: "sent" as const, txHash, ranAt,
         }))
       );
     } catch (err) {
-      const message = extractError(err);
-      aborted = true;
+      const opCodes = getOpResultCodes(err);
+      const hasNoTrust = opCodes?.some((c) => c === "op_no_trust");
 
-      insertLogRows(
-        batch.map((op) => ({
-          configId,
-          tierNumber: tier.tierNumber,
-          holderAddress: op.holder,
-          assetCode: op.assetCode,
-          assetIssuer: op.assetIssuer,
-          amountSent: 0,
-          status: "failed" as const,
-          error: message,
-          ranAt,
-        }))
-      );
+      if (hasNoTrust) {
+        // Retry each op individually — skip no_trust recipients, continue the rest
+        for (const op of batch) {
+          const result = await sendSingleOp(server, keypair, networkPassphrase, op, baseFee, memo);
+          if (result.skipped) {
+            insertLogRows([{ configId, tierNumber: tier.tierNumber, holderAddress: op.holder, assetCode: op.assetCode, assetIssuer: op.assetIssuer, amountSent: 0, status: "skipped" as const, error: "No trustline for reward asset", ranAt }]);
+          } else if (result.error) {
+            aborted = true;
+            insertLogRows([{ configId, tierNumber: tier.tierNumber, holderAddress: op.holder, assetCode: op.assetCode, assetIssuer: op.assetIssuer, amountSent: 0, status: "failed" as const, error: result.error, ranAt }]);
+            break;
+          } else {
+            insertLogRows([{ configId, tierNumber: tier.tierNumber, holderAddress: op.holder, assetCode: op.assetCode, assetIssuer: op.assetIssuer, amountSent: op.amount, status: "sent" as const, txHash: result.txHash, ranAt }]);
+          }
+        }
+      } else {
+        aborted = true;
+        const message = extractError(err);
+        insertLogRows(
+          batch.map((op) => ({
+            configId, tierNumber: tier.tierNumber, holderAddress: op.holder,
+            assetCode: op.assetCode, assetIssuer: op.assetIssuer,
+            amountSent: 0, status: "failed" as const, error: message, ranAt,
+          }))
+        );
+      }
     }
 
     batchStart += BATCH_SIZE;
   }
 
-  // Log remaining ops as aborted if we broke out early
   if (aborted && batchStart < ops.length) {
     const remaining = ops.slice(batchStart);
     insertLogRows(
       remaining.map((op) => ({
-        configId,
-        tierNumber: tier.tierNumber,
-        holderAddress: op.holder,
-        assetCode: op.assetCode,
-        assetIssuer: op.assetIssuer,
-        amountSent: 0,
-        status: "aborted" as const,
-        error: "Aborted — earlier batch failed",
-        ranAt,
+        configId, tierNumber: tier.tierNumber, holderAddress: op.holder,
+        assetCode: op.assetCode, assetIssuer: op.assetIssuer,
+        amountSent: 0, status: "aborted" as const, error: "Aborted — earlier batch failed", ranAt,
       }))
     );
   }
@@ -186,6 +251,7 @@ export async function runConfig(
   const server = new Server(horizonUrl);
   const ranAt = Date.now();
 
+  if (!config.secretKey) return { error: "Sender secret key required to run" };
   let keypair: Keypair;
   try {
     keypair = Keypair.fromSecret(config.secretKey);
@@ -193,14 +259,15 @@ export async function runConfig(
     return { error: "Invalid secret key" };
   }
 
+  const excludeSet = new Set(config.excludeAddresses ?? []);
   for (const assignment of assignments) {
-    await runTier(server, keypair, networkPassphrase, assignment, config.id, ranAt);
+    await runTier(server, keypair, networkPassphrase, assignment, config.id, ranAt, config.batchSend ?? true, config.memo ?? null, config.feeMultiplier ?? 1.0, excludeSet);
   }
 
-  // Update last_run_at
+  // Update last_run_at — leave last_failure_at for the caller to clear on full success
   try {
     const db = getDb();
-    db.prepare("UPDATE tiered_reward_configs SET last_run_at = ?, last_failure_at = NULL WHERE id = ?")
+    db.prepare("UPDATE tiered_reward_configs SET last_run_at = ? WHERE id = ?")
       .run(ranAt, config.id);
   } catch { /* non-fatal */ }
 

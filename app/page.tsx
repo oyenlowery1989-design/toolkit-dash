@@ -21,7 +21,27 @@ import {
   UserSearch,
   Megaphone,
   Wallet,
-  Send,
+  BarChart3,
+  TrendingDown,
+  GitFork,
+  ArrowDownUp,
+  CreditCard,
+  Ghost,
+  Users,
+  SendHorizonal,
+  Trophy,
+  LayoutList,
+  Wand2,
+  ShieldCheck,
+  Link2,
+  FileCode2,
+  BookUser,
+  Layers,
+  BookmarkCheck,
+  Clock,
+  Settings,
+  ChevronDown,
+  ChevronRight,
 } from "lucide-react";
 import { useSettings, NETWORK_LABELS } from "@/lib/settings";
 import { timeAgo, getErrorMessage } from "@/lib/stellar-helpers";
@@ -45,6 +65,264 @@ interface DashboardData {
 }
 
 type FetchStatus = "idle" | "loading" | "live" | "error";
+
+// ---------------------------------------------------------------------------
+// Module registry
+// ---------------------------------------------------------------------------
+
+interface ModuleEntry {
+  title: string;
+  href: string;
+  icon: React.ElementType;
+  description: string;
+  added: string; // YYYY-MM-DD
+}
+
+interface ModuleSection {
+  section: string;
+  modules: ModuleEntry[];
+}
+
+const MODULE_SECTIONS: ModuleSection[] = [
+  {
+    section: "Analysis",
+    modules: [
+      {
+        title: "Asset Lookup",
+        href: "/asset-lookup",
+        icon: Database,
+        description:
+          "Query all accounts holding any Stellar asset. Fetch trustlines, balances, and home domains. Entry point for asset analysis.",
+        added: "2026-03-10",
+      },
+      {
+        title: "Asset Sales",
+        href: "/asset-sales",
+        icon: Coins,
+        description:
+          "Analyze XLM proceeds and distribution for a single asset. Auto-infers the distributor and streams results live.",
+        added: "2026-03-10",
+      },
+      {
+        title: "Bulk Asset Sales",
+        href: "/bulk-asset-sales",
+        icon: TrendingDown,
+        description:
+          "Run Asset Sales analysis across many assets at once. Accepts Lobstr URLs. Auto-saves results to Saved Analyses.",
+        added: "2026-03-10",
+      },
+      {
+        title: "Account Investigator",
+        href: "/address-investigator",
+        icon: UserSearch,
+        description:
+          "Deep-dive into any Stellar account: XLM flow, top senders/recipients, home domain, group membership, and activity stats.",
+        added: "2026-03-10",
+      },
+      {
+        title: "Intermediary Tracer",
+        href: "/intermediary-tracer",
+        icon: GitFork,
+        description:
+          "Trace account creation chains through known intermediaries. Scan an intermediary's payments and detect account clusters.",
+        added: "2026-03-10",
+      },
+      {
+        title: "Transaction Explorer",
+        href: "/transactions",
+        icon: ArrowDownUp,
+        description:
+          "Browse and decode raw Stellar transactions. Inspect operations, effects, and ledger state for any account or transaction hash.",
+        added: "2026-03-10",
+      },
+    ],
+  },
+  {
+    section: "Payments",
+    modules: [
+      {
+        title: "Single Payment",
+        href: "/payments",
+        icon: CreditCard,
+        description:
+          "Send multi-leg payments with path-finding, create claimable balances, build fee-bump transactions, and remove trustlines in one flow.",
+        added: "2026-03-10",
+      },
+      {
+        title: "Bulk Payments",
+        href: "/bulk-payments",
+        icon: Megaphone,
+        description:
+          "Send XLM or any asset to hundreds of addresses in batched transactions. Supports asset-group recipients and min-balance filtering.",
+        added: "2026-03-10",
+      },
+      {
+        title: "Ghost Payments",
+        href: "/ghost-payments",
+        icon: Ghost,
+        description:
+          "Send micro-payments (1 stroop) with memos to prove address ownership or signal eligibility on-chain at negligible cost.",
+        added: "2026-03-07",
+      },
+      {
+        title: "Account Funder",
+        href: "/account-funder",
+        icon: Users,
+        description:
+          "Generate N new keypairs and fund them from a parent account in one step. Supports direct, sponsored, and close-sponsorship modes.",
+        added: "2026-03-10",
+      },
+      {
+        title: "Auto-Send Groups",
+        href: "/auto-send-groups",
+        icon: SendHorizonal,
+        description:
+          "Schedule recurring XLM distributions to fixed-percentage destinations. Supports batch/separate mode, caps, thresholds, and dry runs.",
+        added: "2026-03-10",
+      },
+      {
+        title: "Tiered Rewards",
+        href: "/tiered-rewards",
+        icon: Trophy,
+        description:
+          "Distribute per-holder rewards based on asset balance tiers. Multi-asset, scheduled or manual, with preview modal and run history.",
+        added: "2026-03-19",
+      },
+      {
+        title: "Wallet Balances",
+        href: "/wallet-balances",
+        icon: LayoutList,
+        description:
+          "Live XLM balance snapshot across all saved wallets. Filter by folder or asset group, sort by balance, and act on any wallet inline.",
+        added: "2026-04-26",
+      },
+    ],
+  },
+  {
+    section: "Asset Lifecycle",
+    modules: [
+      {
+        title: "Asset Creator",
+        href: "/asset-creator",
+        icon: Wand2,
+        description:
+          "4-step wizard to mint a new Stellar asset: fund accounts, configure asset, preflight checks, and execute issuance. Auto-saves to Asset Groups.",
+        added: "2026-03-12",
+      },
+      {
+        title: "Token Control",
+        href: "/asset-manager",
+        icon: ShieldCheck,
+        description:
+          "Manage issuer flags (AUTH_REQUIRED, AUTH_REVOCABLE, CLAWBACK) and view all holders with sell-offer detection and freeze/unfreeze actions.",
+        added: "2026-03-10",
+      },
+      {
+        title: "Trustline Manager",
+        href: "/trustline-manager",
+        icon: Link2,
+        description:
+          "Add or remove trustlines one-at-a-time or in bulk (N assets × M accounts). Detects blocking offers and drains before removal.",
+        added: "2026-03-10",
+      },
+      {
+        title: "Soroban Contracts",
+        href: "/soroban",
+        icon: FileCode2,
+        description:
+          "Wrap an existing classic Stellar asset with a Stellar Asset Contract (SAC) for Soroban token interface compatibility.",
+        added: "2026-03-10",
+      },
+    ],
+  },
+  {
+    section: "DEX",
+    modules: [
+      {
+        title: "DEX Orderbook",
+        href: "/dex-orderbook",
+        icon: BarChart3,
+        description:
+          "Real-time bid/ask tables, spread stats, and depth chart for any trading pair on the Stellar DEX.",
+        added: "2026-03-10",
+      },
+    ],
+  },
+  {
+    section: "My Data",
+    modules: [
+      {
+        title: "Address Book",
+        href: "/address-book",
+        icon: BookUser,
+        description:
+          "Personal label store for any Stellar address. Labels surface as badges everywhere via ShortAddress — with live conflict detection.",
+        added: "2026-03-10",
+      },
+      {
+        title: "Asset Groups",
+        href: "/groups",
+        icon: Layers,
+        description:
+          "Organise issuer, distributor, creator, bank, and intermediary addresses into named groups. Context-aware buttons link groups from analysis modules.",
+        added: "2026-03-10",
+      },
+      {
+        title: "Saved Analyses",
+        href: "/saved-analyses",
+        icon: BookmarkCheck,
+        description:
+          "Browse and compare saved asset-sales runs. Aggregate stats bar, cross-asset destination correlation, and table/card view toggle.",
+        added: "2026-03-10",
+      },
+      {
+        title: "Search History",
+        href: "/search-history",
+        icon: Clock,
+        description:
+          "Quick access to recently searched assets with timestamps. Feeds the Dashboard tracked-assets list.",
+        added: "2026-03-10",
+      },
+    ],
+  },
+  {
+    section: "Tools",
+    modules: [
+      {
+        title: "My Wallet",
+        href: "/my-wallet",
+        icon: Wallet,
+        description:
+          "Full overview of the connected wallet: balances, reserve breakdown, signers, open offers, claimable balances, trustlines, and payment history.",
+        added: "2026-03-10",
+      },
+      {
+        title: "Address Generator",
+        href: "/address-generator",
+        icon: Fingerprint,
+        description:
+          "Vanity keypair generator running in a Web Worker. Find Stellar addresses matching a custom prefix or suffix pattern.",
+        added: "2026-03-10",
+      },
+      {
+        title: "Wallet Manager",
+        href: "/wallet-manager",
+        icon: Wallet,
+        description:
+          "Organise wallets in folders, store secret keys in SQLite, connect/disconnect the active wallet, and sync across tabs.",
+        added: "2026-03-08",
+      },
+      {
+        title: "Settings",
+        href: "/settings",
+        icon: Settings,
+        description:
+          "Switch between Mainnet, Testnet, and Futurenet. Configure a custom Horizon URL and toggle light/dark theme.",
+        added: "2026-03-10",
+      },
+    ],
+  },
+];
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -80,6 +358,64 @@ function Skeleton({ className }: { className?: string }) {
 }
 
 // ---------------------------------------------------------------------------
+// ModuleCard
+// ---------------------------------------------------------------------------
+
+function ModuleCard({ mod }: { mod: ModuleEntry }) {
+  const Icon = mod.icon;
+  return (
+    <Link href={mod.href}>
+      <div className="p-3 rounded-lg border border-border bg-card hover:bg-accent/60 transition-colors h-full flex flex-col gap-2">
+        <div className="flex items-center gap-2">
+          <Icon className="h-4 w-4 text-primary shrink-0" />
+          <span className="text-sm font-medium">{mod.title}</span>
+        </div>
+        <p className="text-xs text-muted-foreground leading-relaxed flex-1">
+          {mod.description}
+        </p>
+        <p className="text-[10px] text-muted-foreground/60 mt-auto">
+          Added {mod.added}
+        </p>
+      </div>
+    </Link>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// ModuleSectionBlock
+// ---------------------------------------------------------------------------
+
+function ModuleSectionBlock({ section }: { section: ModuleSection }) {
+  const [open, setOpen] = useState(true);
+
+  return (
+    <div>
+      <button
+        className="flex items-center gap-2 text-sm font-semibold text-muted-foreground hover:text-foreground transition-colors mb-3 w-full text-left"
+        onClick={() => setOpen((v) => !v)}
+      >
+        {open ? (
+          <ChevronDown className="h-4 w-4" />
+        ) : (
+          <ChevronRight className="h-4 w-4" />
+        )}
+        {section.section}
+        <span className="ml-1 text-xs font-normal text-muted-foreground/60">
+          ({section.modules.length})
+        </span>
+      </button>
+      {open && (
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+          {section.modules.map((mod) => (
+            <ModuleCard key={mod.href} mod={mod} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Dashboard
 // ---------------------------------------------------------------------------
 
@@ -106,8 +442,6 @@ export default function DashboardPage() {
     const controller = new AbortController();
     abortRef.current = controller;
 
-    // No synchronous setState here — status is initialised as "loading" and
-    // transitions only on async resolution (after the await below).
     try {
       const result = await fetchDashboardData(horizonUrl, controller.signal);
       if (controller.signal.aborted) return;
@@ -144,6 +478,11 @@ export default function DashboardPage() {
   }, []);
 
   const networkLabel = NETWORK_LABELS[settings.network];
+
+  const totalModules = MODULE_SECTIONS.reduce(
+    (sum, s) => sum + s.modules.length,
+    0,
+  );
 
   return (
     <div className="space-y-8">
@@ -327,8 +666,13 @@ export default function DashboardPage() {
               {wallets.length}
             </div>
             <p className="text-xs text-muted-foreground">
-              <Link href="/wallet-manager" className="hover:underline text-primary">
-                {wallets.length === 0 ? "Add wallets to track" : "Manage in Wallet Manager"}
+              <Link
+                href="/wallet-manager"
+                className="hover:underline text-primary"
+              >
+                {wallets.length === 0
+                  ? "Add wallets to track"
+                  : "Manage in Wallet Manager"}
               </Link>
             </p>
           </CardContent>
@@ -452,7 +796,9 @@ export default function DashboardPage() {
               <div className="p-3 bg-accent rounded-md flex items-center gap-3 hover:bg-accent/80 transition-colors">
                 <UserSearch className="h-5 w-5 text-primary shrink-0" />
                 <div>
-                  <div className="text-sm font-medium">Address Investigator</div>
+                  <div className="text-sm font-medium">
+                    Address Investigator
+                  </div>
                   <div className="text-xs text-muted-foreground">
                     Investigate account-level XLM flows
                   </div>
@@ -465,7 +811,18 @@ export default function DashboardPage() {
                 <div>
                   <div className="text-sm font-medium">Bulk Payments</div>
                   <div className="text-xs text-muted-foreground">
-                    Send memos to many addresses at once
+                    Send payments to many addresses at once
+                  </div>
+                </div>
+              </div>
+            </Link>
+            <Link href="/wallet-balances">
+              <div className="p-3 bg-accent rounded-md flex items-center gap-3 hover:bg-accent/80 transition-colors">
+                <LayoutList className="h-5 w-5 text-primary shrink-0" />
+                <div>
+                  <div className="text-sm font-medium">Wallet Balances</div>
+                  <div className="text-xs text-muted-foreground">
+                    Live XLM balance across all wallets
                   </div>
                 </div>
               </div>
@@ -474,13 +831,14 @@ export default function DashboardPage() {
         </Card>
       </div>
 
-      {/* Recent Activity */}
+      {/* Recent Bulk Payments */}
       {bulkRuns.length > 0 && (
         <Card>
           <CardHeader>
             <CardTitle>Recent Bulk Payments</CardTitle>
             <CardDescription>
-              Last {bulkRuns.length} send run{bulkRuns.length !== 1 ? "s" : ""} across all networks.
+              Last {bulkRuns.length} send run
+              {bulkRuns.length !== 1 ? "s" : ""} across all networks.
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -498,19 +856,30 @@ export default function DashboardPage() {
                 </thead>
                 <tbody>
                   {bulkRuns.slice(0, 5).map((run) => (
-                    <tr key={run.id} className="border-b border-border/50 text-muted-foreground">
+                    <tr
+                      key={run.id}
+                      className="border-b border-border/50 text-muted-foreground"
+                    >
                       <td className="py-2 font-mono text-xs text-foreground max-w-[200px] truncate">
-                        {run.memo || <span className="italic opacity-50">no memo</span>}
+                        {run.memo || (
+                          <span className="italic opacity-50">no memo</span>
+                        )}
                       </td>
                       <td className="py-2 text-xs">
-                        {NETWORK_LABELS[run.network as keyof typeof NETWORK_LABELS] ?? run.network}
+                        {NETWORK_LABELS[
+                          run.network as keyof typeof NETWORK_LABELS
+                        ] ?? run.network}
                       </td>
-                      <td className="py-2 text-right tabular-nums">{run.recipientCount.toLocaleString()}</td>
+                      <td className="py-2 text-right tabular-nums">
+                        {run.recipientCount.toLocaleString()}
+                      </td>
                       <td className="py-2 text-right tabular-nums text-green-600 dark:text-green-400">
                         {run.successCount.toLocaleString()}
                       </td>
                       <td className="py-2 text-right tabular-nums text-destructive">
-                        {run.failedCount > 0 ? run.failedCount.toLocaleString() : "—"}
+                        {run.failedCount > 0
+                          ? run.failedCount.toLocaleString()
+                          : "—"}
                       </td>
                       <td className="py-2 text-right text-xs">
                         {timeAgo(new Date(run.ranAt).toISOString())}
@@ -523,6 +892,22 @@ export default function DashboardPage() {
           </CardContent>
         </Card>
       )}
+
+      {/* Module Directory */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Module Directory</CardTitle>
+          <CardDescription>
+            {totalModules} modules across {MODULE_SECTIONS.length} categories —
+            click any section to collapse it.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          {MODULE_SECTIONS.map((section) => (
+            <ModuleSectionBlock key={section.section} section={section} />
+          ))}
+        </CardContent>
+      </Card>
     </div>
   );
 }

@@ -464,7 +464,7 @@ export async function fetchAssetXlmProceeds(
     .slice(0, 50);
 
   return {
-    assetCode: assetCode.toUpperCase(),
+    assetCode,
     issuer,
     accounts: accountList,
     totalAssetSold,

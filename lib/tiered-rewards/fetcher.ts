@@ -1,4 +1,4 @@
-import { Horizon } from "stellar-sdk";
+import { Horizon, Asset } from "stellar-sdk";
 import type { Tier, HolderEntry, TierAssignment } from "./types";
 
 const { Server } = Horizon;
@@ -39,7 +39,7 @@ export async function fetchHolders(
       const url = `${horizonUrl}/accounts?asset=${assetCode}:${assetIssuer}&limit=200${cursor ? `&cursor=${cursor}` : ""}`;
       onLog?.(`  GET ${url}`);
       try {
-        let builder = server.accounts().forAsset({ code: assetCode, issuer: assetIssuer } as any).limit(200);
+        let builder = server.accounts().forAsset(new Asset(assetCode, assetIssuer)).limit(200);
         if (cursor) builder = (builder as any).cursor(cursor);
         page = await (builder as any).call();
         lastErr = undefined;

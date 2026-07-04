@@ -1,34 +1,84 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
-import { isSupabaseOnly, requireAuth } from "@/lib/supabase-server";
+import { getSupabase, isSupabaseOnly, requireAuth } from "@/lib/supabase-server";
 import { refreshTieredRewardsScheduler } from "@/lib/tiered-rewards/scheduler";
+import { loadAllConfigs } from "@/lib/tiered-rewards/db";
+import type { TieredRewardConfig } from "@/lib/tiered-rewards/types";
 
 type Row = Record<string, unknown>;
 
-function sqliteGet(db: ReturnType<typeof getDb>) {
-  const configs = db.prepare("SELECT * FROM tiered_reward_configs ORDER BY created_at DESC").all() as Row[];
-  return configs.map((c) => {
-    const tiers = db.prepare("SELECT * FROM tiered_reward_tiers WHERE config_id = ? ORDER BY position ASC").all(c.id) as Row[];
-    return {
-      id: c.id, name: c.name, assetCode: c.asset_code, assetIssuer: c.asset_issuer,
-      network: c.network, secretKey: c.secret_key, intervalMinutes: c.interval_minutes ?? null,
-      enabled: Number(c.enabled) === 1, minReserve: c.min_reserve, minSenderThreshold: c.min_sender_threshold,
-      previewOnly: Number(c.preview_only) === 1, lastRunAt: (c.last_run_at as number | null) ?? undefined,
-      lastFailureAt: (c.last_failure_at as number | null) ?? undefined, createdAt: c.created_at,
-      tiers: tiers.map((t) => {
-        const assets = db.prepare("SELECT * FROM tiered_reward_assets WHERE tier_id = ?").all(t.id) as Row[];
+// ── Supabase GET ──────────────────────────────────────────────────────────────
+
+async function supabaseGet(userId: string): Promise<TieredRewardConfig[]> {
+  const sb = getSupabase()!;
+  const { data: configs, error } = await sb
+    .from("tiered_reward_configs")
+    .select("*")
+    .eq("user_id", userId)
+    .order("created_at", { ascending: false });
+  if (error || !configs) return [];
+
+  const result: TieredRewardConfig[] = [];
+  for (const c of configs) {
+    const { data: tiers } = await sb
+      .from("tiered_reward_tiers")
+      .select("*")
+      .eq("config_id", c.id)
+      .order("position", { ascending: true });
+
+    const mappedTiers = await Promise.all(
+      (tiers ?? []).map(async (t: Row) => {
+        const { data: assets } = await sb
+          .from("tiered_reward_assets")
+          .select("*")
+          .eq("tier_id", t.id);
         return {
-          id: t.id, configId: t.config_id, tierNumber: t.tier_number,
-          minTokens: t.min_tokens, maxTokens: (t.max_tokens as number | null) ?? undefined, position: t.position,
-          assets: assets.map((a) => ({
-            id: a.id, tierId: a.tier_id, assetCode: a.asset_code,
-            assetIssuer: (a.asset_issuer as string | null) ?? undefined, amount: a.amount,
+          id: t.id as string,
+          configId: t.config_id as string,
+          tierNumber: t.tier_number as number,
+          minTokens: t.min_tokens as number,
+          maxTokens: (t.max_tokens as number | null) ?? undefined,
+          position: t.position as number,
+          assets: (assets ?? []).map((a: Row) => ({
+            id: a.id as string,
+            tierId: a.tier_id as string,
+            assetCode: a.asset_code as string,
+            assetIssuer: (a.asset_issuer as string | null) ?? undefined,
+            amount: a.amount as number,
           })),
         };
-      }),
-    };
-  });
+      })
+    );
+
+    result.push({
+      id: c.id,
+      name: c.name,
+      assetCode: c.asset_code,
+      assetIssuer: c.asset_issuer,
+      network: c.network ?? "public",
+      secretKey: null,
+      hasKey: !!(c.secret_key || ""),
+      intervalMinutes: c.interval_minutes ?? null,
+      enabled: c.enabled === true || c.enabled === 1,
+      minReserve: c.min_reserve ?? 10.0,
+      minSenderThreshold: c.min_sender_threshold ?? 0,
+      previewOnly: c.preview_only === true || c.preview_only === 1,
+      batchSend: c.batch_send !== false && c.batch_send !== 0,
+      memo: c.memo ?? null,
+      feeMultiplier: c.fee_multiplier ?? 1.0,
+      excludeAddresses: Array.isArray(c.exclude_addresses)
+        ? c.exclude_addresses
+        : (() => { try { return JSON.parse(c.exclude_addresses ?? "[]"); } catch { return []; } })(),
+      lastRunAt: c.last_run_at ?? undefined,
+      lastFailureAt: c.last_failure_at ?? undefined,
+      createdAt: c.created_at,
+      tiers: mappedTiers,
+    });
+  }
+  return result;
 }
+
+// ── Validation ────────────────────────────────────────────────────────────────
 
 function validateNoOverlap(tiers: Array<{ minTokens: number; maxTokens?: number | null }>): string | null {
   for (let i = 0; i < tiers.length; i++) {
@@ -44,60 +94,168 @@ function validateNoOverlap(tiers: Array<{ minTokens: number; maxTokens?: number 
   return null;
 }
 
+// ── Routes ────────────────────────────────────────────────────────────────────
+
 export async function GET(req: NextRequest) {
   const auth = await requireAuth(req);
   if (!auth.ok) return auth.response;
 
   if (isSupabaseOnly()) {
-    // TODO: Supabase implementation
-    return NextResponse.json([]);
+    return NextResponse.json(await supabaseGet(auth.userId!));
   }
 
-  const db = getDb();
-  return NextResponse.json(sqliteGet(db));
+  return NextResponse.json(loadAllConfigs(getDb()));
 }
 
 export async function POST(req: NextRequest) {
   const auth = await requireAuth(req);
   if (!auth.ok) return auth.response;
 
-  try {
-    let body: Row;
-    try { body = await req.json(); } catch { return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 }); }
+  let body: Row;
+  try { body = await req.json(); } catch { return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 }); }
 
-    const { type, action, data } = body as { type: string; action: string; data: Row };
+  const { type, action, data } = body as { type: string; action: string; data: Row };
 
-    if (isSupabaseOnly()) {
-      // TODO: Supabase implementation
-      return NextResponse.json({ ok: true });
+  if (isSupabaseOnly()) {
+    const sb = getSupabase()!;
+    const userId = auth.userId!;
+
+    try {
+      if (type === "config") {
+        if (action === "create") {
+          await sb.from("tiered_reward_configs").insert({
+            id: data.id, user_id: userId, name: data.name, asset_code: data.assetCode,
+            asset_issuer: data.assetIssuer, network: data.network, secret_key: data.secretKey ?? "",
+            interval_minutes: data.intervalMinutes ?? null, enabled: !!data.enabled,
+            min_reserve: data.minReserve ?? 10.0, min_sender_threshold: data.minSenderThreshold ?? 0,
+            preview_only: !!data.previewOnly, batch_send: data.batchSend !== false,
+            memo: data.memo ?? null, fee_multiplier: data.feeMultiplier ?? 1.0,
+            exclude_addresses: data.excludeAddresses ?? [], created_at: Date.now(),
+          });
+        } else if (action === "update") {
+          await sb.from("tiered_reward_configs").update({
+            name: data.name, asset_code: data.assetCode, asset_issuer: data.assetIssuer,
+            network: data.network, secret_key: data.secretKey ?? "",
+            interval_minutes: data.intervalMinutes ?? null, enabled: !!data.enabled,
+            min_reserve: data.minReserve ?? 10.0, min_sender_threshold: data.minSenderThreshold ?? 0,
+            preview_only: !!data.previewOnly, batch_send: data.batchSend !== false,
+            memo: data.memo ?? null, fee_multiplier: data.feeMultiplier ?? 1.0,
+            exclude_addresses: data.excludeAddresses ?? [], last_failure_at: data.lastFailureAt ?? null,
+          }).eq("id", data.id).eq("user_id", userId);
+        } else if (action === "delete") {
+          await sb.from("tiered_reward_configs").delete().eq("id", data.id).eq("user_id", userId);
+        }
+      } else if (type === "tier") {
+        // Resolve config_id from either data.configId (create) or the tier itself (update/delete)
+        let tierConfigId: string | null = null;
+        if (action === "create") {
+          tierConfigId = data.configId as string;
+        } else {
+          const { data: existingTier } = await sb.from("tiered_reward_tiers").select("config_id").eq("id", data.id).single();
+          tierConfigId = (existingTier as { config_id: string } | null)?.config_id ?? null;
+        }
+        const { data: ownedConfig } = tierConfigId
+          ? await sb.from("tiered_reward_configs").select("id").eq("id", tierConfigId).eq("user_id", userId).single()
+          : { data: null };
+        if (!ownedConfig) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+        if (action === "create") {
+          await sb.from("tiered_reward_tiers").insert({
+            id: data.id, config_id: data.configId, tier_number: data.tierNumber,
+            min_tokens: data.minTokens, max_tokens: data.maxTokens ?? null, position: data.position,
+          });
+        } else if (action === "update") {
+          await sb.from("tiered_reward_tiers").update({
+            tier_number: data.tierNumber, min_tokens: data.minTokens,
+            max_tokens: data.maxTokens ?? null, position: data.position,
+          }).eq("id", data.id);
+        } else if (action === "delete") {
+          await sb.from("tiered_reward_tiers").delete().eq("id", data.id);
+        }
+      } else if (type === "asset") {
+        // Resolve tier_id from data.tierId (create) or the asset itself (update/delete)
+        let assetTierId: string | null = null;
+        if (action === "create") {
+          assetTierId = data.tierId as string;
+        } else {
+          const { data: existingAsset } = await sb.from("tiered_reward_assets").select("tier_id").eq("id", data.id).single();
+          assetTierId = (existingAsset as { tier_id: string } | null)?.tier_id ?? null;
+        }
+        let assetConfigId: string | null = null;
+        if (assetTierId) {
+          const { data: existingTier } = await sb.from("tiered_reward_tiers").select("config_id").eq("id", assetTierId).single();
+          assetConfigId = (existingTier as { config_id: string } | null)?.config_id ?? null;
+        }
+        const { data: ownedConfig } = assetConfigId
+          ? await sb.from("tiered_reward_configs").select("id").eq("id", assetConfigId).eq("user_id", userId).single()
+          : { data: null };
+        if (!ownedConfig) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+        if (action === "create") {
+          await sb.from("tiered_reward_assets").insert({
+            id: data.id, tier_id: data.tierId, asset_code: data.assetCode,
+            asset_issuer: data.assetIssuer ?? null, amount: data.amount,
+          });
+        } else if (action === "update") {
+          await sb.from("tiered_reward_assets").update({
+            asset_code: data.assetCode, asset_issuer: data.assetIssuer ?? null, amount: data.amount,
+          }).eq("id", data.id);
+        } else if (action === "delete") {
+          await sb.from("tiered_reward_assets").delete().eq("id", data.id);
+        }
+      } else {
+        return NextResponse.json({ error: "unknown type" }, { status: 400 });
+      }
+    } catch (e) {
+      console.error("[tiered-rewards/supabase] POST unhandled:", e);
+      return NextResponse.json({ error: "Internal server error" }, { status: 500 });
     }
+    return NextResponse.json({ ok: true });
+  }
 
+  // SQLite path
+  try {
     const db = getDb();
 
     if (type === "config") {
       if (action === "create") {
         db.prepare(
           `INSERT INTO tiered_reward_configs
-           (id, name, asset_code, asset_issuer, network, secret_key, interval_minutes, enabled, min_reserve, min_sender_threshold, preview_only, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+           (id, name, asset_code, asset_issuer, network, secret_key, interval_minutes, enabled, min_reserve, min_sender_threshold, preview_only, batch_send, memo, fee_multiplier, exclude_addresses, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         ).run(
           data.id, data.name, data.assetCode, data.assetIssuer, data.network,
-          data.secretKey, data.intervalMinutes ?? null, data.enabled ? 1 : 0,
+          data.secretKey ?? "", data.intervalMinutes ?? null, data.enabled ? 1 : 0,
           data.minReserve ?? 10.0, data.minSenderThreshold ?? 0, data.previewOnly ? 1 : 0,
-          Date.now()
+          data.batchSend !== false ? 1 : 0, data.memo ?? null, data.feeMultiplier ?? 1.0,
+          JSON.stringify(data.excludeAddresses ?? []), Date.now()
         );
         refreshTieredRewardsScheduler();
       } else if (action === "update") {
-        db.prepare(
-          `UPDATE tiered_reward_configs SET name=?, asset_code=?, asset_issuer=?, network=?, secret_key=?,
-           interval_minutes=?, enabled=?, min_reserve=?, min_sender_threshold=?, preview_only=?,
-           last_failure_at=? WHERE id=?`
-        ).run(
-          data.name, data.assetCode, data.assetIssuer, data.network, data.secretKey,
-          data.intervalMinutes ?? null, data.enabled ? 1 : 0,
-          data.minReserve ?? 10.0, data.minSenderThreshold ?? 0, data.previewOnly ? 1 : 0,
-          data.lastFailureAt ?? null, data.id
-        );
+        // Build partial update — only touch columns present in the request
+        const fields: string[] = [];
+        const vals: unknown[] = [];
+        if (data.name !== undefined) { fields.push("name = ?"); vals.push((data.name as string)?.trim() ?? null); }
+        if (data.assetCode !== undefined) { fields.push("asset_code = ?"); vals.push(data.assetCode); }
+        if (data.assetIssuer !== undefined) { fields.push("asset_issuer = ?"); vals.push(data.assetIssuer); }
+        if (data.network !== undefined) { fields.push("network = ?"); vals.push(data.network); }
+        // Only update key when caller supplies a non-empty value (empty/undefined = keep existing)
+        if (data.secretKey !== undefined && data.secretKey !== "") { fields.push("secret_key = ?"); vals.push(data.secretKey ?? ""); }
+        if (data.secretKey === null) { fields.push("secret_key = ?"); vals.push(""); } // explicit clear
+        if (data.intervalMinutes !== undefined) { fields.push("interval_minutes = ?"); vals.push(data.intervalMinutes ?? null); }
+        if (data.enabled !== undefined) { fields.push("enabled = ?"); vals.push(data.enabled ? 1 : 0); }
+        if (data.minReserve !== undefined) { fields.push("min_reserve = ?"); vals.push(data.minReserve); }
+        if (data.minSenderThreshold !== undefined) { fields.push("min_sender_threshold = ?"); vals.push(data.minSenderThreshold ?? 0); }
+        if (data.previewOnly !== undefined) { fields.push("preview_only = ?"); vals.push(data.previewOnly ? 1 : 0); }
+        if (data.batchSend !== undefined) { fields.push("batch_send = ?"); vals.push(data.batchSend !== false ? 1 : 0); }
+        if (data.memo !== undefined) { fields.push("memo = ?"); vals.push(data.memo ?? null); }
+        if (data.feeMultiplier !== undefined) { fields.push("fee_multiplier = ?"); vals.push(data.feeMultiplier); }
+        if (data.excludeAddresses !== undefined) { fields.push("exclude_addresses = ?"); vals.push(JSON.stringify(data.excludeAddresses ?? [])); }
+        if (data.lastFailureAt !== undefined) { fields.push("last_failure_at = ?"); vals.push(data.lastFailureAt ?? null); }
+        if (fields.length > 0) {
+          vals.push(data.id);
+          db.prepare(`UPDATE tiered_reward_configs SET ${fields.join(", ")} WHERE id = ?`).run(...vals);
+        }
         refreshTieredRewardsScheduler();
       } else if (action === "delete") {
         db.prepare("DELETE FROM tiered_reward_configs WHERE id = ?").run(data.id);
@@ -142,6 +300,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true });
   } catch (e) {
     console.error("[tiered-rewards] POST unhandled:", e);
-    return NextResponse.json({ error: String(e) }, { status: 500 });
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }

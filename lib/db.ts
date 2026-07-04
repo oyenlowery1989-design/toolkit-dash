@@ -358,6 +358,23 @@ function initDb(): Database.Database {
     console.error("[db] auto-send migration failed (non-fatal):", err);
   }
 
+  // ── Tiered rewards migrations ─────────────────────────────────────────────
+  try {
+    const trCols = (db.pragma("table_info(tiered_reward_configs)") as { name: string }[]).map((c) => c.name);
+    if (trCols.length > 0) {
+      if (!trCols.includes("batch_send"))
+        db.exec(`ALTER TABLE tiered_reward_configs ADD COLUMN batch_send INTEGER NOT NULL DEFAULT 1`);
+      if (!trCols.includes("memo"))
+        db.exec(`ALTER TABLE tiered_reward_configs ADD COLUMN memo TEXT`);
+      if (!trCols.includes("fee_multiplier"))
+        db.exec(`ALTER TABLE tiered_reward_configs ADD COLUMN fee_multiplier REAL NOT NULL DEFAULT 1.0`);
+      if (!trCols.includes("exclude_addresses"))
+        db.exec(`ALTER TABLE tiered_reward_configs ADD COLUMN exclude_addresses TEXT`);
+    }
+  } catch (err) {
+    console.error("[db] tiered-rewards migration failed (non-fatal):", err);
+  }
+
   // ── Known creators migration: add parent_address column if missing ────────
   const creatorCols = (db.pragma("table_info(known_creators)") as { name: string }[]).map((c) => c.name);
   if (!creatorCols.includes("parent_address")) {

@@ -1,17 +1,22 @@
 "use client";
 
 import { useState } from "react";
-import { Plus, Loader2 } from "lucide-react";
+import { Plus, Loader2, Wallet } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { WalletSelect } from "@/components/ui/wallet-select";
 import { useTieredRewardConfigs } from "@/hooks/use-tiered-reward-configs";
 import { useActiveWallet } from "@/hooks/use-active-wallet";
+import { useSettings } from "@/lib/settings";
+import { shortAddr } from "@/lib/format";
 import { TierConfigCard } from "./TierConfigCard";
 
 const INTERVALS = [
-  { label: "Manual", value: "" },
+  { label: "Manual", value: "manual" },
+  { label: "Every 15m", value: "15" },
+  { label: "Every 30m", value: "30" },
   { label: "Every 1h", value: "60" },
   { label: "Every 3h", value: "180" },
   { label: "Every 6h", value: "360" },
@@ -22,12 +27,13 @@ const INTERVALS = [
 export function TieredRewardsPanel() {
   const { configs, isLoaded, createConfig, updateConfig, deleteConfig, upsertTier, deleteTier, upsertRewardAsset, deleteRewardAsset } = useTieredRewardConfigs();
   const { activeWallet } = useActiveWallet();
+  const { settings } = useSettings();
 
   const [showNew, setShowNew] = useState(false);
   const [newName, setNewName] = useState("");
   const [newAssetCode, setNewAssetCode] = useState("");
   const [newAssetIssuer, setNewAssetIssuer] = useState("");
-  const [newNetwork, setNewNetwork] = useState("public");
+  const [newNetwork, setNewNetwork] = useState<string>(settings.network ?? "public");
   const [newSecretKey, setNewSecretKey] = useState("");
   const [newInterval, setNewInterval] = useState("1440");
   const [createError, setCreateError] = useState<string | null>(null);
@@ -38,19 +44,22 @@ export function TieredRewardsPanel() {
     if (!newName.trim()) { setCreateError("Name required"); return; }
     if (!newAssetCode.trim()) { setCreateError("Asset code required"); return; }
     if (!newAssetIssuer.trim()) { setCreateError("Asset issuer required"); return; }
-    if (!effectiveSecretKey.trim()) { setCreateError("Sender secret key required"); return; }
     setCreateError(null);
     createConfig({
       name: newName.trim(),
       assetCode: newAssetCode.trim(),
       assetIssuer: newAssetIssuer.trim(),
       network: newNetwork,
-      secretKey: effectiveSecretKey.trim(),
-      intervalMinutes: newInterval ? parseInt(newInterval) : null,
+      secretKey: effectiveSecretKey.trim() || null,
+      intervalMinutes: newInterval && newInterval !== "manual" ? parseInt(newInterval) : null,
       enabled: false,
       minReserve: 10.0,
       minSenderThreshold: 0,
-      previewOnly: false,
+      previewOnly: !effectiveSecretKey.trim(),
+      batchSend: true,
+      memo: null,
+      feeMultiplier: 1.0,
+      excludeAddresses: [],
     });
     setNewName(""); setNewAssetCode(""); setNewAssetIssuer(""); setNewSecretKey(""); setShowNew(false);
   }
@@ -110,15 +119,25 @@ export function TieredRewardsPanel() {
                 </SelectContent>
               </Select>
             </div>
-            <div>
-              <Label className="text-xs">Sender Secret Key</Label>
+            <div className="space-y-1">
+              <div className="flex items-center justify-between">
+                <Label className="text-xs">Sender Secret Key <span className="text-muted-foreground">(optional)</span></Label>
+                {!activeWallet && (
+                  <WalletSelect
+                    currentValue={newSecretKey}
+                    onPick={(w) => setNewSecretKey(w.secretKey)}
+                    onClear={() => setNewSecretKey("")}
+                  />
+                )}
+              </div>
               {activeWallet ? (
-                <div className="flex items-center gap-2 h-10 px-3 rounded-md border border-green-700 bg-green-950 text-green-400 text-sm">
-                  <span className="h-2 w-2 rounded-full bg-green-400 shrink-0" />
-                  {activeWallet.name}
+                <div className="flex items-center gap-2 rounded-md border border-green-500/40 bg-green-500/5 px-3 py-2 text-sm">
+                  <Wallet className="h-4 w-4 shrink-0 text-green-500" />
+                  <span className="flex-1 truncate font-medium">{activeWallet.name}</span>
+                  <span className="font-mono text-xs text-muted-foreground">{shortAddr(activeWallet.publicKey)}</span>
                 </div>
               ) : (
-                <Input type="password" placeholder="S..." value={newSecretKey} onChange={(e) => setNewSecretKey(e.target.value)} />
+                <Input type="password" placeholder="S… (can be added later)" value={newSecretKey} onChange={(e) => setNewSecretKey(e.target.value)} />
               )}
             </div>
           </div>

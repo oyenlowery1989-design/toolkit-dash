@@ -24,6 +24,7 @@ import {
   Users,
   Link2,
   SendHorizonal,
+  LayoutList,
   type LucideIcon,
 } from "lucide-react";
 
@@ -121,6 +122,11 @@ export const menuItems: MenuEntry[] = [
     title: "Tiered Rewards",
     href: "/tiered-rewards",
     icon: Trophy,
+  },
+  {
+    title: "Wallet Balances",
+    href: "/wallet-balances",
+    icon: LayoutList,
   },
 
   { section: "Asset Lifecycle" },

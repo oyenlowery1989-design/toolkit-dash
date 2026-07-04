@@ -17,7 +17,7 @@ const csp = [
   "img-src 'self' data:",
   // Stellar Horizon endpoints and Friendbot (testnet/futurenet funding).
   // Supabase auth/API (required when NEXT_PUBLIC_SUPABASE_URL is set).
-  `connect-src 'self' https://horizon.stellar.org https://horizon-testnet.stellar.org https://horizon-futurenet.stellar.org https://friendbot.stellar.org https://friendbot-futurenet.stellar.org${process.env.NEXT_PUBLIC_SUPABASE_URL ? ` ${process.env.NEXT_PUBLIC_SUPABASE_URL}` : ""}`,
+  `connect-src 'self' https://horizon.stellar.org https://horizon-testnet.stellar.org https://horizon-futurenet.stellar.org https://friendbot.stellar.org https://friendbot-futurenet.stellar.org https://api.coingecko.com${process.env.NEXT_PUBLIC_SUPABASE_URL ? ` ${process.env.NEXT_PUBLIC_SUPABASE_URL}` : ""}`,
   // Vanity worker is a bundled same-origin chunk via webpack 5 Worker URL transform.
   "worker-src 'self'",
   // Never allow this app to be embedded in a frame (clickjacking protection).
@@ -84,14 +84,16 @@ const nextConfig: NextConfig = {
         ...config.resolve.fallback,
         "sodium-native": false,
       };
-      // sodium-native emits a "Critical dependency" warning because it uses a
-      // dynamic require() internally. We've already stubbed it out above so
-      // the warning is a false positive — suppress it.
-      config.ignoreWarnings = [
-        ...(config.ignoreWarnings ?? []),
-        { module: /sodium-native/ },
-      ];
     }
+
+    // sodium-native and require-addon use dynamic require() internally (native
+    // Node.js crypto addons). Webpack can't statically analyse them and emits
+    // "Critical dependency" warnings on both server and client compilations.
+    // These are false positives — suppress them on both sides.
+    config.ignoreWarnings = [
+      ...(config.ignoreWarnings ?? []),
+      { module: /sodium-native|require-addon/ },
+    ];
 
     return config;
   },

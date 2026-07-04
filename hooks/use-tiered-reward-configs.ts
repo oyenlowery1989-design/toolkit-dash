@@ -1,25 +1,29 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { createDbCache } from "@/lib/db-client";
+import { createDbCache, authHeaders, waitForAuth } from "@/lib/db-client";
 import type { TieredRewardConfig, Tier, RewardAsset } from "@/lib/tiered-rewards/types";
 
 const ENDPOINT = "/api/db/tiered-rewards";
 
 function dbAction(action: string, type: string, data: Record<string, unknown>) {
-  fetch(ENDPOINT, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ type, action, data }),
-  }).catch(() => {});
+  waitForAuth().then(() =>
+    fetch(ENDPOINT, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({ type, action, data }),
+    })
+  ).catch(() => {});
 }
 
 function triggerSchedulerRefresh() {
-  fetch("/api/tiered-rewards/run", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ mode: "refresh-scheduler" }),
-  }).catch(() => {});
+  waitForAuth().then(() =>
+    fetch("/api/tiered-rewards/run", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({ mode: "refresh-scheduler" }),
+    })
+  ).catch(() => {});
 }
 
 const _cache = createDbCache<TieredRewardConfig>();

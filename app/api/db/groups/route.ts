@@ -324,13 +324,17 @@ export async function DELETE(req: NextRequest) {
     }
   }
 
-  syncToSupabase(() => {
+  syncToSupabase(async () => {
     const sb = getSupabase()!;
     if (type === "group") {
       return sb.from("asset_groups").delete().eq("id", key).eq("user_id", userId!);
     } else {
-      // Scope to user via group ownership — member must belong to a group owned by this user
-      return sb.from("asset_group_members").delete().eq("id", key).eq("user_id", userId!);
+      // asset_group_members has no user_id — scope via parent group ownership
+      const { data: member } = await sb.from("asset_group_members").select("group_id").eq("id", key).single();
+      if (!member) return;
+      const { data: parentGroup } = await sb.from("asset_groups").select("id").eq("id", member.group_id).eq("user_id", userId!).single();
+      if (!parentGroup) return; // caller doesn't own the parent group — abort
+      return sb.from("asset_group_members").delete().eq("id", key);
     }
   });
 

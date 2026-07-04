@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import {
   Layers,
@@ -14,6 +14,9 @@ import {
   Globe,
   ExternalLink,
   UserPlus,
+  KeyRound,
+  Zap,
+  Wallet,
 } from "lucide-react";
 import {
   Card,
@@ -33,6 +36,9 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useAssetGroups } from "@/hooks/use-asset-groups";
+import { useWalletsV2 } from "@/hooks/use-wallets-v2";
+import type { WalletEntry } from "@/hooks/use-wallets-v2";
+import { useActiveWallet } from "@/hooks/use-active-wallet";
 import { AlertTriangle, Info } from "lucide-react";
 import { useSettings } from "@/lib/settings";
 import { ROLE_LABELS, ROLE_COLORS } from "@/lib/asset-groups/types";
@@ -209,6 +215,15 @@ function GroupCard({
   } = useAssetGroups();
   const { settings } = useSettings();
   const network = (settings.network as "public" | "testnet") ?? "public";
+  const { wallets } = useWalletsV2();
+  const { activeWallet, connect } = useActiveWallet();
+  const router = useRouter();
+
+  const walletMap = useMemo(() => {
+    const m = new Map<string, WalletEntry>();
+    for (const w of wallets) m.set(w.publicKey, w);
+    return m;
+  }, [wallets]);
 
   const [open, setOpen] = useState(defaultOpen ?? false);
   const [editingName, setEditingName] = useState(false);
@@ -411,7 +426,7 @@ function GroupCard({
                       Home Domain
                     </th>
                     <th className="text-left px-3 py-2 font-medium">Notes</th>
-                    <th className="px-3 py-2 w-16" />
+                    <th className="px-3 py-2" />
                   </tr>
                 </thead>
                 <tbody>
@@ -541,29 +556,63 @@ function GroupCard({
                           {m.notes ?? "—"}
                         </td>
                         <td className="px-3 py-2">
-                          <div className="flex items-center gap-1.5">
-                            <a
-                              href={`/address-investigator?address=${m.address}&network=${network}`}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-muted-foreground hover:text-foreground transition-colors"
-                              title="Investigate"
-                            >
-                              <ExternalLink className="h-3.5 w-3.5" />
-                            </a>
-                            <button
-                              onClick={() => startEditMember(m)}
-                              className="text-muted-foreground hover:text-foreground transition-colors"
-                            >
-                              <Pencil className="h-3.5 w-3.5" />
-                            </button>
-                            <button
-                              onClick={() => removeMember(group.id, m.id)}
-                              className="text-muted-foreground hover:text-destructive transition-colors"
-                            >
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </button>
-                          </div>
+                          {(() => {
+                            const walletEntry = walletMap.get(m.address);
+                            const isActive = walletEntry && activeWallet?.id === walletEntry.id;
+                            return (
+                              <div className="flex items-center gap-1.5">
+                                {walletEntry && (
+                                  <>
+                                    <span title={`Wallet: ${walletEntry.name} — you hold the key`}>
+                                      <KeyRound className="h-3.5 w-3.5 shrink-0 text-yellow-500/80" />
+                                    </span>
+                                    {isActive ? (
+                                      <span className="text-[10px] px-1 py-0.5 rounded bg-green-500/15 text-green-500 border border-green-500/30 leading-none">
+                                        Active
+                                      </span>
+                                    ) : (
+                                      <button
+                                        title={`Connect ${walletEntry.name}`}
+                                        className="text-muted-foreground hover:text-foreground transition-colors"
+                                        onClick={() => connect(walletEntry.id)}
+                                      >
+                                        <Zap className="h-3.5 w-3.5" />
+                                      </button>
+                                    )}
+                                    <button
+                                      title="Open in Wallet Manager"
+                                      className="text-muted-foreground hover:text-foreground transition-colors"
+                                      onClick={() => router.push("/wallet-manager")}
+                                    >
+                                      <Wallet className="h-3.5 w-3.5" />
+                                    </button>
+                                    <span className="w-px h-3 bg-border mx-0.5" />
+                                  </>
+                                )}
+                                <a
+                                  href={`/address-investigator?address=${m.address}&network=${network}`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="text-muted-foreground hover:text-foreground transition-colors"
+                                  title="Investigate"
+                                >
+                                  <ExternalLink className="h-3.5 w-3.5" />
+                                </a>
+                                <button
+                                  onClick={() => startEditMember(m)}
+                                  className="text-muted-foreground hover:text-foreground transition-colors"
+                                >
+                                  <Pencil className="h-3.5 w-3.5" />
+                                </button>
+                                <button
+                                  onClick={() => removeMember(group.id, m.id)}
+                                  className="text-muted-foreground hover:text-destructive transition-colors"
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </button>
+                              </div>
+                            );
+                          })()}
                         </td>
                       </tr>
                     ),
@@ -849,7 +898,7 @@ export default function GroupsPage() {
     : groups;
 
   return (
-    <div className="space-y-6 p-6 max-w-5xl mx-auto">
+    <div className="space-y-6">
       <div className="flex items-center justify-between gap-4 flex-wrap">
         <div className="flex items-center gap-2">
           <Layers className="h-6 w-6 text-primary" />
