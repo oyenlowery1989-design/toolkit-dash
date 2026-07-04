@@ -82,24 +82,38 @@ export async function POST(req: NextRequest) {
     const { runConfig } = await import("@/lib/tiered-rewards/runner");
     const result = await runConfig(config, preview.assignments);
 
-    // Persist last_run_at after a successful run
+    // Persist last_run_at after a successful run. This MUST be durable: if it silently fails,
+    // the scheduler will see a stale last_run_at and may re-run (and re-pay) this config on its
+    // next tick, so any failure here has to be loud (console.error with the config id) rather
+    // than fire-and-forget.
+    let lastRunAtWriteFailed = false;
     if (isSupabaseOnly()) {
       const sb = getSupabase();
       if (sb && auth.userId && config.id) {
-        void sb.from("tiered_reward_configs")
-          .update({ last_run_at: Date.now() })
-          .eq("id", config.id)
-          .eq("user_id", auth.userId);
+        try {
+          const { error } = await sb.from("tiered_reward_configs")
+            .update({ last_run_at: Date.now() })
+            .eq("id", config.id)
+            .eq("user_id", auth.userId);
+          if (error) {
+            lastRunAtWriteFailed = true;
+            console.error("[tiered-rewards/run] last_run_at supabase update failed for config", config.id, ":", error);
+          }
+        } catch (e) {
+          lastRunAtWriteFailed = true;
+          console.error("[tiered-rewards/run] last_run_at supabase update threw for config", config.id, ":", e);
+        }
       }
     } else {
       try {
         getDb().prepare("UPDATE tiered_reward_configs SET last_run_at = ? WHERE id = ?").run(Date.now(), config.id);
       } catch (e) {
-        console.error("[tiered-rewards/run] last_run_at sqlite:", e);
+        lastRunAtWriteFailed = true;
+        console.error("[tiered-rewards/run] last_run_at sqlite update failed for config", config.id, ":", e);
       }
     }
 
-    return NextResponse.json(result);
+    return NextResponse.json(lastRunAtWriteFailed ? { ...result, lastRunAtWriteFailed: true } : result);
   }
 
   return NextResponse.json({ error: "Unknown mode" }, { status: 400 });

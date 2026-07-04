@@ -56,8 +56,18 @@ async function loadGroup(groupId: string, userId: string | null): Promise<AutoSe
   return rowToGroup(g, dests);
 }
 
-async function writeRunLog(userId: string | null, groupId: string, walletAddress: string, results: DestinationRunResult[], ranAt: number): Promise<void> {
-  if (isSupabaseOnly()) {
+/**
+ * Writes the run-log rows for a completed group run to Supabase (local/SQLite mode logs
+ * incrementally inside runner.ts and never reaches this function).
+ *
+ * Never throws — a failure to persist the run log must not prevent the caller from returning
+ * the actual send/skip/fail results to the client (money may already have moved). Instead this
+ * resolves to `{ ok: false }` so the route can surface `logWriteFailed: true` in the response.
+ */
+async function writeRunLog(userId: string | null, groupId: string, walletAddress: string, results: DestinationRunResult[], ranAt: number): Promise<{ ok: boolean }> {
+  if (!isSupabaseOnly()) return { ok: true }; // SQLite logging is handled inside runner.ts for local mode
+  if (results.length === 0) return { ok: true };
+  try {
     const sb = getSupabase()!;
     const rows = results.map((r) => ({
       id: crypto.randomUUID(),
@@ -71,9 +81,38 @@ async function writeRunLog(userId: string | null, groupId: string, walletAddress
       ran_at: ranAt,
       tx_hash: r.txHash ?? null,
     }));
-    await sb.from("auto_send_run_log").insert(rows);
+    const { error } = await sb.from("auto_send_run_log").insert(rows);
+    if (error) {
+      console.error("[auto-send/run] run-log insert failed for group", groupId, ":", error);
+      return { ok: false };
+    }
+    return { ok: true };
+  } catch (err) {
+    console.error("[auto-send/run] run-log insert threw for group", groupId, ":", err);
+    return { ok: false };
   }
-  // SQLite logging is handled inside runner.ts for local mode
+}
+
+/** Runs the group and guarantees the run-log write is attempted before responding, even if the
+ *  run itself throws unexpectedly — whatever result/results exist at that point are still logged
+ *  (finally-style) so a partial failure never silently disappears with no record. Re-throws
+ *  whatever `runFn` threw (after logging) so the outer handler's 500 path is unaffected. */
+async function runAndLog(
+  userId: string | null,
+  group: AutoSendGroup,
+  runFn: () => Promise<Awaited<ReturnType<typeof runGroup>>>
+): Promise<{ result: Awaited<ReturnType<typeof runGroup>>; logWriteFailed: boolean }> {
+  let result: Awaited<ReturnType<typeof runGroup>> | undefined;
+  let logWriteFailed = false;
+  try {
+    result = await runFn();
+  } finally {
+    if (result) {
+      const { ok } = await writeRunLog(userId, group.id, result.walletAddress, result.results, result.ranAt);
+      logWriteFailed = !ok;
+    }
+  }
+  return { result, logWriteFailed };
 }
 
 export async function POST(req: NextRequest) {
@@ -104,14 +143,12 @@ export async function POST(req: NextRequest) {
 
     if (testRun) {
       const testGroup = { ...group, testMode: true };
-      const result = await runGroup(testGroup);
-      if (isSupabaseOnly()) await writeRunLog(auth.userId ?? null, group.id, result.walletAddress, result.results, result.ranAt);
-      return NextResponse.json(result);
+      const { result, logWriteFailed } = await runAndLog(auth.userId ?? null, group, () => runGroup(testGroup));
+      return NextResponse.json(logWriteFailed ? { ...result, logWriteFailed: true } : result);
     }
 
-    const result = await runGroup(group);
-    if (isSupabaseOnly()) await writeRunLog(auth.userId ?? null, group.id, result.walletAddress, result.results, result.ranAt);
-    return NextResponse.json(result);
+    const { result, logWriteFailed } = await runAndLog(auth.userId ?? null, group, () => runGroup(group));
+    return NextResponse.json(logWriteFailed ? { ...result, logWriteFailed: true } : result);
   } catch (e) {
     console.error("[auto-send/run] POST unhandled:", e);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
