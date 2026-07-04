@@ -519,10 +519,15 @@ export async function fetchAccountOffersForAsset(
 ): Promise<AccountOffer[]> {
   const server = new Horizon.Server(horizonUrl);
 
-  const page = await server.offers().forAccount(publicKey).limit(200).call();
+  let page = await server.offers().forAccount(publicKey).limit(200).call();
+  const records = [...page.records];
+  while (page.records.length === 200) {
+    page = await page.next();
+    records.push(...page.records);
+  }
   const assetStr = `${assetCode}:${issuer}`;
 
-  return (page.records as unknown as Record<string, unknown>[])
+  return (records as unknown as Record<string, unknown>[])
     .filter((r) => {
       const s = r.selling as Record<string, string>;
       const b = r.buying as Record<string, string>;

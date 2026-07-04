@@ -56,6 +56,8 @@ export async function fetchHolders(
       throw new Error(`Failed to fetch holders page: ${lastErr instanceof Error ? lastErr.message : String(lastErr)}`);
     }
 
+    if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
+
     const records = page.records as Array<{
       id: string;
       balances: Array<{ asset_type: string; asset_code?: string; asset_issuer?: string; balance: string }>;
