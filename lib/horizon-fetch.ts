@@ -19,8 +19,9 @@ export async function fetchJson(
       const delay = 500 * 2 ** (attempt - 1);
       opts.onLog?.(`  retry ${attempt}/${retries} in ${delay}ms (HTTP ${lastStatus})`);
       await new Promise<void>((resolve, reject) => {
-        const t = setTimeout(resolve, delay);
-        signal?.addEventListener("abort", () => { clearTimeout(t); reject(new DOMException("aborted", "AbortError")); }, { once: true });
+        const onAbort = () => { clearTimeout(t); reject(new DOMException("aborted", "AbortError")); };
+        const t = setTimeout(() => { signal?.removeEventListener("abort", onAbort); resolve(); }, delay);
+        signal?.addEventListener("abort", onAbort, { once: true });
       });
     }
     let res: Response;

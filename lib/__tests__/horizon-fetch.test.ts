@@ -47,4 +47,34 @@ describe("fetchJson", () => {
     await expect(fetchJson("http://x")).rejects.toBe(err);
     expect(f).toHaveBeenCalledTimes(1);
   });
+
+  it("removes abort listener after backoff sleep resolves (no accumulation)", async () => {
+    const controller = new AbortController();
+    const addEventListenerSpy = vi.spyOn(controller.signal, "addEventListener");
+    const removeEventListenerSpy = vi.spyOn(controller.signal, "removeEventListener");
+
+    const f = vi.fn()
+      .mockResolvedValueOnce(new Response("rate", { status: 429 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: 3 }), { status: 200 }));
+    vi.stubGlobal("fetch", f);
+    vi.useFakeTimers();
+
+    const p = fetchJson("http://x", controller.signal);
+    await vi.runAllTimersAsync();
+    await expect(p).resolves.toEqual({ ok: 3 });
+
+    // Should have added one "abort" listener during backoff
+    const abortListenerCalls = addEventListenerSpy.mock.calls.filter(
+      (call) => call[0] === "abort"
+    );
+    expect(abortListenerCalls.length).toBeGreaterThanOrEqual(1);
+
+    // Should have removed the same number of "abort" listeners
+    const abortRemovalCalls = removeEventListenerSpy.mock.calls.filter(
+      (call) => call[0] === "abort"
+    );
+    expect(abortRemovalCalls.length).toBe(abortListenerCalls.length);
+
+    vi.useRealTimers();
+  });
 });
