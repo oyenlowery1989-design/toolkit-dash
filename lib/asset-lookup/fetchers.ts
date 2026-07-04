@@ -1,4 +1,5 @@
 import { Horizon, Asset } from "stellar-sdk";
+import { fetchJson } from "../horizon-fetch";
 import type {
   Holder,
   DistribCandidate,
@@ -346,14 +347,16 @@ export async function inferDistribLite(
     while (!signal.aborted) {
       const params = new URLSearchParams({ limit: "200", order: "asc" });
       if (cursor) params.set("cursor", cursor);
-      const res = await fetch(
-        `${horizonBase}/accounts/${encodeURIComponent(issuer)}/payments?${params}`,
-        { signal },
-      );
-      if (!res.ok) break;
-      const data = (await res.json()) as {
-        _embedded?: { records?: Record<string, unknown>[] };
-      };
+      let data: { _embedded?: { records?: Record<string, unknown>[] } };
+      try {
+        data = await fetchJson(
+          `${horizonBase}/accounts/${encodeURIComponent(issuer)}/payments?${params}`,
+          signal,
+        );
+      } catch (e) {
+        if (e instanceof DOMException && e.name === "AbortError") throw e;
+        break;
+      }
       const records = data._embedded?.records ?? [];
 
       for (const op of records) {
@@ -429,7 +432,10 @@ export async function fetchPaymentTotals(
           op.type === "path_payment_strict_receive") &&
         raw.from === issuerAddress;
       if (!isOut) continue;
-      if (raw.asset_code !== assetCode || raw.asset_issuer !== issuerAddress)
+      if (
+        String(raw.asset_code ?? "").toUpperCase() !== assetCode.toUpperCase() ||
+        raw.asset_issuer !== issuerAddress
+      )
         continue;
       const to = raw.to as string;
       if (!to || to === issuerAddress) continue;
@@ -542,9 +548,13 @@ async function scanTradePair(
     });
     if (cursor) params.set("cursor", cursor);
 
-    const res = await fetch(`${horizonBase}/trades?${params}`, { signal });
-    if (!res.ok) break;
-    const data = await res.json();
+    let data: any;
+    try {
+      data = await fetchJson(`${horizonBase}/trades?${params}`, signal);
+    } catch (e) {
+      if (e instanceof DOMException && e.name === "AbortError") throw e;
+      break;
+    }
     const records: Record<string, unknown>[] = data._embedded?.records ?? [];
 
     for (const r of records) {
@@ -586,9 +596,13 @@ async function scanTradePair(
     });
     if (cursor) params.set("cursor", cursor);
 
-    const res = await fetch(`${horizonBase}/trades?${params}`, { signal });
-    if (!res.ok) break;
-    const data = await res.json();
+    let data: any;
+    try {
+      data = await fetchJson(`${horizonBase}/trades?${params}`, signal);
+    } catch (e) {
+      if (e instanceof DOMException && e.name === "AbortError") throw e;
+      break;
+    }
     const records: Record<string, unknown>[] = data._embedded?.records ?? [];
 
     for (const r of records) {
@@ -650,9 +664,13 @@ async function scanAccountTrades(
       order: "asc",
     });
     if (cursor) params.set("cursor", cursor);
-    const res = await fetch(`${horizonBase}/trades?${params}`, { signal });
-    if (!res.ok) break;
-    const data = await res.json();
+    let data: any;
+    try {
+      data = await fetchJson(`${horizonBase}/trades?${params}`, signal);
+    } catch (e) {
+      if (e instanceof DOMException && e.name === "AbortError") throw e;
+      break;
+    }
     const records: Record<string, unknown>[] = data._embedded?.records ?? [];
 
     for (const r of records) {
@@ -719,9 +737,13 @@ async function fetchOpenOfferAmount(
         limit: "200",
       });
       if (cursor) params.set("cursor", cursor);
-      const res = await fetch(`${horizonBase}/offers?${params}`, { signal });
-      if (!res.ok) break;
-      const data = await res.json();
+      let data: any;
+      try {
+        data = await fetchJson(`${horizonBase}/offers?${params}`, signal);
+      } catch (e) {
+        if (e instanceof DOMException && e.name === "AbortError") throw e;
+        break;
+      }
       const records: Record<string, unknown>[] = data._embedded?.records ?? [];
       for (const r of records) {
         total += parseFloat((r.amount as string) ?? "0");
@@ -756,13 +778,14 @@ export async function fetchAssetXlmTrades(
 
   // Per-distrib: scan each account's trades directly — accurate, no direction ambiguity.
   // Open offers: fetch in parallel alongside account scans.
-  const [accountResults, openOfferAmounts] = await Promise.all([
-    Promise.all(
+  // Use allSettled so one failing account doesn't wipe out results for all the others.
+  const [accountSettled, openOfferSettled] = await Promise.all([
+    Promise.allSettled(
       trackedAddresses.map((addr) =>
         scanAccountTrades(horizonBase, addr, assetCode, issuerAddress, signal),
       ),
     ),
-    Promise.all(
+    Promise.allSettled(
       trackedAddresses.map((addr) =>
         fetchOpenOfferAmount(
           horizonBase,
@@ -774,6 +797,21 @@ export async function fetchAssetXlmTrades(
       ),
     ),
   ]);
+
+  const accountResults = accountSettled.map((result, i) => {
+    if (result.status === "fulfilled") return result.value;
+    console.warn(
+      `scanAccountTrades failed for ${trackedAddresses[i]}: ${String(result.reason)}`,
+    );
+    return { assetSold: 0, xlmReceived: 0, tradeCount: 0, rawTrades: [] };
+  });
+  const openOfferAmounts = openOfferSettled.map((result, i) => {
+    if (result.status === "fulfilled") return result.value;
+    console.warn(
+      `fetchOpenOfferAmount failed for ${trackedAddresses[i]}: ${String(result.reason)}`,
+    );
+    return 0;
+  });
 
   const byAccount: AccountTradeSummary[] = [];
   for (let i = 0; i < trackedAddresses.length; i++) {
@@ -833,9 +871,13 @@ export async function fetchClaimableBalances(
 
   while (!signal.aborted) {
     const url = `/api/horizon/claimable_balances?asset=${encodeURIComponent(assetParam)}&limit=200${cursor ? `&cursor=${cursor}` : ""}`;
-    const res = await fetch(url, { signal });
-    if (!res.ok) break;
-    const data = await res.json();
+    let data: any;
+    try {
+      data = await fetchJson(url, signal);
+    } catch (e) {
+      if (e instanceof DOMException && e.name === "AbortError") throw e;
+      break;
+    }
     const records = data._embedded?.records ?? [];
     for (const r of records) {
       count++;
