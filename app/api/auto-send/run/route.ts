@@ -93,10 +93,9 @@ async function writeRunLog(userId: string | null, groupId: string, walletAddress
   }
 }
 
-/** Runs the group and guarantees the run-log write is attempted before responding, even if the
- *  run itself throws unexpectedly — whatever result/results exist at that point are still logged
- *  (finally-style) so a partial failure never silently disappears with no record. Re-throws
- *  whatever `runFn` threw (after logging) so the outer handler's 500 path is unaffected. */
+/** Logs the run result after runFn completes. If runFn throws, no result exists to log — the
+ *  error propagates to the outer handler. (runGroup never throws today; it always resolves a
+ *  GroupRunResult.) */
 async function runAndLog(
   userId: string | null,
   group: AutoSendGroup,
