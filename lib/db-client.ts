@@ -79,6 +79,7 @@ export function createDbCache<T>(): DbCache<T> {
   let error: string | null = null;
   let fetchPromise: Promise<void> | null = null;
   let retryScheduled = false;
+  let retryTimer: ReturnType<typeof setTimeout> | null = null;
   let syncListenerAdded = false;
   const listeners = new Set<() => void>();
 
@@ -96,6 +97,13 @@ export function createDbCache<T>(): DbCache<T> {
       .then((data: T[]) => {
         cache = data;
         error = null;
+        // A success landing while a retry is pending means the retry is now
+        // stale/redundant — cancel it (belt-and-braces alongside invalidate()).
+        if (retryTimer) {
+          clearTimeout(retryTimer);
+          retryTimer = null;
+        }
+        retryScheduled = false;
         listeners.forEach((fn) => fn());
       })
       .catch((e) => {
@@ -104,8 +112,9 @@ export function createDbCache<T>(): DbCache<T> {
         listeners.forEach((fn) => fn());
         if (!retryScheduled) {
           retryScheduled = true;
-          setTimeout(() => {
+          retryTimer = setTimeout(() => {
             retryScheduled = false;
+            retryTimer = null;
             instance.reload(endpoint);
           }, RETRY_DELAY_MS);
         }
@@ -164,6 +173,11 @@ export function createDbCache<T>(): DbCache<T> {
       loading = false;
       fetchPromise = null;
       error = null;
+      if (retryTimer) {
+        clearTimeout(retryTimer);
+        retryTimer = null;
+      }
+      retryScheduled = false;
       listeners.forEach((fn) => fn());
     },
   };

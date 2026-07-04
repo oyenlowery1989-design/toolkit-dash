@@ -74,6 +74,25 @@ describe("createDbCache load failure path", () => {
     expect(cache.isLoaded()).toBe(true);
     expect(cache.get()).toEqual([{ id: "b" }]);
   });
+
+  it("invalidate() cancels a pending retry timer so it never fires after sign-out", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn().mockResolvedValue(new Response("err", { status: 500 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const cache = createDbCache<{ id: string }>();
+    await cache.load("/api/db/test-invalidate").catch(() => {});
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    // Simulate sign-out: invalidate() should cancel the scheduled retry.
+    cache.invalidate();
+
+    await vi.advanceTimersByTimeAsync(3000);
+
+    // No further fetch should have fired — the retry was cancelled, not just
+    // deferred, and no zombie unauthenticated retry loop should exist.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("createDbCache reload while load in-flight", () => {
