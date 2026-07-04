@@ -6,6 +6,7 @@ const MAX = 30;
 
 function mapRow(r: Record<string, unknown>) {
   return {
+    id: r.id,
     type: r.type,
     value: r.value,
     label: r.label ?? undefined,
@@ -114,14 +115,20 @@ export async function DELETE(req: NextRequest) {
   if (!auth.ok) return auth.response;
   const { userId } = auth;
 
-  const { key } = await req.json();  // key = timestamp number
+  const { key, id } = await req.json();  // id = row id (preferred); key = created_at fallback for pre-id clients
 
   if (!isSupabaseOnly()) {
-    getDb().prepare("DELETE FROM saved_searches WHERE created_at = ?").run(key);
+    if (id !== undefined && id !== null) {
+      getDb().prepare("DELETE FROM saved_searches WHERE id = ?").run(id);
+    } else {
+      getDb().prepare("DELETE FROM saved_searches WHERE created_at = ?").run(key);
+    }
   }
 
   syncToSupabase(() =>
-    getSupabase()!.from("saved_searches").delete().eq("created_at", key).eq("user_id", userId!),
+    id !== undefined && id !== null
+      ? getSupabase()!.from("saved_searches").delete().eq("id", id).eq("user_id", userId!)
+      : getSupabase()!.from("saved_searches").delete().eq("created_at", key).eq("user_id", userId!),
   );
 
   return NextResponse.json({ ok: true });

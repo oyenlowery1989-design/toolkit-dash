@@ -118,6 +118,21 @@ export async function POST(req: NextRequest) {
              notes      = excluded.notes,
              updated_at = excluded.updated_at`,
         ).run(id, nameTrimmed, assetCodeNorm, issuerNorm, networkNorm, notes ?? null, now, now);
+
+        syncToSupabase(async () => {
+          await getSupabase()!.from("asset_groups").upsert({
+            id,
+            user_id: userId,
+            name: nameTrimmed,
+            asset_code: assetCodeNorm,
+            issuer: issuerNorm,
+            network: networkNorm,
+            notes: notes ?? null,
+            created_at: now,
+            updated_at: now,
+          });
+        });
+
         return NextResponse.json({ ok: true });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);

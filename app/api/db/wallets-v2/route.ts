@@ -67,7 +67,16 @@ export async function POST(req: NextRequest) {
   const trimPublicKey = (publicKey as string).trim();
   const trimSecretKey = (secretKey as string).trim(); // empty string = watch-only, intentional
 
-  if (!isSupabaseOnly()) {
+  if (isSupabaseOnly()) {
+    const { data: dup } = await getSupabase()!
+      .from("wallets")
+      .select("id, name")
+      .eq("user_id", userId!)
+      .eq("public_key", trimPublicKey)
+      .limit(1)
+      .single();
+    if (dup) return NextResponse.json({ error: `Already saved as "${dup.name}".` }, { status: 409 });
+  } else {
     try {
       const dup = getDb().prepare("SELECT id, name FROM wallets WHERE public_key = ?").get(trimPublicKey) as { id: string; name: string } | undefined;
       if (dup) return NextResponse.json({ error: `Already saved as "${dup.name}".` }, { status: 409 });

@@ -110,14 +110,15 @@ export async function POST(req: NextRequest) {
           min_threshold: minThreshold ?? 0, max_cap: maxCap ?? 0, position: position ?? 0,
         });
         if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+        return NextResponse.json({ ok: true, id: rowId });
       } else {
         const db = getDb();
         const existing = db.prepare(`SELECT id FROM auto_send_destinations WHERE group_id = ? AND destination = ?`).get(groupId, destination) as { id: string } | undefined;
         const rowId = existing?.id ?? id;
         db.prepare(`INSERT OR REPLACE INTO auto_send_destinations (id, group_id, destination, percentage, is_remainder, is_paused, label, memo, min_threshold, max_cap, position) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
           .run(rowId, groupId, destination, percentage, (isRemainder as boolean) ? 1 : 0, (paused as boolean) ? 1 : 0, label ?? null, memo ?? null, minThreshold ?? 0, maxCap ?? 0, position ?? 0);
+        return NextResponse.json({ ok: true, id: rowId });
       }
-      return NextResponse.json({ ok: true });
     }
 
     return NextResponse.json({ error: "unknown type — expected 'group' or 'destination'" }, { status: 400 });

@@ -105,7 +105,13 @@ export function useAutoSendGroups() {
           return { ...g, destinations };
         })
       );
-      dbPost(ENDPOINT, { type: "destination", groupId, ...dest, id }).catch(() => _cache.reload(ENDPOINT));
+      // Server may resolve a different (pre-existing) row id when upserting by
+      // (groupId, destination) — reload so the cache picks up the authoritative id
+      // instead of drifting from the client-generated one used above.
+      dbPost(ENDPOINT, { type: "destination", groupId, ...dest, id }).then(
+        () => _cache.reload(ENDPOINT),
+        () => _cache.reload(ENDPOINT),
+      );
     },
     []
   );

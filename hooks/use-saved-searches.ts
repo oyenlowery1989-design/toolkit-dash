@@ -1,11 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { createDbCache, dbPost, dbDelete, debounce } from "@/lib/db-client";
+import { createDbCache, dbPost, authHeaders, waitForAuth, debounce } from "@/lib/db-client";
 
 export type SavedSearchType = "address" | "asset" | "intermediary-trace" | "intermediary-scan";
 
 export interface SavedSearch {
+  /** Row id — present once the entry has round-tripped through the server (GET response). Absent on freshly-optimistic entries. */
+  id?: number;
   type: SavedSearchType;
   /** G... for address, CODE:ISSUER for asset */
   value: string;
@@ -28,6 +30,24 @@ export interface SavedSearch {
 
 const ENDPOINT = "/api/db/saved-searches";
 const _cache = createDbCache<SavedSearch>();
+
+// Local delete wrapper (mirrors the pattern in use-auto-send-groups.ts / use-asset-groups.ts):
+// the shared dbDelete always sends { key }, but this route needs to key on `id` when the
+// cached entry has one (round-tripped from the server) and fall back to `created_at`
+// (the `timestamp` field) only for optimistic entries that haven't been reloaded yet.
+function rawDelete(body: Record<string, unknown>): Promise<void> {
+  return waitForAuth()
+    .then(() =>
+      fetch(ENDPOINT, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify(body),
+      }),
+    )
+    .then((r) => {
+      if (!r.ok) throw new Error(`DELETE ${ENDPOINT} failed: ${r.status}`);
+    });
+}
 
 export function useSavedSearches() {
   const [, rerender] = useState(0);
@@ -57,8 +77,10 @@ export function useSavedSearches() {
   }, []);
 
   const remove = useCallback((timestamp: number) => {
+    const entry = _cache.get().find((s) => s.timestamp === timestamp);
     _cache.set(_cache.get().filter((s) => s.timestamp !== timestamp));
-    dbDelete(ENDPOINT, timestamp).catch(() => _cache.reload(ENDPOINT));
+    const body = entry?.id !== undefined ? { id: entry.id } : { key: timestamp };
+    rawDelete(body).catch(() => _cache.reload(ENDPOINT));
   }, []);
 
   return { history, upsert, remove };
