@@ -45,14 +45,14 @@ export function useProceedsPresets() {
       const current = _cache.get();
       const deduped = current.filter((row) => row.id !== id);
       _cache.set([newEntry, ...deduped].slice(0, 30));
-      dbPost(ENDPOINT, newEntry);
+      dbPost(ENDPOINT, newEntry).catch(() => _cache.reload(ENDPOINT));
     },
     [],
   );
 
   const removePreset = useCallback((id: string) => {
     _cache.set(_cache.get().filter((row) => row.id !== id));
-    dbDelete(ENDPOINT, id);
+    dbDelete(ENDPOINT, id).catch(() => _cache.reload(ENDPOINT));
   }, []);
 
   return { presets, savePreset, removePreset };

@@ -62,14 +62,14 @@ export function useAddressBook() {
       _cache.set(
         idx >= 0 ? current.map((e, i) => (i === idx ? newEntry : e)) : [newEntry, ...current],
       );
-      dbPost(ENDPOINT, newEntry);
+      dbPost(ENDPOINT, newEntry).catch(() => _cache.reload(ENDPOINT));
     },
     [],
   );
 
   const remove = useCallback((publicKey: string) => {
     _cache.set(_cache.get().filter((e) => e.publicKey !== publicKey));
-    dbDelete(ENDPOINT, publicKey);
+    dbDelete(ENDPOINT, publicKey).catch(() => _cache.reload(ENDPOINT));
   }, []);
 
   const importBulk = useCallback((text: string): number => {
@@ -91,7 +91,7 @@ export function useAddressBook() {
         timestamp: Date.now(),
       };
       current.set(publicKey, newEntry);
-      dbPost(ENDPOINT, newEntry);
+      dbPost(ENDPOINT, newEntry).catch(() => _cache.reload(ENDPOINT));
       count++;
     }
     _cache.set([...current.values()]);
@@ -101,7 +101,7 @@ export function useAddressBook() {
   const setEntries = useCallback((next: AddressBookEntry[]) => {
     _cache.set(next);
     // Replace all: delete all then re-insert — handled by individual upserts
-    next.forEach((e) => dbPost(ENDPOINT, e));
+    next.forEach((e) => dbPost(ENDPOINT, e).catch(() => _cache.reload(ENDPOINT)));
   }, []);
 
   return { entries, upsert, remove, importBulk, setEntries };

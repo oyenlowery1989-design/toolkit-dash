@@ -48,7 +48,7 @@ export function useSavedAnalyses() {
         timestamp: Date.now(),
       };
       _cache.set([newEntry, ..._cache.get()].slice(0, 50));
-      dbPost(ENDPOINT, newEntry);
+      dbPost(ENDPOINT, newEntry).catch(() => _cache.reload(ENDPOINT));
       return newEntry.id;
     },
     [],
@@ -56,22 +56,22 @@ export function useSavedAnalyses() {
 
   const updateName = useCallback((id: string, name: string) => {
     _cache.set(_cache.get().map((a) => (a.id === id ? { ...a, name } : a)));
-    dbPatch(ENDPOINT, { id, name });
+    dbPatch(ENDPOINT, { id, name }).catch(() => _cache.reload(ENDPOINT));
   }, []);
 
   const updateNotes = useCallback((id: string, notes: string) => {
     _cache.set(_cache.get().map((a) => (a.id === id ? { ...a, notes } : a)));
-    dbPatch(ENDPOINT, { id, notes });
+    dbPatch(ENDPOINT, { id, notes }).catch(() => _cache.reload(ENDPOINT));
   }, []);
 
   const updateTags = useCallback((id: string, tags: string[]) => {
     _cache.set(_cache.get().map((a) => (a.id === id ? { ...a, tags } : a)));
-    dbPatch(ENDPOINT, { id, tags });
+    dbPatch(ENDPOINT, { id, tags }).catch(() => _cache.reload(ENDPOINT));
   }, []);
 
   const remove = useCallback((id: string) => {
     _cache.set(_cache.get().filter((a) => a.id !== id));
-    dbDelete(ENDPOINT, id);
+    dbDelete(ENDPOINT, id).catch(() => _cache.reload(ENDPOINT));
   }, []);
 
   return { analyses, saveAnalysis, updateName, updateNotes, updateTags, remove };

@@ -40,7 +40,7 @@ export function useBulkRunHistory() {
       ranAt: Date.now(),
     };
     _cache.set([entry, ..._cache.get()].slice(0, 10));
-    dbPost(ENDPOINT, entry);
+    dbPost(ENDPOINT, entry).catch(() => _cache.reload(ENDPOINT));
   }, []);
 
   return { runs, addRun };

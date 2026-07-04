@@ -46,7 +46,7 @@ export function useAutoSendGroups() {
         destinations: [],
       };
       _cache.set([optimistic, ..._cache.get()]);
-      dbPost(ENDPOINT, { type: "group", id, ...entry });
+      dbPost(ENDPOINT, { type: "group", id, ...entry }).catch(() => _cache.reload(ENDPOINT));
       // Notify scheduler about new group if it has an interval
       if (entry.intervalMinutes) {
         waitForAuth().then(() => fetch("/api/auto-send/run", {
@@ -65,7 +65,7 @@ export function useAutoSendGroups() {
       updates: Partial<Pick<AutoSendGroup, "name" | "network" | "secretKey" | "intervalMinutes" | "enabled" | "batchSend" | "batchMemo" | "minReserve" | "minSenderThreshold" | "previewOnly" | "lastFailureAt">>
     ) => {
       _cache.set(_cache.get().map((g) => (g.id === id ? { ...g, ...updates } : g)));
-      dbPatch(ENDPOINT, { type: "group", id, ...updates });
+      dbPatch(ENDPOINT, { type: "group", id, ...updates }).catch(() => _cache.reload(ENDPOINT));
       if (updates.enabled !== undefined || updates.intervalMinutes !== undefined) {
         waitForAuth().then(() => fetch("/api/auto-send/run", {
           method: "POST",
@@ -105,7 +105,7 @@ export function useAutoSendGroups() {
           return { ...g, destinations };
         })
       );
-      dbPost(ENDPOINT, { type: "destination", groupId, ...dest, id });
+      dbPost(ENDPOINT, { type: "destination", groupId, ...dest, id }).catch(() => _cache.reload(ENDPOINT));
     },
     []
   );

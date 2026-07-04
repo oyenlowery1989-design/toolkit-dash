@@ -42,7 +42,7 @@ export function useWalletsV2() {
       const position = _cache.get().filter((w) => w.folderId === folderId).length;
       const entry: WalletEntry = { id, folderId, name, publicKey, secretKey, position };
       _cache.set([..._cache.get(), entry]);
-      dbPost(ENDPOINT, entry);
+      dbPost(ENDPOINT, entry).catch(() => _cache.reload(ENDPOINT));
       return id;
     },
     []
@@ -50,17 +50,17 @@ export function useWalletsV2() {
 
   const renameWallet = useCallback((id: string, name: string) => {
     _cache.set(_cache.get().map((w) => (w.id === id ? { ...w, name } : w)));
-    dbPatch(ENDPOINT, { id, name });
+    dbPatch(ENDPOINT, { id, name }).catch(() => _cache.reload(ENDPOINT));
   }, []);
 
   const moveWallet = useCallback((id: string, folderId: string) => {
     _cache.set(_cache.get().map((w) => (w.id === id ? { ...w, folderId } : w)));
-    dbPatch(ENDPOINT, { id, folderId });
+    dbPatch(ENDPOINT, { id, folderId }).catch(() => _cache.reload(ENDPOINT));
   }, []);
 
   const removeWallet = useCallback((id: string) => {
     _cache.set(_cache.get().filter((w) => w.id !== id));
-    dbDelete(ENDPOINT, id);
+    dbDelete(ENDPOINT, id).catch(() => _cache.reload(ENDPOINT));
   }, []);
 
   return { wallets, addWallet, renameWallet, moveWallet, removeWallet };

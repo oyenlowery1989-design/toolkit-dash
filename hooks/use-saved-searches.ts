@@ -53,12 +53,12 @@ export function useSavedSearches() {
       (s) => !(s.type === entry.type && s.value === entry.value),
     );
     _cache.set([newEntry, ...deduped].slice(0, 30));
-    dbPost(ENDPOINT, newEntry);
+    dbPost(ENDPOINT, newEntry).catch(() => _cache.reload(ENDPOINT));
   }, []);
 
   const remove = useCallback((timestamp: number) => {
     _cache.set(_cache.get().filter((s) => s.timestamp !== timestamp));
-    dbDelete(ENDPOINT, timestamp);
+    dbDelete(ENDPOINT, timestamp).catch(() => _cache.reload(ENDPOINT));
   }, []);
 
   return { history, upsert, remove };

@@ -96,7 +96,7 @@ export function useAssetGroups() {
         updatedAt: now,
       };
       _cache.set([newGroup, ..._cache.get()]);
-      dbPost(ENDPOINT, { type: "group", id, ...normalizedEntry });
+      dbPost(ENDPOINT, { type: "group", id, ...normalizedEntry }).catch(() => _cache.reload(ENDPOINT));
       return id;
     },
     [],
@@ -116,7 +116,7 @@ export function useAssetGroups() {
             g.id === id ? { ...g, ...patch, updatedAt: Date.now() } : g,
           ),
       );
-      dbPatch(ENDPOINT, { type: "group", id, ...patch });
+      dbPatch(ENDPOINT, { type: "group", id, ...patch }).catch(() => _cache.reload(ENDPOINT));
     },
     [],
   );
@@ -149,7 +149,7 @@ export function useAssetGroups() {
           return { ...g, members, updatedAt: now };
         }),
       );
-      dbPost(ENDPOINT, { type: "member", id, groupId, ...member });
+      dbPost(ENDPOINT, { type: "member", id, groupId, ...member }).catch(() => _cache.reload(ENDPOINT));
     },
     [],
   );
@@ -175,7 +175,7 @@ export function useAssetGroups() {
               },
         ),
       );
-      dbPatch(ENDPOINT, { type: "member", id: memberId, groupId, ...patch });
+      dbPatch(ENDPOINT, { type: "member", id: memberId, groupId, ...patch }).catch(() => _cache.reload(ENDPOINT));
     },
     [],
   );

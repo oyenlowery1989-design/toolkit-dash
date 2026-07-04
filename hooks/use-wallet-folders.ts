@@ -34,19 +34,19 @@ export function useWalletFolders() {
     const position = _cache.get().length;
     const entry: WalletFolder = { id, name, position };
     _cache.set([..._cache.get(), entry]);
-    dbPost(ENDPOINT, entry);
+    dbPost(ENDPOINT, entry).catch(() => _cache.reload(ENDPOINT));
     return id;
   }, []);
 
   const renameFolder = useCallback((id: string, name: string) => {
     _cache.set(_cache.get().map((f) => (f.id === id ? { ...f, name } : f)));
-    dbPatch(ENDPOINT, { id, name });
+    dbPatch(ENDPOINT, { id, name }).catch(() => _cache.reload(ENDPOINT));
   }, []);
 
   const deleteFolder = useCallback((id: string) => {
     _cache.set(_cache.get().filter((f) => f.id !== id));
     purgeWalletsByFolder(id); // optimistic cascade — DB cascade handled in API route
-    dbDelete(ENDPOINT, id);
+    dbDelete(ENDPOINT, id).catch(() => _cache.reload(ENDPOINT));
   }, []);
 
   return { folders, createFolder, renameFolder, deleteFolder };

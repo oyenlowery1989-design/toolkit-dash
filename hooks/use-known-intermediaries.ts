@@ -39,14 +39,14 @@ export function useKnownIntermediaries() {
       _cache.set(
         idx >= 0 ? current.map((e, i) => (i === idx ? newEntry : e)) : [newEntry, ...current],
       );
-      dbPost(ENDPOINT, newEntry);
+      dbPost(ENDPOINT, newEntry).catch(() => _cache.reload(ENDPOINT));
     },
     [],
   );
 
   const remove = useCallback((address: string) => {
     _cache.set(_cache.get().filter((e) => e.address !== address));
-    dbDelete(ENDPOINT, address);
+    dbDelete(ENDPOINT, address).catch(() => _cache.reload(ENDPOINT));
   }, []);
 
   return { entries, upsert, remove };

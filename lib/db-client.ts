@@ -61,6 +61,8 @@ export interface DbCache<T> {
   set(data: T[]): void;
   notify(): void;
   isLoaded(): boolean;
+  /** Last load/reload error message, or null if the last attempt succeeded (or none has failed yet). */
+  error(): string | null;
   subscribe(fn: () => void): () => void;
   load(endpoint: string): Promise<void>;
   /** Force re-fetch from server regardless of cache state */
@@ -69,11 +71,51 @@ export interface DbCache<T> {
   invalidate(): void;
 }
 
+const RETRY_DELAY_MS = 3000;
+
 export function createDbCache<T>(): DbCache<T> {
   let cache: T[] | null = null;
   let loading = false;
+  let error: string | null = null;
   let fetchPromise: Promise<void> | null = null;
+  let retryScheduled = false;
+  let syncListenerAdded = false;
   const listeners = new Set<() => void>();
+
+  // Runs the actual GET + updates cache/error state. On failure the cache is left
+  // untouched (stays null until a successful load, so isLoaded() stays false) and
+  // a single retry is scheduled 3s out so we never stack up retry storms.
+  function doFetch(endpoint: string): Promise<void> {
+    loading = true;
+    const p = waitForAuth()
+      .then(() => fetch(endpoint, { headers: authHeaders() }))
+      .then((r) => {
+        if (!r.ok) throw new Error(`GET ${endpoint} failed: ${r.status}`);
+        return r.json() as Promise<T[]>;
+      })
+      .then((data: T[]) => {
+        cache = data;
+        error = null;
+        listeners.forEach((fn) => fn());
+      })
+      .catch((e) => {
+        console.error(`[db] GET ${endpoint} failed:`, e);
+        error = e instanceof Error ? e.message : String(e);
+        listeners.forEach((fn) => fn());
+        if (!retryScheduled) {
+          retryScheduled = true;
+          setTimeout(() => {
+            retryScheduled = false;
+            instance.reload(endpoint);
+          }, RETRY_DELAY_MS);
+        }
+      })
+      .finally(() => {
+        loading = false;
+      });
+    fetchPromise = p;
+    return p;
+  }
 
   const instance = {
     get() {
@@ -89,55 +131,39 @@ export function createDbCache<T>(): DbCache<T> {
     isLoaded() {
       return cache !== null;
     },
+    error() {
+      return error;
+    },
     subscribe(fn: () => void) {
       listeners.add(fn);
       return () => listeners.delete(fn);
     },
     async load(endpoint: string) {
       if (cache !== null || loading) return fetchPromise ?? Promise.resolve();
-      // Listen for stellardb:sync — re-fetch if Supabase pushed new data on startup
-      if (typeof window !== "undefined") {
-        window.addEventListener("stellardb:sync", () => instance.reload(endpoint), { once: true });
+      // Listen for stellardb:sync — re-fetch if Supabase pushed new data on startup.
+      // Registered once per cache instance (not per load call) so invalidate()/reload()
+      // cycles never accumulate duplicate listeners.
+      if (!syncListenerAdded && typeof window !== "undefined") {
+        syncListenerAdded = true;
+        window.addEventListener("stellardb:sync", () => instance.reload(endpoint));
       }
-      loading = true;
-      fetchPromise = waitForAuth().then(() => fetch(endpoint, { headers: authHeaders() }))
-        .then((r) => (r.ok ? r.json() : []))
-        .then((data: T[]) => {
-          cache = data;
-          listeners.forEach((fn) => fn());
-        })
-        .catch(() => {
-          cache = [];
-          listeners.forEach((fn) => fn());
-        })
-        .finally(() => {
-          loading = false;
-        });
-      return fetchPromise;
+      return doFetch(endpoint);
     },
     async reload(endpoint: string) {
-      if (loading) return fetchPromise ?? Promise.resolve();
-      loading = true;
+      if (loading) {
+        // Chain a fresh fetch after the in-flight one completes instead of
+        // returning the stale promise — callers of reload() expect a fetch
+        // that starts (or continues) after this call, not a no-op.
+        return fetchPromise!.then(() => doFetch(endpoint));
+      }
       cache = null;
-      fetchPromise = waitForAuth().then(() => fetch(endpoint, { headers: authHeaders() }))
-        .then((r) => (r.ok ? r.json() : []))
-        .then((data: T[]) => {
-          cache = data;
-          listeners.forEach((fn) => fn());
-        })
-        .catch(() => {
-          cache = [];
-          listeners.forEach((fn) => fn());
-        })
-        .finally(() => {
-          loading = false;
-        });
-      return fetchPromise;
+      return doFetch(endpoint);
     },
     invalidate() {
       cache = null;
       loading = false;
       fetchPromise = null;
+      error = null;
       listeners.forEach((fn) => fn());
     },
   };
@@ -157,33 +183,57 @@ export function debounce<T extends () => void>(fn: T, ms: number): T {
 
 export async function dbPost(endpoint: string, data: unknown): Promise<void> {
   await waitForAuth();
-  await fetch(endpoint, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", ...authHeaders() },
-    body: JSON.stringify(data),
-  })
-    .then((r) => { if (!r.ok) console.error(`[db] POST ${endpoint} failed: ${r.status}`); })
-    .catch((e) => console.error(`[db] POST ${endpoint} network error:`, e));
+  let res: Response;
+  try {
+    res = await fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify(data),
+    });
+  } catch (e) {
+    console.error(`[db] POST ${endpoint} network error:`, e);
+    throw e;
+  }
+  if (!res.ok) {
+    console.error(`[db] POST ${endpoint} failed: ${res.status}`);
+    throw new Error(`POST ${endpoint} failed: ${res.status}`);
+  }
 }
 
 export async function dbPatch(endpoint: string, data: unknown): Promise<void> {
   await waitForAuth();
-  await fetch(endpoint, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json", ...authHeaders() },
-    body: JSON.stringify(data),
-  })
-    .then((r) => { if (!r.ok) console.error(`[db] PATCH ${endpoint} failed: ${r.status}`); })
-    .catch((e) => console.error(`[db] PATCH ${endpoint} network error:`, e));
+  let res: Response;
+  try {
+    res = await fetch(endpoint, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify(data),
+    });
+  } catch (e) {
+    console.error(`[db] PATCH ${endpoint} network error:`, e);
+    throw e;
+  }
+  if (!res.ok) {
+    console.error(`[db] PATCH ${endpoint} failed: ${res.status}`);
+    throw new Error(`PATCH ${endpoint} failed: ${res.status}`);
+  }
 }
 
 export async function dbDelete(endpoint: string, key: unknown): Promise<void> {
   await waitForAuth();
-  await fetch(endpoint, {
-    method: "DELETE",
-    headers: { "Content-Type": "application/json", ...authHeaders() },
-    body: JSON.stringify({ key }),
-  })
-    .then((r) => { if (!r.ok) console.error(`[db] DELETE ${endpoint} failed: ${r.status}`); })
-    .catch((e) => console.error(`[db] DELETE ${endpoint} network error:`, e));
+  let res: Response;
+  try {
+    res = await fetch(endpoint, {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({ key }),
+    });
+  } catch (e) {
+    console.error(`[db] DELETE ${endpoint} network error:`, e);
+    throw e;
+  }
+  if (!res.ok) {
+    console.error(`[db] DELETE ${endpoint} failed: ${res.status}`);
+    throw new Error(`DELETE ${endpoint} failed: ${res.status}`);
+  }
 }

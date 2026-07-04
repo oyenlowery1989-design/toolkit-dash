@@ -58,14 +58,14 @@ export function useBulkRecipients() {
         ? current.map((l) => (l.id === existing.id ? entry : l))
         : [entry, ...current];
       _cache.set(next);
-      dbPost(ENDPOINT, entry);
+      dbPost(ENDPOINT, entry).catch(() => _cache.reload(ENDPOINT));
     },
     [],
   );
 
   const remove = useCallback((id: string) => {
     _cache.set(_cache.get().filter((l) => l.id !== id));
-    dbDelete(ENDPOINT, id);
+    dbDelete(ENDPOINT, id).catch(() => _cache.reload(ENDPOINT));
   }, []);
 
   /** All lists for a specific network, newest first. */
