@@ -6,7 +6,13 @@
  */
 import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
-import { getSupabase, isSupabaseConfigured, isSupabaseOnly, requireAuth } from "@/lib/supabase-server";
+import {
+  getSupabase,
+  isSupabaseConfigured,
+  isSupabaseOnly,
+  requireAuth,
+  warnSyncSkippedOnce,
+} from "@/lib/supabase-server";
 
 export async function POST(req: NextRequest) {
   const auth = await requireAuth(req);
@@ -19,6 +25,16 @@ export async function POST(req: NextRequest) {
 
   if (!isSupabaseConfigured()) {
     return NextResponse.json({ ok: true, skipped: true, reason: "supabase not configured" });
+  }
+
+  const userId = auth.userId;
+  if (!userId) {
+    warnSyncSkippedOnce();
+    return NextResponse.json({
+      ok: true,
+      skipped: true,
+      reason: "no SUPABASE_SYNC_USER_ID configured",
+    });
   }
 
   const sb = getSupabase()!;
@@ -34,25 +50,30 @@ export async function POST(req: NextRequest) {
     { data: savedSearches },
     { data: bulkRunHistory },
     { data: assetGroups },
-    { data: assetGroupMembers },
     { data: walletFolders },
     { data: wallets },
     { data: appState },
   ] = await Promise.all([
-    sb.from("address_book").select("*"),
-    sb.from("known_intermediaries").select("*"),
-    sb.from("known_creators").select("*"),
-    sb.from("saved_analyses").select("*"),
-    sb.from("bulk_recipients").select("*"),
-    sb.from("proceeds_presets").select("*"),
-    sb.from("saved_searches").select("*"),
-    sb.from("bulk_run_history").select("*"),
-    sb.from("asset_groups").select("*"),
-    sb.from("asset_group_members").select("*"),
-    sb.from("wallet_folders").select("*"),
-    sb.from("wallets").select("*"),
-    sb.from("app_state").select("*"),
+    sb.from("address_book").select("*").eq("user_id", userId),
+    sb.from("known_intermediaries").select("*").eq("user_id", userId),
+    sb.from("known_creators").select("*").eq("user_id", userId),
+    sb.from("saved_analyses").select("*").eq("user_id", userId),
+    sb.from("bulk_recipients").select("*").eq("user_id", userId),
+    sb.from("proceeds_presets").select("*").eq("user_id", userId),
+    sb.from("saved_searches").select("*").eq("user_id", userId),
+    sb.from("bulk_run_history").select("*").eq("user_id", userId),
+    sb.from("asset_groups").select("*").eq("user_id", userId),
+    sb.from("wallet_folders").select("*").eq("user_id", userId),
+    sb.from("wallets").select("*").eq("user_id", userId),
+    sb.from("app_state").select("*").eq("user_id", userId),
   ]);
+
+  // asset_group_members has no user_id column — scoped through parent asset_groups instead
+  const assetGroupIds = (assetGroups ?? []).map((g) => g.id as string);
+  const { data: assetGroupMembers } =
+    assetGroupIds.length > 0
+      ? await sb.from("asset_group_members").select("*").in("group_id", assetGroupIds)
+      : { data: [] as Record<string, unknown>[] };
 
   let merged = 0;
 

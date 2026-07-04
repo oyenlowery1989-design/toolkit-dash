@@ -153,6 +153,17 @@ export async function POST(req: NextRequest) {
 
   if (source === "local") {
     // Push local SQLite → Supabase
+    const userId = auth.userId;
+    if (!userId) {
+      return NextResponse.json(
+        {
+          error:
+            "No Supabase user id resolvable for local backup. Set SUPABASE_SYNC_USER_ID (local dev) before restoring local data to Supabase.",
+        },
+        { status: 400 },
+      );
+    }
+
     const db = getDb();
 
     const tables = [
@@ -186,6 +197,9 @@ export async function POST(req: NextRequest) {
       addresses: JSON.parse(r.addresses as string),
     }));
 
+    // Child tables scoped through their parent's group_id — no user_id column of their own
+    const NO_USER_ID_TABLES = new Set(["asset_group_members", "auto_send_destinations"]);
+
     const errors: string[] = [];
 
     for (const { name, rows } of tables) {
@@ -195,10 +209,15 @@ export async function POST(req: NextRequest) {
         name === "bulk_recipients" ? bulkRecipientsRows :
         rows;
 
-      // Upsert in batches of 500
+      const skipUserId = NO_USER_ID_TABLES.has(name);
+
+      // Upsert in batches of 500 — every row must carry the resolved user_id
+      // (except child tables scoped via their parent's group_id)
       for (let i = 0; i < data.length; i += 500) {
-        const batch = data.slice(i, i + 500);
-        const { error } = await sb.from(name).upsert(batch as Record<string, unknown>[]);
+        const batch = (data.slice(i, i + 500) as Record<string, unknown>[]).map((row) =>
+          skipUserId ? row : { ...row, user_id: userId },
+        );
+        const { error } = await sb.from(name).upsert(batch);
         if (error) errors.push(`${name}: ${error.message}`);
       }
     }
