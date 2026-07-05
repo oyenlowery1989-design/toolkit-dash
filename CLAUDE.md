@@ -45,7 +45,7 @@
 - After completing any feature or bug fix, re-read the changed files and adjacent code.
 - Proactively look for: dead code, type mismatches, UI states that can never render, duplicated components, inconsistent address display, callbacks with wrong signatures.
 - Propose improvements to the user even if not asked — list them briefly after completing work.
-- Track unfinished features (e.g. `detectClusters` in matcher.ts) and surface them in reviews.
+- Track unfinished features and surface them in reviews. (`detectClusters` is DONE — built in `lib/intermediary-tracer/matcher.ts`, rendered + save-to-DB wired in ScanIntermediaryTab.)
 
 ## Standard Module Layout
 - `AppLayout` already wraps all pages in `container mx-auto p-4 md:p-8 max-w-7xl` — **do not add another `max-w-*` or extra padding in `page.tsx`**.
@@ -318,7 +318,7 @@ Full `autoCreate` URL param spec:
 | Scan Intermediary | Working, Phase 1+2 streaming, cluster detection shown |
 | Known Intermediaries | Working, signed off — DO NOT TOUCH |
 | Known Creators | Working, signed off — DO NOT TOUCH |
-| Creator's Accounts | Built, needs user verification |
+| Creator's Accounts | Working — browser-verified end-to-end 2026-07-05 (manufactured testnet fixture: C pays I, I creates A → found at 100% confidence); intermediary prefill + unmount abort fixed; awaiting user sign-off |
 
 ## Wallet Manager
 - Hooks: `hooks/use-wallet-folders.ts`, `hooks/use-wallets-v2.ts`, `hooks/use-active-wallet.ts`

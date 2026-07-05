@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { StrKey } from "stellar-sdk";
 import {
   AlertTriangle,
@@ -34,10 +34,9 @@ import { findCreatorAccounts } from "@/lib/intermediary-tracer/fetchers";
 import { useKnownCreators } from "@/hooks/use-known-creators";
 import { useKnownIntermediaries } from "@/hooks/use-known-intermediaries";
 import { useCreatorChildren } from "@/hooks/use-creator-children";
-import type { CreatorChild } from "@/lib/intermediary-tracer/types";
+import type { CreatorChild, CreatorAccountResult } from "@/lib/intermediary-tracer/types";
 import { useRouter } from "next/navigation";
 import { LogPanel } from "./LogPanel";
-import type { CreatorAccountResult } from "@/lib/intermediary-tracer/types";
 
 const WINDOW_OPTIONS = [
   { label: "2 minutes", value: "120" },
@@ -150,11 +149,10 @@ export function TraceCreatorTab() {
   const { entries: knownCreators } = useKnownCreators();
   const { entries: knownIntermediaries } = useKnownIntermediaries();
   const abortRef = useRef<AbortController | null>(null);
+  const prefilledRef = useRef(false);
 
   const [creatorAddr, setCreatorAddr] = useState("");
-  const [intermediaryAddr, setIntermediaryAddr] = useState(
-    knownIntermediaries[0]?.address ?? "",
-  );
+  const [intermediaryAddr, setIntermediaryAddr] = useState("");
   const [windowSec, setWindowSec] = useState("300");
   const [tolerancePct, setTolerancePct] = useState("2");
   const [fromDays, setFromDays] = useState("0.042");
@@ -167,6 +165,18 @@ export function TraceCreatorTab() {
   const [hasStarted, setHasStarted] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState<string | null>(null);
+
+  // The known-intermediaries DB cache is empty on first render, so a useState
+  // initializer never catches it — prefill once it loads, only if untouched.
+  useEffect(() => {
+    if (prefilledRef.current || knownIntermediaries.length === 0) return;
+    prefilledRef.current = true;
+    setIntermediaryAddr((cur) => cur || knownIntermediaries[0].address);
+  }, [knownIntermediaries]);
+
+  useEffect(() => () => {
+    abortRef.current?.abort();
+  }, []);
 
   const creatorValid = StrKey.isValidEd25519PublicKey(creatorAddr.trim());
   const intermediaryValid = StrKey.isValidEd25519PublicKey(intermediaryAddr.trim());

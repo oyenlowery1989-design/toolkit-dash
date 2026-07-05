@@ -1,8 +1,6 @@
 import type {
-  AccountOriginResult,
   CreatorAccountResult,
   FunderCandidate,
-  ScanProgress,
   TraceResult,
 } from "./types";
 import { scoreCandidate } from "./matcher";
@@ -611,6 +609,7 @@ export async function findCreatorAccounts(
     let opCursor: string | undefined = pmt.pagingToken;
     let opPageCount = 0;
     let foundInWindow = false;
+    let skippedDuplicate = false;
 
     opLoop: while (!signal.aborted) {
       const params = new URLSearchParams({
@@ -648,7 +647,10 @@ export async function findCreatorAccounts(
 
         if (amountDiffPct > tolerancePct) continue;
         if (confidence < 20) continue;
-        if (seenAccounts.has(op.account as string)) continue; // skip duplicate
+        if (seenAccounts.has(op.account as string)) {
+          skippedDuplicate = true; // real match, but already recorded from an earlier payment
+          continue;
+        }
         seenAccounts.add(op.account as string);
 
         const accountData = await fetchJson(
@@ -685,9 +687,15 @@ export async function findCreatorAccounts(
     }
 
     if (!foundInWindow) {
-      onLog(
-        `    → no matching create_account found in window (scanned ${opPageCount} page(s))`,
-      );
+      if (skippedDuplicate) {
+        onLog(
+          `    → match already recorded from an earlier payment — skipped (dedup)`,
+        );
+      } else {
+        onLog(
+          `    → no matching create_account found in window (scanned ${opPageCount} page(s))`,
+        );
+      }
     }
   }
 

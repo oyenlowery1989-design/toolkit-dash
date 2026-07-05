@@ -86,10 +86,3 @@ export interface CreatorAccountResult {
   confidence: number;
   homeDomain?: string;
 }
-
-/** Address that appears as top funder in multiple results — suspicious pattern */
-export interface ClusterEntry {
-  address: string;
-  count: number;
-  totalFunded: number;
-}
