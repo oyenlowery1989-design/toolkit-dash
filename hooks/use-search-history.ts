@@ -30,6 +30,9 @@ export function createSearchHistory<T extends SearchHistoryEntry>(
   // Module-level cache so all hook instances share the same parsed array
   let cachedRaw: string | null | undefined = undefined;
   let cachedSnapshot: T[] = [];
+  // Stable empty array — getServerSnapshot must return the same reference
+  // every call or React warns and can loop re-rendering during hydration.
+  const emptySnapshot: T[] = [];
 
   function save(entries: T[]): void {
     try {
@@ -40,7 +43,7 @@ export function createSearchHistory<T extends SearchHistoryEntry>(
   }
 
   function getSnapshot(): T[] {
-    if (typeof window === "undefined") return [];
+    if (typeof window === "undefined") return emptySnapshot;
     const raw = localStorage.getItem(storageKey);
     if (raw === cachedRaw) return cachedSnapshot;
     cachedRaw = raw;
@@ -53,7 +56,7 @@ export function createSearchHistory<T extends SearchHistoryEntry>(
   }
 
   function getServerSnapshot(): T[] {
-    return [];
+    return emptySnapshot;
   }
 
   function dispatch() {

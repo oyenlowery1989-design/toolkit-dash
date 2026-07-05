@@ -544,11 +544,22 @@ export function AddressInvestigatorTab() {
     };
   }, []);
 
+  // During hydration useSyncExternalStore exposes the SERVER snapshot
+  // (DEFAULT_SETTINGS, network "public"); the real localStorage settings only
+  // arrive on the post-mount re-render. Auto-running before that queries the
+  // wrong network. This flag flips in an effect, so any render where it is
+  // true is guaranteed to carry hydrated settings.
+  const [settingsHydrated, setSettingsHydrated] = useState(false);
+  useEffect(() => {
+    setSettingsHydrated(true);
+  }, []);
+
   // Deep-link: when the URL ?address= param changes (e.g. "Investigate" from
   // Wallet Balances), set the input, clear any stale result state from the
   // previous address, and auto-run the investigation for the new address.
   // Guarded so each distinct param value fires exactly once.
   useEffect(() => {
+    if (!settingsHydrated) return;
     if (!urlAddress) return;
     if (lastUrlAddressRunRef.current === urlAddress) return;
     lastUrlAddressRunRef.current = urlAddress;
@@ -579,7 +590,7 @@ export function AddressInvestigatorTab() {
     // (recreated each render) but re-invoking on its identity change would
     // defeat the "once per param value" guard above.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [urlAddress]);
+  }, [urlAddress, settingsHydrated]);
 
   const isCustomAssetSelection = paymentAssetSelection === "custom";
 
