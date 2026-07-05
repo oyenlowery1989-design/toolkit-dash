@@ -25,3 +25,6 @@ tsconfig.tsbuildinfo
 stellar-toolkit.db
 stellar-toolkit.db-*
 .claude/settings.local.json
+
+# Playwright MCP session artifacts
+.playwright-mcp/

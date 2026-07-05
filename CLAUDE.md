@@ -123,7 +123,7 @@
 - Shared UI + logic live in `components/shared/ChainDisplay.tsx` — exports `ChainNode`, `ChainState`, `fetchHomeDomain`, `traceChainStep`, `CreatorPeek`, `ChainDisplay`
 - "Trace ancestry →" button appears when `issuerInfo.createdBy` or `distribCreators[addr]` is a known intermediary
 - **`traceChainStep(targetAddress, signal, setChain, horizonUrl, knownIntermediaries)`** — single step (NOT recursive); user manually controls depth via "Continue →" button
-  - Shared 5-param version exported from `components/shared/ChainDisplay.tsx`; used by AddressInvestigatorTab. AssetLookupPanel still has its own inline 3-param copy (closure over `settings`/`knownIntermediaries`) — signed off, migrate to shared only with user sign-off
+  - Single shared implementation exported from `components/shared/ChainDisplay.tsx`; used by BOTH AssetLookupPanel (4 call sites) and AddressInvestigatorTab (2 call sites) — no inline copies remain
 - Each click does exactly ONE hop; state accumulates via `chain: [...prev.chain, newNode]`
 - **`ChainNode` fields:** `creator`, `creatorType`, `realOwner?`, `confidence?`, `noNative?`, `homeDomain?`, `realOwnerHomeDomain?`
   - `homeDomain` / `realOwnerHomeDomain` fetched via `fetchHomeDomain(horizonUrl, address, signal)` at the end of each step

@@ -89,14 +89,10 @@ import { useAssetGroups } from "@/hooks/use-asset-groups";
 import { ShortAddress } from "./ShortAddress";
 import { AuthFlag } from "./AuthFlag";
 import {
-  findFunderCandidates,
-  fetchAccountCreation,
-} from "@/lib/intermediary-tracer/fetchers";
-import {
   ChainDisplay,
   ChainState,
   ChainNode,
-  fetchHomeDomain,
+  traceChainStep,
 } from "@/components/shared/ChainDisplay";
 
 // ---------------------------------------------------------------------------
@@ -346,107 +342,6 @@ export function AssetLookupPanel({
     chain: [],
   });
   const realCreatorAbortRef = useRef<AbortController | null>(null);
-
-  // Traces ONE step of the creation ancestry for targetAddress.
-  // Appends one ChainNode to the chain and sets status back to "done".
-  // The user manually triggers each step via "Continue →" in ChainDisplay.
-  const traceChainStep = async (
-    targetAddress: string,
-    signal: AbortSignal,
-    setChain: React.Dispatch<React.SetStateAction<ChainState>>,
-  ) => {
-    const horizonUrl = resolveHorizonUrl(settings);
-    setChain((prev) => ({ ...prev, status: "loading", searching: targetAddress }));
-
-    try {
-      const creation = await fetchAccountCreation(horizonUrl, targetAddress, signal);
-      if (signal.aborted) return;
-
-      let creator: string;
-      let pagingToken: string | undefined;
-      let createdAt: string | undefined;
-      let startingBalance: number | undefined;
-
-      if (creation) {
-        creator = creation.funder;
-        pagingToken = creation.pagingToken;
-        createdAt = creation.createdAt;
-        startingBalance = creation.startingBalance;
-      } else {
-        // Horizon history pruned — fall back to SDK scan
-        const server = new Horizon.Server(horizonUrl);
-        const fallback = await fetchAccountCreator(server, targetAddress, signal);
-        if (signal.aborted) return;
-        if (!fallback) {
-          setChain((prev) => ({
-            ...prev,
-            status: "done",
-            searching: undefined,
-            chain: [...prev.chain, { creator: targetAddress, creatorType: "pruned" }],
-          }));
-          return;
-        }
-        creator = fallback;
-      }
-
-      const creatorIsIntermediary = knownIntermediaries.some(
-        (e) => e.address === creator,
-      );
-
-      if (creatorIsIntermediary && pagingToken && createdAt && startingBalance !== undefined) {
-        const [{ candidates, noNativeCandidates }, creatorDomain] = await Promise.all([
-          findFunderCandidates(
-            horizonUrl, creator, pagingToken, createdAt, startingBalance, 300, 5, signal,
-          ),
-          fetchHomeDomain(horizonUrl, creator, signal),
-        ]);
-        if (signal.aborted) return;
-        const top = candidates[0];
-        const realOwnerDomain = top?.address
-          ? await fetchHomeDomain(horizonUrl, top.address, signal)
-          : undefined;
-        if (signal.aborted) return;
-        setChain((prev) => ({
-          ...prev,
-          status: "done",
-          searching: undefined,
-          chain: [...prev.chain, {
-            creator,
-            creatorType: "intermediary",
-            realOwner: top?.address,
-            confidence: top?.confidence,
-            noNative: top ? false : noNativeCandidates,
-            homeDomain: creatorDomain,
-            realOwnerHomeDomain: realOwnerDomain,
-          }],
-        }));
-      } else if (creatorIsIntermediary) {
-        // Intermediary but no pagingToken — can't scan payments
-        const creatorDomain = await fetchHomeDomain(horizonUrl, creator, signal);
-        if (signal.aborted) return;
-        setChain((prev) => ({
-          ...prev,
-          status: "done",
-          searching: undefined,
-          chain: [...prev.chain, { creator, creatorType: "intermediary", realOwner: undefined, noNative: false, homeDomain: creatorDomain }],
-        }));
-      } else {
-        // Direct creator
-        const creatorDomain = await fetchHomeDomain(horizonUrl, creator, signal);
-        if (signal.aborted) return;
-        setChain((prev) => ({
-          ...prev,
-          status: "done",
-          searching: undefined,
-          chain: [...prev.chain, { creator, creatorType: "direct", homeDomain: creatorDomain }],
-        }));
-      }
-    } catch {
-      if (!signal.aborted) {
-        setChain((prev) => ({ ...prev, status: "error", searching: undefined, error: "Lookup failed" }));
-      }
-    }
-  };
 
   const abortRef = useRef<AbortController | null>(null);
 
@@ -1235,7 +1130,7 @@ export function AssetLookupPanel({
                                     const ctrl = new AbortController();
                                     realCreatorAbortRef.current = ctrl;
                                     setIssuerChain({ status: "idle", chain: [] });
-                                    traceChainStep(issuer, ctrl.signal, setIssuerChain);
+                                    traceChainStep(issuer, ctrl.signal, setIssuerChain, resolveHorizonUrl(settings), knownIntermediaries);
                                   }}
                                 >
                                   Trace ancestry →
@@ -1252,7 +1147,7 @@ export function AssetLookupPanel({
                               onContinue={(addr) => {
                                 const ctrl = new AbortController();
                                 realCreatorAbortRef.current = ctrl;
-                                traceChainStep(addr, ctrl.signal, setIssuerChain);
+                                traceChainStep(addr, ctrl.signal, setIssuerChain, resolveHorizonUrl(settings), knownIntermediaries);
                               }}
                             />
                           </div>
@@ -1357,7 +1252,7 @@ export function AssetLookupPanel({
                                             const ctrl = new AbortController();
                                             realCreatorAbortRef.current = ctrl;
                                             setDistribChain({ status: "idle", chain: [] });
-                                            traceChainStep(highDistrib.address, ctrl.signal, setDistribChain);
+                                            traceChainStep(highDistrib.address, ctrl.signal, setDistribChain, resolveHorizonUrl(settings), knownIntermediaries);
                                           }}
                                         >
                                           Trace ancestry →
@@ -1376,7 +1271,7 @@ export function AssetLookupPanel({
                                       onContinue={(addr) => {
                                         const ctrl = new AbortController();
                                         realCreatorAbortRef.current = ctrl;
-                                        traceChainStep(addr, ctrl.signal, setDistribChain);
+                                        traceChainStep(addr, ctrl.signal, setDistribChain, resolveHorizonUrl(settings), knownIntermediaries);
                                       }}
                                     />
                                   </div>
