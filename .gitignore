@@ -19,3 +19,4 @@ MEMORY/
 
 # Git worktrees
 .worktrees/
+tsconfig.tsbuildinfo
