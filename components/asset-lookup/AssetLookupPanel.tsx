@@ -1119,9 +1119,7 @@ export function AssetLookupPanel({
                               <span>created by</span>
                               <ShortAddress
                                 address={issuerInfo.createdBy}
-                                network={
-                                  settings.network as "public" | "testnet"
-                                }
+                                network={settings.network}
                               />
                               {issuerChain.status === "idle" && (
                                 <button
@@ -1139,7 +1137,7 @@ export function AssetLookupPanel({
                             </div>
                             <ChainDisplay
                               chain={issuerChain}
-                              network={settings.network as "public" | "testnet"}
+                              network={settings.network}
                               assetCode={assetCode}
                               issuer={issuer}
                               horizonUrl={resolveHorizonUrl(settings)}
@@ -1261,9 +1259,7 @@ export function AssetLookupPanel({
                                     </div>
                                     <ChainDisplay
                                       chain={distribChain}
-                                      network={
-                                        settings.network as "public" | "testnet"
-                                      }
+                                      network={settings.network}
                                       assetCode={assetCode}
                                       issuer={issuer}
                                       horizonUrl={resolveHorizonUrl(settings)}

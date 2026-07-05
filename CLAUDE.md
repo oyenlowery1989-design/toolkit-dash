@@ -190,7 +190,7 @@ Full `autoCreate` URL param spec:
 - **"+ Group" button** on Top Senders and Top Recipients rows — opens inline Dialog with group selector (dropdown of all existing groups) + role selector, calls `upsertMember` directly; skips `NETWORK_FEES` pseudo-address
 - Group dialog state: `groupDialog` (address + role), `dialogGroupId` (selected group id), `dialogRole`
 - **Ancestry tracing** ("Who created?" in profile banner): uses shared `ChainDisplay` + `traceChainStep` from `components/shared/ChainDisplay.tsx`; state `addressChain`, abort via `realCreatorAbortRef` (pre-aborts on re-trace + unmount); resets on new search and deep-link; passes `assetCode=""`/`issuer=""` so it MUST pass `onAddToGroup` (wired to the existing group dialog above) — internal ChainDisplay dialog would create junk groups
-- Known cosmetic nit: ChainDisplay `network` prop coerces futurenet→"testnet" (label/links only; data fetch uses correct horizonUrl)
+- ChainDisplay/CreatorPeek `network` prop accepts full `Network` type; Stellar.Expert links render only for public/testnet (hidden on futurenet/local)
 
 ## Address Book Conflict Warning
 - `AddressBookPanel.tsx` imports `useKnownIntermediaries`, `useKnownCreators`, `useAssetGroups`

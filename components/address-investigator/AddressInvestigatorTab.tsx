@@ -1166,7 +1166,7 @@ export function AddressInvestigatorTab() {
           {addressChain.chain.length > 0 || addressChain.status === "loading" || addressChain.status === "error" ? (
             <ChainDisplay
               chain={addressChain}
-              network={(settings.network === "public" || settings.network === "testnet") ? settings.network : "testnet"}
+              network={settings.network}
               assetCode=""
               issuer=""
               horizonUrl={resolveHorizonUrl(settings)}

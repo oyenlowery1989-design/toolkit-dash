@@ -37,6 +37,7 @@ import {
 } from "@/lib/intermediary-tracer/fetchers";
 import { fetchAccountCreator } from "@/lib/asset-lookup";
 import type { KnownIntermediary } from "@/lib/intermediary-tracer/types";
+import type { Network } from "@/lib/settings";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -185,7 +186,7 @@ export function CreatorPeek({
   knownIntermediaries,
 }: {
   address: string;
-  network: "public" | "testnet";
+  network: Network;
   horizonUrl: string;
   knownIntermediaries: Set<string>;
 }) {
@@ -290,7 +291,7 @@ export function ChainDisplay({
   onAddToGroup,
 }: {
   chain: ChainState;
-  network: "public" | "testnet";
+  network: Network;
   assetCode: string;
   issuer: string;
   horizonUrl: string;
@@ -523,15 +524,17 @@ export function ChainDisplay({
                 <div className="flex items-center gap-1 text-[10px] text-muted-foreground/40 italic flex-wrap">
                   <span>↳ creation history pruned from Horizon for</span>
                   <ShortAddress address={node.creator} network={network} />
-                  <a
-                    href={`https://stellar.expert/explorer/${network}/account/${node.creator}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="not-italic text-[9px] text-primary/60 hover:text-primary underline-offset-2 hover:underline"
-                    title="View full history on Stellar Expert"
-                  >
-                    view on Stellar.Expert ↗
-                  </a>
+                  {(network === "public" || network === "testnet") && (
+                    <a
+                      href={`https://stellar.expert/explorer/${network}/account/${node.creator}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="not-italic text-[9px] text-primary/60 hover:text-primary underline-offset-2 hover:underline"
+                      title="View full history on Stellar Expert"
+                    >
+                      view on Stellar.Expert ↗
+                    </a>
+                  )}
                 </div>
               ) : (
                 <>
