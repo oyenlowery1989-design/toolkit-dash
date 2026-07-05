@@ -119,9 +119,11 @@
 - Quick-add "+" button only shown for completely unrecognised addresses (source === "none")
 - Address Book Add form does live conflict check: warns with yellow banner if address already exists in a group, intermediary list, or creator list — includes "View group →" link
 
-## Real Creator / Ancestry Tracing (Asset Lookup)
+## Real Creator / Ancestry Tracing (Asset Lookup + Address Investigator)
+- Shared UI + logic live in `components/shared/ChainDisplay.tsx` — exports `ChainNode`, `ChainState`, `fetchHomeDomain`, `traceChainStep`, `CreatorPeek`, `ChainDisplay`
 - "Trace ancestry →" button appears when `issuerInfo.createdBy` or `distribCreators[addr]` is a known intermediary
-- **`traceChainStep(targetAddress, signal, setChain)`** — single step (NOT recursive); user manually controls depth via "Continue →" button
+- **`traceChainStep(targetAddress, signal, setChain, horizonUrl, knownIntermediaries)`** — single step (NOT recursive); user manually controls depth via "Continue →" button
+  - Shared 5-param version exported from `components/shared/ChainDisplay.tsx`; used by AddressInvestigatorTab. AssetLookupPanel still has its own inline 3-param copy (closure over `settings`/`knownIntermediaries`) — signed off, migrate to shared only with user sign-off
 - Each click does exactly ONE hop; state accumulates via `chain: [...prev.chain, newNode]`
 - **`ChainNode` fields:** `creator`, `creatorType`, `realOwner?`, `confidence?`, `noNative?`, `homeDomain?`, `realOwnerHomeDomain?`
   - `homeDomain` / `realOwnerHomeDomain` fetched via `fetchHomeDomain(horizonUrl, address, signal)` at the end of each step
@@ -132,8 +134,9 @@
 - Falls back to `fetchAccountCreator(server, address, signal)` via SDK if `fetchAccountCreation` returns null (old accounts with pruned history)
 - **"Continue →"** button appears on: `direct` nodes, `intermediary` nodes with `realOwner`, AND `intermediary` nodes with no realOwner (shows "Continue from intermediary →", continues from `node.creator`)
 - Results stream live — each node pushed to state as found; `searching` field shows current address being traced
-- **`ChainDisplay`** (module-level component) needs props: `chain`, `network`, `assetCode`, `issuer`, `horizonUrl`, `knownIntermediaryAddrs`, `onContinue`
-  - Uses inline Dialog with label + role selector for "+ Group" action
+- **`ChainDisplay`** (shared component) needs props: `chain`, `network`, `assetCode`, `issuer`, `horizonUrl`, `knownIntermediaryAddrs`, `onContinue`; optional `onAddToGroup(address, defaultRole)`
+  - Uses inline Dialog with label + role selector for "+ Group" action — auto-creates/targets group by `assetCode+issuer+network`
+  - **`onAddToGroup` provided → "+ Group" calls it instead of the internal dialog.** REQUIRED in no-asset contexts (Address Investigator passes `assetCode=""`/`issuer=""`) — internal dialog there would create a junk `" Asset"` group with empty metadata
   - `getGroupInfo(address)` checks ALL groups (not just current asset's group) — O(groups × members) per render
   - Shows "✓ in group" link if address already in any group, "+ Group" button otherwise
   - Tracks `savedAddrs` Set for addresses saved this session (before cache reloads)
@@ -186,7 +189,8 @@ Full `autoCreate` URL param spec:
 - `homeDomain` fetched from `accountDetails.home_domain` (already loaded via `server.loadAccount`) — reset to `null` on each new search
 - **"+ Group" button** on Top Senders and Top Recipients rows — opens inline Dialog with group selector (dropdown of all existing groups) + role selector, calls `upsertMember` directly; skips `NETWORK_FEES` pseudo-address
 - Group dialog state: `groupDialog` (address + role), `dialogGroupId` (selected group id), `dialogRole`
-- Pending: ancestry tracing ("Who created?") on the investigated address — needs `ChainDisplay`/`CreatorPeek` extraction to shared component
+- **Ancestry tracing** ("Who created?" in profile banner): uses shared `ChainDisplay` + `traceChainStep` from `components/shared/ChainDisplay.tsx`; state `addressChain`, abort via `realCreatorAbortRef` (pre-aborts on re-trace + unmount); resets on new search and deep-link; passes `assetCode=""`/`issuer=""` so it MUST pass `onAddToGroup` (wired to the existing group dialog above) — internal ChainDisplay dialog would create junk groups
+- Known cosmetic nit: ChainDisplay `network` prop coerces futurenet→"testnet" (label/links only; data fetch uses correct horizonUrl)
 
 ## Address Book Conflict Warning
 - `AddressBookPanel.tsx` imports `useKnownIntermediaries`, `useKnownCreators`, `useAssetGroups`

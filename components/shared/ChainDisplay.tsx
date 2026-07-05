@@ -7,7 +7,7 @@
  * Can be imported by AddressInvestigatorTab once needed.
  */
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, type Dispatch, type SetStateAction } from "react";
 import { Horizon } from "stellar-sdk";
 import { Loader2 } from "lucide-react";
 import {
@@ -31,8 +31,12 @@ import { ShortAddress } from "@/components/asset-lookup/ShortAddress";
 import { useAssetGroups } from "@/hooks/use-asset-groups";
 import type { GroupMemberRole } from "@/lib/asset-groups/types";
 import { ROLE_LABELS } from "@/lib/asset-groups/types";
-import { fetchAccountCreation } from "@/lib/intermediary-tracer/fetchers";
+import {
+  fetchAccountCreation,
+  findFunderCandidates,
+} from "@/lib/intermediary-tracer/fetchers";
 import { fetchAccountCreator } from "@/lib/asset-lookup";
+import type { KnownIntermediary } from "@/lib/intermediary-tracer/types";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -76,6 +80,97 @@ export async function fetchHomeDomain(
     return (data.home_domain as string | undefined) || undefined;
   } catch {
     return undefined;
+  }
+}
+
+export async function traceChainStep(
+  targetAddress: string,
+  signal: AbortSignal,
+  setChain: Dispatch<SetStateAction<ChainState>>,
+  horizonUrl: string,
+  currentKnownIntermediaries: KnownIntermediary[],
+) {
+  setChain((prev) => ({ ...prev, status: "loading", searching: targetAddress }));
+  try {
+    const creation = await fetchAccountCreation(horizonUrl, targetAddress, signal);
+    if (signal.aborted) return;
+
+    let creator: string;
+    let pagingToken: string | undefined;
+    let createdAt: string | undefined;
+    let startingBalance: number | undefined;
+
+    if (creation) {
+      creator = creation.funder;
+      pagingToken = creation.pagingToken;
+      createdAt = creation.createdAt;
+      startingBalance = creation.startingBalance;
+    } else {
+      const server = new Horizon.Server(horizonUrl);
+      const fallback = await fetchAccountCreator(server, targetAddress, signal);
+      if (signal.aborted) return;
+      if (!fallback) {
+        setChain((prev) => ({
+          ...prev,
+          status: "done",
+          searching: undefined,
+          chain: [...prev.chain, { creator: targetAddress, creatorType: "pruned" }],
+        }));
+        return;
+      }
+      creator = fallback;
+    }
+
+    const creatorIsIntermediary = currentKnownIntermediaries.some((e) => e.address === creator);
+
+    if (creatorIsIntermediary && pagingToken && createdAt && startingBalance !== undefined) {
+      const [{ candidates, noNativeCandidates }, creatorDomain] = await Promise.all([
+        findFunderCandidates(horizonUrl, creator, pagingToken, createdAt, startingBalance, 300, 5, signal),
+        fetchHomeDomain(horizonUrl, creator, signal),
+      ]);
+      if (signal.aborted) return;
+      const top = candidates[0];
+      const realOwnerDomain = top?.address
+        ? await fetchHomeDomain(horizonUrl, top.address, signal)
+        : undefined;
+      if (signal.aborted) return;
+      setChain((prev) => ({
+        ...prev,
+        status: "done",
+        searching: undefined,
+        chain: [...prev.chain, {
+          creator,
+          creatorType: "intermediary",
+          realOwner: top?.address,
+          confidence: top?.confidence,
+          noNative: top ? false : noNativeCandidates,
+          homeDomain: creatorDomain,
+          realOwnerHomeDomain: realOwnerDomain,
+        }],
+      }));
+    } else if (creatorIsIntermediary) {
+      const creatorDomain = await fetchHomeDomain(horizonUrl, creator, signal);
+      if (signal.aborted) return;
+      setChain((prev) => ({
+        ...prev,
+        status: "done",
+        searching: undefined,
+        chain: [...prev.chain, { creator, creatorType: "intermediary", realOwner: undefined, noNative: false, homeDomain: creatorDomain }],
+      }));
+    } else {
+      const creatorDomain = await fetchHomeDomain(horizonUrl, creator, signal);
+      if (signal.aborted) return;
+      setChain((prev) => ({
+        ...prev,
+        status: "done",
+        searching: undefined,
+        chain: [...prev.chain, { creator, creatorType: "direct", homeDomain: creatorDomain }],
+      }));
+    }
+  } catch {
+    if (!signal.aborted) {
+      setChain((prev) => ({ ...prev, status: "error", searching: undefined, error: "Lookup failed" }));
+    }
   }
 }
 
@@ -192,6 +287,7 @@ export function ChainDisplay({
   horizonUrl,
   knownIntermediaryAddrs,
   onContinue,
+  onAddToGroup,
 }: {
   chain: ChainState;
   network: "public" | "testnet";
@@ -200,6 +296,7 @@ export function ChainDisplay({
   horizonUrl: string;
   knownIntermediaryAddrs: Set<string>;
   onContinue: (fromAddress: string) => void;
+  onAddToGroup?: (address: string, defaultRole: GroupMemberRole) => void;
 }) {
   const { groups, createGroup, upsertMember } = useAssetGroups();
 
@@ -399,11 +496,13 @@ export function ChainDisplay({
                       <button
                         className="text-[9px] uppercase tracking-wide font-semibold text-primary hover:underline"
                         onClick={() =>
-                          openDialog(
-                            node.creator,
-                            `Creator ${creatorNum} ${assetCode}`,
-                            "creator",
-                          )
+                          onAddToGroup
+                            ? onAddToGroup(node.creator, "creator")
+                            : openDialog(
+                                node.creator,
+                                `Creator ${creatorNum} ${assetCode}`,
+                                "creator",
+                              )
                         }
                       >
                         + Group
@@ -510,11 +609,13 @@ export function ChainDisplay({
                               <button
                                 className="text-[9px] uppercase tracking-wide font-semibold text-primary hover:underline"
                                 onClick={() =>
-                                  openDialog(
-                                    node.realOwner!,
-                                    `Real owner ${assetCode}`,
-                                    "creator",
-                                  )
+                                  onAddToGroup
+                                    ? onAddToGroup(node.realOwner!, "creator")
+                                    : openDialog(
+                                        node.realOwner!,
+                                        `Real owner ${assetCode}`,
+                                        "creator",
+                                      )
                                 }
                               >
                                 + Group

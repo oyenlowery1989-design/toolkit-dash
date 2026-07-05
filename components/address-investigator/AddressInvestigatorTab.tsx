@@ -71,14 +71,9 @@ import { downloadCSV } from "@/lib/csv-export";
 import { fetchAddressInvestigation } from "@/lib/proceeds-investigator/fetchers";
 import type { AddressInvestigationResult } from "@/lib/proceeds-investigator/types";
 import {
-  findFunderCandidates,
-  fetchAccountCreation,
-} from "@/lib/intermediary-tracer/fetchers";
-import { fetchAccountCreator } from "@/lib/asset-lookup";
-import {
   ChainDisplay,
   ChainState,
-  fetchHomeDomain,
+  traceChainStep,
 } from "@/components/shared/ChainDisplay";
 
 const DISPLAY_PAGE_SIZE = 10;
@@ -585,97 +580,6 @@ export function AddressInvestigatorTab() {
     // defeat the "once per param value" guard above.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [urlAddress]);
-
-  const traceChainStep = async (
-    targetAddress: string,
-    signal: AbortSignal,
-    setChain: React.Dispatch<React.SetStateAction<ChainState>>,
-    horizonUrl: string,
-    currentKnownIntermediaries: typeof knownIntermediaries,
-  ) => {
-    setChain((prev) => ({ ...prev, status: "loading", searching: targetAddress }));
-    try {
-      const creation = await fetchAccountCreation(horizonUrl, targetAddress, signal);
-      if (signal.aborted) return;
-
-      let creator: string;
-      let pagingToken: string | undefined;
-      let createdAt: string | undefined;
-      let startingBalance: number | undefined;
-
-      if (creation) {
-        creator = creation.funder;
-        pagingToken = creation.pagingToken;
-        createdAt = creation.createdAt;
-        startingBalance = creation.startingBalance;
-      } else {
-        const server = new Horizon.Server(horizonUrl);
-        const fallback = await fetchAccountCreator(server, targetAddress, signal);
-        if (signal.aborted) return;
-        if (!fallback) {
-          setChain((prev) => ({
-            ...prev,
-            status: "done",
-            searching: undefined,
-            chain: [...prev.chain, { creator: targetAddress, creatorType: "pruned" }],
-          }));
-          return;
-        }
-        creator = fallback;
-      }
-
-      const creatorIsIntermediary = currentKnownIntermediaries.some((e) => e.address === creator);
-
-      if (creatorIsIntermediary && pagingToken && createdAt && startingBalance !== undefined) {
-        const [{ candidates, noNativeCandidates }, creatorDomain] = await Promise.all([
-          findFunderCandidates(horizonUrl, creator, pagingToken, createdAt, startingBalance, 300, 5, signal),
-          fetchHomeDomain(horizonUrl, creator, signal),
-        ]);
-        if (signal.aborted) return;
-        const top = candidates[0];
-        const realOwnerDomain = top?.address
-          ? await fetchHomeDomain(horizonUrl, top.address, signal)
-          : undefined;
-        if (signal.aborted) return;
-        setChain((prev) => ({
-          ...prev,
-          status: "done",
-          searching: undefined,
-          chain: [...prev.chain, {
-            creator,
-            creatorType: "intermediary",
-            realOwner: top?.address,
-            confidence: top?.confidence,
-            noNative: top ? false : noNativeCandidates,
-            homeDomain: creatorDomain,
-            realOwnerHomeDomain: realOwnerDomain,
-          }],
-        }));
-      } else if (creatorIsIntermediary) {
-        const creatorDomain = await fetchHomeDomain(horizonUrl, creator, signal);
-        if (signal.aborted) return;
-        setChain((prev) => ({
-          ...prev,
-          status: "done",
-          searching: undefined,
-          chain: [...prev.chain, { creator, creatorType: "intermediary", realOwner: undefined, noNative: false, homeDomain: creatorDomain }],
-        }));
-      } else {
-        const creatorDomain = await fetchHomeDomain(horizonUrl, creator, signal);
-        if (signal.aborted) return;
-        setChain((prev) => ({
-          ...prev,
-          status: "done",
-          searching: undefined,
-          chain: [...prev.chain, { creator, creatorType: "direct", homeDomain: creatorDomain }],
-        }));
-      }
-    } catch {
-      if (!signal.aborted) {
-        setChain((prev) => ({ ...prev, status: "error", searching: undefined, error: "Lookup failed" }));
-      }
-    }
-  };
 
   const isCustomAssetSelection = paymentAssetSelection === "custom";
 
@@ -1260,6 +1164,11 @@ export function AddressInvestigatorTab() {
                 realCreatorAbortRef.current?.abort();
                 realCreatorAbortRef.current = new AbortController();
                 traceChainStep(addr, realCreatorAbortRef.current.signal, setAddressChain, resolveHorizonUrl(settings), knownIntermediaries);
+              }}
+              onAddToGroup={(addr, role) => {
+                setDialogGroupId(groups[0]?.id ?? "");
+                setDialogRole(role);
+                setGroupDialog({ address: addr, role });
               }}
             />
           ) : null}
