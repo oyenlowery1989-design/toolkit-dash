@@ -20,3 +20,8 @@ MEMORY/
 # Git worktrees
 .worktrees/
 tsconfig.tsbuildinfo
+
+# local data & config — never commit
+stellar-toolkit.db
+stellar-toolkit.db-*
+.claude/settings.local.json
