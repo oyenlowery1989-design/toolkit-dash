@@ -56,3 +56,44 @@ export interface WatchEvent {
   seen: boolean;
   createdAt: number;
 }
+
+// ── Phase 4 — Flow Graph ───────────────────────────────────────────────────
+export type GraphNodeKind = "group-member" | "intermediary" | "creator" | "creator-child" | "destination";
+
+export interface GraphNode {
+  id: string;              // address (dedup key)
+  kinds: GraphNodeKind[];  // multi-badge — a node can be several things
+  roles: string[];         // group roles held (issuer/distributor/bank/...)
+  label?: string;          // best human label (group member label / known name)
+  network: string;
+}
+
+export interface GraphEdge {
+  source: string;          // address
+  target: string;          // address
+  kind: "creator-child" | "intermediary-created" | "distrib-destination" | "co-membership";
+  weight: number;          // XLM for distrib-destination, else 1
+}
+
+export interface GraphData {
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+}
+
+export interface GraphFilters {
+  network?: string;                 // restrict to one network
+  groupId?: string;                 // only nodes/edges touching this group
+  kinds?: GraphNodeKind[];          // include only these node kinds
+  minEdgeWeight?: number;           // drop lighter edges
+  focusAddress?: string;            // N-hop neighborhood only
+  focusHops?: number;               // default 2
+}
+
+export interface GraphInput {
+  groups: AssetGroup[];
+  knownIntermediaries: { address: string; name: string }[];
+  knownCreators: { address: string; name: string }[];
+  creatorChildren: CreatorChild[];
+  analyses: SavedAnalysis[];
+  filters?: GraphFilters;
+}
