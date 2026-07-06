@@ -30,11 +30,14 @@ import {
 import { Keypair } from "stellar-sdk";
 import { useAutoSendGroups } from "@/hooks/use-auto-send-groups";
 import { WalletSelect } from "@/components/ui/wallet-select";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useSettings } from "@/lib/settings";
 import { shortAddr } from "@/lib/format";
 import { timeAgo } from "@/lib/stellar-helpers";
 import { authHeaders, waitForAuth } from "@/lib/db-client";
-import type { GroupRunResult, DestinationRunResult, GroupPreview, RunLogEntry, AutoSendDestination, AutoSendGroup } from "@/lib/auto-send/types";
+import type { GroupRunResult, DestinationRunResult, GroupPreview, RunLogEntry, AutoSendDestination } from "@/lib/auto-send/types";
 import type { AutoSendStats } from "@/app/api/auto-send/stats/route";
 
 // ── Module-level result caches (persist across card collapse/expand) ─────────
@@ -204,23 +207,23 @@ function DestinationForm({
   }
 
   return (
-    <form onSubmit={handleSubmit} className="bg-white/5 border border-white/10 rounded-lg p-3 flex flex-col gap-2">
-      <p className="text-xs text-white/50 font-medium uppercase tracking-wide">
+    <form onSubmit={handleSubmit} className="bg-muted/50 border border-border rounded-lg p-3 flex flex-col gap-2">
+      <p className="text-xs text-muted-foreground font-medium uppercase tracking-wide">
         {initial ? "Edit Destination" : "Add Destination"}
       </p>
       <div className="flex items-center gap-2">
-        <input
+        <Input
           autoFocus
           value={destination}
           onChange={(e) => setDestination(e.target.value)}
           placeholder="Destination address (G…)"
-          className="flex-1 bg-black/30 border border-white/10 rounded px-3 py-1.5 text-sm text-white font-mono placeholder:text-white/30 outline-none focus:border-white/30"
+          className="flex-1 font-mono"
         />
         <WalletSelect onPick={(w) => setDestination(w.publicKey)} align="end" />
       </div>
       <div className="flex gap-2 flex-wrap">
         <div className="flex items-center gap-2">
-          <input
+          <Input
             value={isRemainder ? "" : percentageStr}
             onChange={(e) => setPercentageStr(e.target.value)}
             placeholder="%"
@@ -229,9 +232,9 @@ function DestinationForm({
             max={100}
             step={0.01}
             disabled={isRemainder}
-            className="w-24 bg-black/30 border border-white/10 rounded px-3 py-1.5 text-sm text-white placeholder:text-white/30 outline-none focus:border-white/30 disabled:opacity-30"
+            className="w-24"
           />
-          <span className="text-white/40 text-sm">% of spendable</span>
+          <span className="text-muted-foreground text-sm">% of spendable</span>
         </div>
         <label className={`flex items-center gap-1.5 select-none ${hasExistingRemainder && !isRemainder ? "opacity-40 cursor-not-allowed" : "cursor-pointer"}`}>
           <input
@@ -239,50 +242,50 @@ function DestinationForm({
             checked={isRemainder}
             onChange={(e) => setIsRemainder(e.target.checked)}
             disabled={hasExistingRemainder && !isRemainder}
-            className="accent-violet-500"
+            className="accent-primary"
           />
-          <span className="text-xs text-white/50">
+          <span className="text-xs text-muted-foreground">
             {hasExistingRemainder && !isRemainder ? "Remainder already set" : "Send remainder"}
           </span>
         </label>
-        <input
+        <Input
           value={label}
           onChange={(e) => setLabel(e.target.value)}
           placeholder="Label (optional)"
-          className="flex-1 min-w-[120px] bg-black/30 border border-white/10 rounded px-3 py-1.5 text-sm text-white placeholder:text-white/30 outline-none focus:border-white/30"
+          className="flex-1 min-w-[120px]"
         />
       </div>
       <div className="flex gap-2 flex-wrap">
-        <input
+        <Input
           value={memo}
           onChange={(e) => setMemo(e.target.value)}
           placeholder="Memo (optional, max 28 chars)"
           maxLength={28}
-          className="flex-1 bg-black/30 border border-white/10 rounded px-3 py-1.5 text-sm text-white placeholder:text-white/30 outline-none focus:border-white/30"
+          className="flex-1"
         />
         <div className="flex items-center gap-2">
-          <input
+          <Input
             value={minThresholdStr}
             onChange={(e) => setMinThresholdStr(e.target.value)}
             placeholder="Min XLM"
             type="number"
             min={0}
             step={0.01}
-            className="w-28 bg-black/30 border border-white/10 rounded px-3 py-1.5 text-sm text-white placeholder:text-white/30 outline-none focus:border-white/30"
+            className="w-28"
           />
-          <span className="text-white/40 text-sm">min XLM</span>
+          <span className="text-muted-foreground text-sm">min XLM</span>
         </div>
         <div className="flex items-center gap-2">
-          <input
+          <Input
             value={maxCapStr}
             onChange={(e) => setMaxCapStr(e.target.value)}
             placeholder="Max cap"
             type="number"
             min={0}
             step={0.01}
-            className="w-28 bg-black/30 border border-white/10 rounded px-3 py-1.5 text-sm text-white placeholder:text-white/30 outline-none focus:border-white/30"
+            className="w-28"
           />
-          <span className="text-white/40 text-sm">max XLM</span>
+          <span className="text-muted-foreground text-sm">max XLM</span>
         </div>
       </div>
       {wouldExceed && (
@@ -291,22 +294,14 @@ function DestinationForm({
       {isRemainder && parseFloat(maxCapStr) > 0 && (
         <p className="text-xs text-yellow-400 px-1">Max cap on a remainder destination limits what &apos;REST&apos; receives -- surplus is not redistributed further.</p>
       )}
-      <p className="text-xs text-white/30 px-1">Spendable = balance − "keep in wallet". % splits are calculated on the spendable amount. Min threshold skips dust payments.</p>
+      <p className="text-xs text-muted-foreground/70 px-1">Spendable = balance − "keep in wallet". % splits are calculated on the spendable amount. Min threshold skips dust payments.</p>
       <div className="flex gap-2 pt-1">
-        <button
-          type="submit"
-          disabled={!canSubmit}
-          className="px-3 py-1.5 rounded bg-violet-600 hover:bg-violet-500 disabled:opacity-40 text-white text-sm font-medium"
-        >
+        <Button type="submit" size="sm" disabled={!canSubmit}>
           {initial ? "Save" : "Add"}
-        </button>
-        <button
-          type="button"
-          onClick={onDone}
-          className="px-3 py-1.5 rounded bg-white/10 hover:bg-white/15 text-white/50 text-sm"
-        >
+        </Button>
+        <Button type="button" variant="ghost" size="sm" onClick={onDone}>
           Cancel
-        </button>
+        </Button>
       </div>
     </form>
   );
@@ -340,41 +335,42 @@ function AddGroupForm({ onDone }: { onDone: () => void }) {
   }
 
   return (
-    <form onSubmit={handleSubmit} className="border border-white/10 rounded-lg p-4 bg-white/5 flex flex-col gap-3">
-      <p className="text-sm font-medium text-white/70">New Auto-Send Group</p>
+    <form onSubmit={handleSubmit} className="border border-border rounded-lg p-4 bg-muted/50 flex flex-col gap-3">
+      <p className="text-sm font-medium text-foreground/80">New Auto-Send Group</p>
 
       <div className="flex gap-3 flex-wrap">
-        <input
+        <Input
           autoFocus
           value={name}
           onChange={(e) => setName(e.target.value)}
           placeholder="Group name"
-          className="flex-1 min-w-[160px] bg-white/5 border border-white/10 rounded px-3 py-1.5 text-sm text-white placeholder:text-white/30 outline-none focus:border-white/30"
+          className="flex-1 min-w-[160px]"
         />
-        <select
-          value={network}
-          onChange={(e) => setNetwork(e.target.value)}
-          className="bg-white/5 border border-white/10 rounded px-3 py-1.5 text-sm text-white outline-none focus:border-white/30"
-        >
-          {NETWORKS.map((n) => (
-            <option key={n} value={n}>{NETWORK_LABELS[n]}</option>
-          ))}
-        </select>
+        <Select value={network} onValueChange={setNetwork}>
+          <SelectTrigger className="w-auto min-w-[140px]">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {NETWORKS.map((n) => (
+              <SelectItem key={n} value={n}>{NETWORK_LABELS[n]}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </div>
 
       <div className="flex flex-col gap-1">
         <div className="flex items-center justify-between">
-          <label className="text-xs text-white/50">Source wallet secret key</label>
+          <label className="text-xs text-muted-foreground">Source wallet secret key</label>
           <WalletSelect onPick={(w) => setSecretKey(w.secretKey)} align="start" />
         </div>
-        <input
+        <Input
           value={secretKey}
           onChange={(e) => setSecretKey(e.target.value)}
           placeholder="S… (secret key)"
-          className="bg-black/30 border border-white/10 rounded px-3 py-1.5 text-sm text-white font-mono placeholder:text-white/30 outline-none focus:border-white/30"
+          className="font-mono"
         />
         {secretKey.trim() && (
-          <p className={`text-xs px-1 font-mono ${pubkey ? "text-white/40" : "text-red-400"}`}>
+          <p className={`text-xs px-1 font-mono ${pubkey ? "text-muted-foreground" : "text-red-400"}`}>
             {pubkey ? `Public key: ${shortAddr(pubkey)}` : "Invalid secret key"}
           </p>
         )}
@@ -382,36 +378,29 @@ function AddGroupForm({ onDone }: { onDone: () => void }) {
       </div>
 
       <div>
-        <p className="text-xs text-white/50 mb-1.5">Schedule</p>
+        <p className="text-xs text-muted-foreground mb-1.5">Schedule</p>
         <div className="flex flex-wrap gap-2">
           {INTERVAL_OPTIONS.map((opt) => (
-            <button
+            <Button
               key={String(opt.minutes)}
               type="button"
+              size="sm"
+              variant={intervalMinutes === opt.minutes ? "default" : "outline"}
               onClick={() => setIntervalMinutes(opt.minutes)}
-              className={`px-3 py-1.5 rounded-lg text-sm border transition-colors ${
-                intervalMinutes === opt.minutes
-                  ? "bg-violet-600 border-violet-500 text-white"
-                  : "bg-white/5 border-white/10 text-white/50 hover:border-white/20 hover:text-white/80"
-              }`}
             >
               {opt.label}
-            </button>
+            </Button>
           ))}
         </div>
       </div>
 
       <div className="flex gap-2">
-        <button
-          type="submit"
-          disabled={!name.trim() || !pubkey}
-          className="px-4 py-1.5 rounded bg-violet-600 hover:bg-violet-500 disabled:opacity-40 text-white text-sm font-medium"
-        >
+        <Button type="submit" disabled={!name.trim() || !pubkey}>
           Create Group
-        </button>
-        <button type="button" onClick={onDone} className="px-4 py-1.5 rounded bg-white/10 hover:bg-white/15 text-white/60 text-sm">
+        </Button>
+        <Button type="button" variant="ghost" onClick={onDone}>
           Cancel
-        </button>
+        </Button>
       </div>
     </form>
   );
@@ -437,68 +426,66 @@ function EditGroupForm({ group, onDone }: { group: { id: string; name: string; n
   }
 
   return (
-    <form onSubmit={handleSubmit} className="border border-white/10 rounded-lg p-3 bg-white/[0.03] flex flex-col gap-3">
-      <p className="text-xs font-medium text-white/50 uppercase tracking-wide">Edit Group Settings</p>
+    <form onSubmit={handleSubmit} className="border border-border rounded-lg p-3 bg-muted/30 flex flex-col gap-3">
+      <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Edit Group Settings</p>
       <div className="flex gap-2 flex-wrap">
-        <input
+        <Input
           autoFocus
           value={name}
           onChange={(e) => setName(e.target.value)}
           placeholder="Group name"
-          className="flex-1 min-w-[140px] bg-black/30 border border-white/10 rounded px-3 py-1.5 text-sm text-white placeholder:text-white/30 outline-none focus:border-white/30"
+          className="flex-1 min-w-[140px]"
         />
-        <select
-          value={network}
-          onChange={(e) => setNetwork(e.target.value)}
-          className="bg-black/30 border border-white/10 rounded px-3 py-1.5 text-sm text-white outline-none focus:border-white/30"
-        >
-          {NETWORKS.map((n) => <option key={n} value={n}>{NETWORK_LABELS[n]}</option>)}
-        </select>
+        <Select value={network} onValueChange={setNetwork}>
+          <SelectTrigger className="w-auto min-w-[140px]">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {NETWORKS.map((n) => <SelectItem key={n} value={n}>{NETWORK_LABELS[n]}</SelectItem>)}
+          </SelectContent>
+        </Select>
       </div>
       <div className="flex flex-col gap-1">
         <div className="flex items-center justify-between">
-          <label className="text-xs text-white/40">Source wallet secret key</label>
+          <label className="text-xs text-muted-foreground">Source wallet secret key</label>
           <WalletSelect onPick={(w) => setSecretKey(w.secretKey)} align="start" />
         </div>
-        <input
+        <Input
           value={secretKey}
           onChange={(e) => setSecretKey(e.target.value)}
           placeholder={group.hasKey ? "Leave blank to keep existing key" : "S… (secret key)"}
-          className="bg-black/30 border border-white/10 rounded px-3 py-1.5 text-sm text-white font-mono placeholder:text-white/30 outline-none focus:border-white/30"
+          className="font-mono"
         />
         {!secretKey.trim() && group.hasKey && (
           <p className="text-xs px-1 text-emerald-400/70">Key saved — leave blank to keep</p>
         )}
         {secretKey.trim() && (
-          <p className={`text-xs px-1 font-mono ${pubkey ? "text-white/40" : "text-red-400"}`}>
+          <p className={`text-xs px-1 font-mono ${pubkey ? "text-muted-foreground" : "text-red-400"}`}>
             {pubkey ? `Public key: ${shortAddr(pubkey)}` : "Invalid secret key"}
           </p>
         )}
       </div>
       <div>
-        <p className="text-xs text-white/40 mb-1.5">Schedule</p>
+        <p className="text-xs text-muted-foreground mb-1.5">Schedule</p>
         <div className="flex flex-wrap gap-2">
           {INTERVAL_OPTIONS.map((opt) => (
-            <button
+            <Button
               key={String(opt.minutes)}
               type="button"
+              size="sm"
+              variant={intervalMinutes === opt.minutes ? "default" : "outline"}
               onClick={() => setIntervalMinutes(opt.minutes)}
-              className={`px-3 py-1.5 rounded-lg text-sm border transition-colors ${
-                intervalMinutes === opt.minutes
-                  ? "bg-violet-600 border-violet-500 text-white"
-                  : "bg-white/5 border-white/10 text-white/50 hover:border-white/20 hover:text-white/80"
-              }`}
             >
               {opt.label}
-            </button>
+            </Button>
           ))}
         </div>
       </div>
       <div className="flex gap-2">
-        <button type="submit" disabled={!name.trim() || !keyValid} className="flex items-center gap-1.5 px-3 py-1.5 rounded bg-violet-600 hover:bg-violet-500 disabled:opacity-40 text-white text-sm font-medium">
-          <Save size={12} /> Save
-        </button>
-        <button type="button" onClick={onDone} className="px-3 py-1.5 rounded bg-white/10 hover:bg-white/15 text-white/60 text-sm">Cancel</button>
+        <Button type="submit" size="sm" disabled={!name.trim() || !keyValid}>
+          <Save size={12} className="mr-1.5" /> Save
+        </Button>
+        <Button type="button" variant="ghost" size="sm" onClick={onDone}>Cancel</Button>
       </div>
     </form>
   );
@@ -525,39 +512,39 @@ function PreviewTable({
     <div className="flex flex-col gap-3 border border-blue-500/30 rounded-lg p-3 bg-blue-500/5">
       <div className="flex items-center justify-between flex-wrap gap-2">
         <p className="text-xs font-medium text-blue-300 uppercase tracking-wide">
-          Preview — <span className="font-mono normal-case text-white/60">{shortAddr(preview.walletAddress)}</span>
+          Preview — <span className="font-mono normal-case text-muted-foreground">{shortAddr(preview.walletAddress)}</span>
         </p>
-        <div className="flex items-center gap-2 text-xs text-white/40">
-          <span>Balance: <span className="text-white/70 font-mono">{preview.xlmBalance.toFixed(7)} XLM</span></span>
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <span>Balance: <span className="text-foreground/70 font-mono">{preview.xlmBalance.toFixed(7)} XLM</span></span>
           <span>·</span>
-          <span>Spendable: <span className="text-white/70 font-mono">{preview.spendable.toFixed(7)} XLM</span></span>
+          <span>Spendable: <span className="text-foreground/70 font-mono">{preview.spendable.toFixed(7)} XLM</span></span>
         </div>
       </div>
 
-      <div className="rounded border border-white/10 overflow-hidden">
+      <div className="rounded border border-border overflow-hidden">
         <table className="w-full text-xs">
           <thead>
-            <tr className="border-b border-white/10 bg-white/5">
-              <th className="text-left px-3 py-2 text-white/40 font-medium">Destination</th>
-              <th className="text-left px-3 py-2 text-white/40 font-medium">Label</th>
-              <th className="text-left px-3 py-2 text-white/40 font-medium">Memo</th>
-              <th className="text-right px-3 py-2 text-white/40 font-medium">%</th>
-              <th className="text-right px-3 py-2 text-white/40 font-medium">XLM</th>
-              <th className="text-right px-3 py-2 text-white/40 font-medium">Status</th>
+            <tr className="border-b border-border bg-muted/50">
+              <th className="text-left px-3 py-2 text-muted-foreground font-medium">Destination</th>
+              <th className="text-left px-3 py-2 text-muted-foreground font-medium">Label</th>
+              <th className="text-left px-3 py-2 text-muted-foreground font-medium">Memo</th>
+              <th className="text-right px-3 py-2 text-muted-foreground font-medium">%</th>
+              <th className="text-right px-3 py-2 text-muted-foreground font-medium">XLM</th>
+              <th className="text-right px-3 py-2 text-muted-foreground font-medium">Status</th>
             </tr>
           </thead>
           <tbody>
             {preview.items.map((item, i) => (
-              <tr key={i} className={`border-b border-white/5 last:border-0 ${item.wouldSkip ? "opacity-40" : ""}`}>
-                <td className="px-3 py-2 font-mono text-white/70">{shortAddr(item.destination)}</td>
-                <td className="px-3 py-2 text-white/50">{item.label ?? "—"}</td>
-                <td className="px-3 py-2 text-white/40 italic">{item.memo ?? "—"}</td>
+              <tr key={i} className={`border-b border-border/50 last:border-0 ${item.wouldSkip ? "opacity-40" : ""}`}>
+                <td className="px-3 py-2 font-mono text-foreground/70">{shortAddr(item.destination)}</td>
+                <td className="px-3 py-2 text-muted-foreground">{item.label ?? "—"}</td>
+                <td className="px-3 py-2 text-muted-foreground italic">{item.memo ?? "—"}</td>
                 <td className="px-3 py-2 text-right">
                   {item.isRemainder
-                    ? <span className="text-violet-400 text-xs uppercase tracking-wide">REST</span>
-                    : <span className="text-white/60">{item.percentage}%</span>}
+                    ? <span className="text-primary text-xs uppercase tracking-wide">REST</span>
+                    : <span className="text-muted-foreground">{item.percentage}%</span>}
                 </td>
-                <td className="px-3 py-2 text-right font-mono text-white/80">
+                <td className="px-3 py-2 text-right font-mono text-foreground/80">
                   {item.wouldSkip ? "—" : item.amountXlm.toFixed(7)}
                 </td>
                 <td className="px-3 py-2 text-right">
@@ -569,8 +556,8 @@ function PreviewTable({
             ))}
           </tbody>
           <tfoot>
-            <tr className="border-t border-white/10 bg-white/5">
-              <td colSpan={4} className="px-3 py-1.5 text-xs text-white/30">
+            <tr className="border-t border-border bg-muted/50">
+              <td colSpan={4} className="px-3 py-1.5 text-xs text-muted-foreground/70">
                 {sendCount} sending · {preview.items.length - sendCount} skipped
                 {preview.batchSend ? " · 1 transaction" : ` · ${sendCount} transaction${sendCount !== 1 ? "s" : ""}`}
                 {" · "}
@@ -579,7 +566,7 @@ function PreviewTable({
                   {feeWarning && " ⚠ >1% of amount"}
                 </span>
               </td>
-              <td className="px-3 py-1.5 text-right text-xs font-mono text-white/60">{totalXlm.toFixed(7)}</td>
+              <td className="px-3 py-1.5 text-right text-xs font-mono text-muted-foreground">{totalXlm.toFixed(7)}</td>
               <td />
             </tr>
           </tfoot>
@@ -587,17 +574,17 @@ function PreviewTable({
       </div>
 
       <div className="flex gap-2 items-center">
-        <button
+        <Button
           onClick={onApprove}
           disabled={approving || sendCount === 0}
-          className="flex items-center gap-1.5 px-4 py-1.5 rounded bg-green-600 hover:bg-green-500 disabled:opacity-40 text-white text-sm font-medium"
+          className="bg-green-600 hover:bg-green-500 text-white"
         >
-          {approving ? <RefreshCw size={12} className="animate-spin" /> : <CheckCircle size={12} />}
+          {approving ? <RefreshCw size={12} className="animate-spin mr-1.5" /> : <CheckCircle size={12} className="mr-1.5" />}
           {approving ? "Sending…" : "Approve & Send"}
-        </button>
-        <button onClick={onCancel} disabled={approving} className="px-4 py-1.5 rounded bg-white/10 hover:bg-white/15 text-white/50 text-sm">
+        </Button>
+        <Button variant="ghost" onClick={onCancel} disabled={approving}>
           Cancel
-        </button>
+        </Button>
         {sendCount === 0 && (
           <span className="text-xs text-yellow-400">
             {preview.items.length === 0
@@ -637,41 +624,43 @@ function RunHistory({ groupId, network, onReRun }: { groupId: string; network: s
 
   useEffect(() => { load(); }, [load]);
 
-  if (loading) return <p className="text-xs text-white/30 animate-pulse">Loading history…</p>;
-  if (!runs || runs.length === 0) return <p className="text-xs text-white/30">No runs recorded yet.</p>;
+  if (loading) return <p className="text-xs text-muted-foreground/70 animate-pulse">Loading history…</p>;
+  if (!runs || runs.length === 0) return <p className="text-xs text-muted-foreground/70">No runs recorded yet.</p>;
 
   return (
     <div className="flex flex-col gap-1">
       {runs.map((run, i) => (
-        <div key={run.ranAt} className="border border-white/10 rounded overflow-hidden">
+        <div key={run.ranAt} className="border border-border rounded overflow-hidden">
           <button
             onClick={() => setExpanded(expanded === i ? null : i)}
-            className="w-full flex items-center gap-3 px-3 py-2 bg-white/5 hover:bg-white/[0.08] transition-colors text-left"
+            className="w-full flex items-center gap-3 px-3 py-2 bg-muted/50 hover:bg-accent/50 transition-colors text-left"
           >
-            <span className="text-xs text-white/50 font-mono">{new Date(run.ranAt).toLocaleString()}</span>
-            <span className="text-xs text-white/30">·</span>
-            <span className="text-xs text-white/40">{timeAgo(run.ranAt)}</span>
+            <span className="text-xs text-muted-foreground font-mono">{new Date(run.ranAt).toLocaleString()}</span>
+            <span className="text-xs text-muted-foreground/70">·</span>
+            <span className="text-xs text-muted-foreground">{timeAgo(run.ranAt)}</span>
             <span className="flex-1" />
-            <button
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-6 px-2 text-xs"
               onClick={(e) => { e.stopPropagation(); onReRun(); }}
-              className="flex items-center gap-1 px-2 py-0.5 rounded bg-white/5 hover:bg-violet-600/30 border border-white/10 hover:border-violet-500/30 text-white/40 hover:text-white/80 text-xs transition-colors"
               title="Re-run this group now"
             >
-              <Play size={9} />
+              <Play size={9} className="mr-1" />
               Re-run
-            </button>
+            </Button>
             {run.sentCount > 0 && <span className="text-xs text-green-400">{run.sentCount} sent</span>}
             {run.skippedCount > 0 && <span className="text-xs text-yellow-400 ml-1">{run.skippedCount} skipped</span>}
             {run.failedCount > 0 && <span className="text-xs text-red-400 ml-1">{run.failedCount} failed</span>}
             {(run.previewCount ?? 0) > 0 && <span className="text-xs text-blue-300 ml-1">{run.previewCount} preview</span>}
-            {run.totalXlm > 0 && <span className="text-xs text-white/60 font-mono ml-2">{run.totalXlm.toFixed(7)} XLM</span>}
-            <ChevronDown size={12} className={`text-white/30 transition-transform ${expanded === i ? "" : "-rotate-90"}`} />
+            {run.totalXlm > 0 && <span className="text-xs text-muted-foreground font-mono ml-2">{run.totalXlm.toFixed(7)} XLM</span>}
+            <ChevronDown size={12} className={`text-muted-foreground/70 transition-transform ${expanded === i ? "" : "-rotate-90"}`} />
           </button>
           {expanded === i && (
-            <div className="px-3 py-2 border-t border-white/5 flex flex-col gap-1">
+            <div className="px-3 py-2 border-t border-border/50 flex flex-col gap-1">
               {run.results.map((r, j) => (
-                <div key={j} className="flex items-center gap-2 text-xs font-mono text-white/50">
-                  <span className="text-white/70">{shortAddr(r.destination)}</span>
+                <div key={j} className="flex items-center gap-2 text-xs font-mono text-muted-foreground">
+                  <span className="text-foreground/70">{shortAddr(r.destination)}</span>
                   <StatusChip result={r as DestinationRunResult} network={network} />
                   {r.error && <span className="text-red-400/70 truncate max-w-xs" title={r.error}>{r.error}</span>}
                 </div>
@@ -947,15 +936,15 @@ function GroupCard({ groupId, runAllStatus }: { groupId: string; runAllStatus?: 
   }
 
   return (
-    <div className="border border-white/10 rounded-lg overflow-hidden">
+    <div className="border border-border rounded-lg overflow-hidden">
       {/* Header */}
-      <div className="flex items-center gap-3 px-4 py-3 bg-white/5 hover:bg-white/[0.08] transition-colors">
-        <button onClick={() => setExpanded((v) => !v)} className="text-white/40 hover:text-white/70">
+      <div className="flex items-center gap-3 px-4 py-3 bg-muted/50 hover:bg-accent/50 transition-colors">
+        <Button variant="ghost" size="icon" className="h-auto w-auto p-1 text-muted-foreground hover:text-foreground/80" onClick={() => setExpanded((v) => !v)}>
           {expanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-        </button>
+        </Button>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
-            <p className="text-sm font-medium text-white truncate">{group.name}</p>
+            <p className="text-sm font-medium text-foreground truncate">{group.name}</p>
             {/* Last run status badge */}
             {lastRun && (() => {
               const hasSent = lastRun.sentCount > 0;
@@ -964,19 +953,21 @@ function GroupCard({ groupId, runAllStatus }: { groupId: string; runAllStatus?: 
               if (hasSent) return <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-green-500/20 text-green-400 border border-green-500/30 flex-shrink-0">&#x2713; sent</span>;
               return <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-yellow-500/20 text-yellow-400 border border-yellow-500/30 flex-shrink-0">~ skipped</span>;
             })()}
-            <button
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-auto w-auto p-0.5 text-muted-foreground/50 hover:text-muted-foreground flex-shrink-0"
               onClick={(e) => { e.stopPropagation(); setEditingGroup(true); setExpanded(true); }}
-              className="text-white/20 hover:text-white/60 transition-colors flex-shrink-0"
               title="Edit group settings"
             >
               <Pencil size={11} />
-            </button>
-            {runAllStatus === "running" && <RefreshCw size={11} className="animate-spin text-violet-400 flex-shrink-0" />}
+            </Button>
+            {runAllStatus === "running" && <RefreshCw size={11} className="animate-spin text-primary flex-shrink-0" />}
             {runAllStatus === "done" && <CheckCircle size={11} className="text-green-400 flex-shrink-0" />}
             {runAllStatus === "failed" && <span className="text-xs text-red-400 flex-shrink-0">failed</span>}
-            {runAllStatus === "pending" && <span className="text-xs text-white/30 flex-shrink-0">queued</span>}
+            {runAllStatus === "pending" && <span className="text-xs text-muted-foreground/70 flex-shrink-0">queued</span>}
           </div>
-          <p className="text-xs text-white/40 mt-0.5 flex items-center gap-2 flex-wrap">
+          <p className="text-xs text-muted-foreground mt-0.5 flex items-center gap-2 flex-wrap">
             <Key size={10} className="inline" />
             <span className="font-mono">{pubkey ? shortAddr(pubkey) : <span className="text-red-400">invalid key</span>}</span>
             <span>·</span>
@@ -986,18 +977,20 @@ function GroupCard({ groupId, runAllStatus }: { groupId: string; runAllStatus?: 
             <span>{intervalLabel(group.intervalMinutes)}</span>
             <span>·</span>
             {/* Batch/Separate toggle */}
-            <button
-              onClick={(e) => { e.stopPropagation(); updateGroup(group.id, { batchSend: !group.batchSend }); }}
-              className={`flex items-center gap-1 px-1.5 py-0.5 rounded border text-xs transition-colors ${
+            <Button
+              variant="outline"
+              size="sm"
+              className={`h-auto gap-1 px-1.5 py-0.5 text-xs ${
                 group.batchSend
-                  ? "bg-blue-500/15 border-blue-500/30 text-blue-300"
-                  : "bg-white/5 border-white/10 text-white/40 hover:border-white/20"
+                  ? "bg-blue-500/15 border-blue-500/30 text-blue-300 hover:bg-blue-500/20"
+                  : "bg-muted/50 border-border text-muted-foreground hover:border-foreground/20"
               }`}
+              onClick={(e) => { e.stopPropagation(); updateGroup(group.id, { batchSend: !group.batchSend }); }}
               title={group.batchSend ? "Batch: one transaction — click to switch to separate" : "Separate: one tx per dest — click to switch to batch"}
             >
               <Layers size={9} />
               {group.batchSend ? "Batch" : "Separate"}
-            </button>
+            </Button>
             <span>·</span>
             <span>{destCount} dest{destCount !== 1 ? "s" : ""}</span>
             {destCount > 0 && (
@@ -1013,8 +1006,8 @@ function GroupCard({ groupId, runAllStatus }: { groupId: string; runAllStatus?: 
                 <span>·</span>
                 <span title={new Date(lastRun.ranAt).toLocaleString()} className="flex items-center gap-1.5">
                   <span>ran {timeAgo(lastRun.ranAt)}</span>
-                  <span className="text-white/20">·</span>
-                  <span className="font-mono text-white/50">{shortAddr(lastRun.walletAddress)}</span>
+                  <span className="text-muted-foreground/50">·</span>
+                  <span className="font-mono text-muted-foreground">{shortAddr(lastRun.walletAddress)}</span>
                   {lastRun.sentCount > 0 && <span className="text-green-400">{lastRun.sentCount} sent · {lastRun.totalXlm.toFixed(2)} XLM</span>}
                   {lastRun.failedCount > 0 && <span className="text-red-400">{lastRun.failedCount} failed</span>}
                   {(lastRun.previewCount ?? 0) > 0 && <span className="text-blue-300">{lastRun.previewCount} preview</span>}
@@ -1025,84 +1018,92 @@ function GroupCard({ groupId, runAllStatus }: { groupId: string; runAllStatus?: 
             {nextRun && (
               <>
                 <span>·</span>
-                <span className="text-white/30">{nextRun}</span>
+                <span className="text-muted-foreground/70">{nextRun}</span>
               </>
             )}
           </p>
         </div>
         {/* Enabled toggle */}
-        <button
-          onClick={() => updateGroup(group.id, { enabled: !group.enabled })}
-          className={`text-xs px-2 py-0.5 rounded border font-medium transition-colors ${
+        <Button
+          variant="outline"
+          size="sm"
+          className={`h-auto px-2 py-0.5 text-xs font-medium ${
             group.enabled
-              ? "bg-green-500/15 border-green-500/30 text-green-400"
-              : "bg-white/5 border-white/10 text-white/30"
+              ? "bg-green-500/15 border-green-500/30 text-green-400 hover:bg-green-500/20"
+              : "bg-muted/50 border-border text-muted-foreground/70"
           }`}
+          onClick={() => updateGroup(group.id, { enabled: !group.enabled })}
         >
           {group.enabled ? "On" : "Off"}
-        </button>
+        </Button>
         {/* Check */}
-        <button
+        <Button
+          variant="outline"
+          size="sm"
           onClick={handleCheck}
           disabled={checking || running || destCount === 0 || !pubkey || destinations.every(d => d.paused)}
-          className="flex items-center gap-1 px-3 py-1.5 rounded bg-white/10 hover:bg-white/15 disabled:opacity-50 text-white/70 hover:text-white text-xs font-medium border border-white/10 hover:border-white/20"
         >
-          {checking ? <RefreshCw size={12} className="animate-spin" /> : <Eye size={12} />}
+          {checking ? <RefreshCw size={12} className="animate-spin mr-1" /> : <Eye size={12} className="mr-1" />}
           {checking ? "Checking…" : "Check"}
-        </button>
+        </Button>
         {/* Test run */}
-        <button
+        <Button
+          variant="outline"
+          size="sm"
           onClick={handleTestRun}
           disabled={testRunning || running || checking || destCount === 0 || !pubkey}
-          className="flex items-center gap-1 px-3 py-1.5 rounded bg-white/10 hover:bg-white/15 disabled:opacity-50 text-white/70 hover:text-white text-xs font-medium border border-white/10 hover:border-white/20"
           title="Send 0.0000001 XLM to each destination to verify reachability"
         >
-          {testRunning ? <RefreshCw size={12} className="animate-spin" /> : <FlaskConical size={12} />}
+          {testRunning ? <RefreshCw size={12} className="animate-spin mr-1" /> : <FlaskConical size={12} className="mr-1" />}
           {testRunning ? "Testing…" : "Test"}
-        </button>
+        </Button>
         {/* Run now */}
-        <button
+        <Button
+          size="sm"
           onClick={handleRun}
           disabled={running || checking || destCount === 0 || !pubkey || group.previewOnly || destinations.every(d => d.paused)}
-          className="flex items-center gap-1 px-3 py-1.5 rounded bg-violet-600 hover:bg-violet-500 disabled:opacity-50 text-white text-xs font-medium"
           title={group.previewOnly ? "Group is in preview-only mode — disable to send real transactions" : undefined}
         >
-          {running ? <RefreshCw size={12} className="animate-spin" /> : <Play size={12} />}
+          {running ? <RefreshCw size={12} className="animate-spin mr-1" /> : <Play size={12} className="mr-1" />}
           {running ? "Running…" : "Run Now"}
-        </button>
+        </Button>
         {/* Duplicate */}
-        <button
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-auto w-auto p-1 text-muted-foreground/50 hover:text-muted-foreground"
           onClick={(e) => { e.stopPropagation(); handleDuplicate(); }}
-          className="text-white/20 hover:text-white/60 transition-colors"
           title="Duplicate group"
         >
           <Copy size={14} />
-        </button>
+        </Button>
         {/* Delete */}
         {confirmDelete ? (
           <div className="flex items-center gap-1">
-            <button
+            <Button
+              size="sm"
+              variant="destructive"
+              className="h-7 px-2 text-xs"
               onClick={() => {
                 _runResults.delete(group.id);
                 _testResults.delete(group.id);
                 deleteGroup(group.id);
               }}
-              className="px-2 py-1 rounded bg-red-600 hover:bg-red-500 text-white text-xs"
             >
               Confirm
-            </button>
-            <button onClick={() => setConfirmDelete(false)} className="px-2 py-1 rounded bg-white/10 text-white/50 text-xs">Cancel</button>
+            </Button>
+            <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => setConfirmDelete(false)}>Cancel</Button>
           </div>
         ) : (
-          <button onClick={() => setConfirmDelete(true)} className="text-white/20 hover:text-red-400 transition-colors">
+          <Button variant="ghost" size="icon" className="h-auto w-auto p-1 text-muted-foreground/50 hover:text-red-400" onClick={() => setConfirmDelete(true)}>
             <Trash2 size={14} />
-          </button>
+          </Button>
         )}
       </div>
 
       {/* Expanded body */}
       {expanded && (
-        <div className="px-4 py-3 flex flex-col gap-3 border-t border-white/10">
+        <div className="px-4 py-3 flex flex-col gap-3 border-t border-border">
           {/* No destinations warning */}
           {group.intervalMinutes && destinations.length === 0 && (
             <div className="flex items-center gap-2 px-3 py-2 rounded bg-yellow-500/10 border border-yellow-500/20 text-xs text-yellow-400">
@@ -1118,32 +1119,34 @@ function GroupCard({ groupId, runAllStatus }: { groupId: string; runAllStatus?: 
               <span className="flex-1">
                 Scheduled run failed on {new Date(group.lastFailureAt).toLocaleString()}. Check history for details.
               </span>
-              <button
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-auto w-auto p-0.5 text-red-400/60 hover:text-red-400 hover:bg-red-500/10"
                 onClick={() => {
                   updateGroup(group.id, { lastFailureAt: undefined });
                   setDismissedFailure(true);
                 }}
-                className="text-red-400/60 hover:text-red-400 transition-colors"
               >
                 <X size={12} />
-              </button>
+              </Button>
             </div>
           )}
 
           {/* Balance display */}
           <div className="flex items-center gap-2">
-            <Wallet size={12} className="text-white/30" />
-            <span className="text-xs text-white/40">Balance:</span>
+            <Wallet size={12} className="text-muted-foreground/70" />
+            <span className="text-xs text-muted-foreground">Balance:</span>
             {loadingBalance ? (
-              <span className="text-xs text-white/30 animate-pulse">loading...</span>
+              <span className="text-xs text-muted-foreground/70 animate-pulse">loading...</span>
             ) : balance !== null ? (
-              <span className="text-xs font-mono text-white/70">{balance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 7 })} XLM</span>
+              <span className="text-xs font-mono text-foreground/70">{balance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 7 })} XLM</span>
             ) : (
-              <span className="text-xs text-white/20">--</span>
+              <span className="text-xs text-muted-foreground/50">--</span>
             )}
-            <button onClick={() => { setBalance(null); fetchBalance(); }} className="text-white/20 hover:text-white/50 transition-colors" title="Refresh balance">
+            <Button variant="ghost" size="icon" className="h-auto w-auto p-0.5 text-muted-foreground/50 hover:text-muted-foreground" onClick={() => { setBalance(null); fetchBalance(); }} title="Refresh balance">
               <RefreshCw size={10} />
-            </button>
+            </Button>
           </div>
 
           {/* Inline group editor */}
@@ -1164,17 +1167,17 @@ function GroupCard({ groupId, runAllStatus }: { groupId: string; runAllStatus?: 
           {/* Run results */}
           {runResult && !preview && (
             <div className="flex flex-col gap-1.5">
-              <p className="text-xs text-white/50 uppercase tracking-wide font-medium">
+              <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium">
                 Last Run — source: <span className="font-mono normal-case">{shortAddr(runResult.walletAddress)}</span>
               </p>
               {runResult.results.map((r, i) => (
-                <div key={i} className="flex items-center gap-3 text-xs font-mono text-white/60">
-                  <span className="text-white/80">
-                    {r.label ? <span>{r.label} <span className="text-white/40">({shortAddr(r.destination)})</span></span> : shortAddr(r.destination)}
+                <div key={i} className="flex items-center gap-3 text-xs font-mono text-muted-foreground">
+                  <span className="text-foreground/80">
+                    {r.label ? <span>{r.label} <span className="text-muted-foreground">({shortAddr(r.destination)})</span></span> : shortAddr(r.destination)}
                   </span>
                   <StatusChip result={r} network={group.network} />
                   {r.txHash && (
-                    <a href={expertTxUrl(group.network, r.txHash)} target="_blank" rel="noopener noreferrer" className="text-white/30 hover:text-white/60"><ExternalLink size={10} /></a>
+                    <a href={expertTxUrl(group.network, r.txHash)} target="_blank" rel="noopener noreferrer" className="text-muted-foreground/70 hover:text-muted-foreground"><ExternalLink size={10} /></a>
                   )}
                   {r.error && <span className="text-red-400/70 truncate max-w-xs" title={r.error}>{r.error}</span>}
                 </div>
@@ -1185,13 +1188,13 @@ function GroupCard({ groupId, runAllStatus }: { groupId: string; runAllStatus?: 
           {/* Test run results */}
           {testResult && (
             <div className="flex flex-col gap-1.5">
-              <p className="text-xs text-white/50 uppercase tracking-wide font-medium">
+              <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium">
                 Test Run (0.0000001 XLM each) — <span className="font-mono normal-case">{shortAddr(testResult.walletAddress)}</span>
               </p>
               {testResult.results.map((r, i) => (
-                <div key={i} className="flex items-center gap-3 text-xs font-mono text-white/60">
-                  <span className="text-white/80">
-                    {r.label ? <span>{r.label} <span className="text-white/40">({shortAddr(r.destination)})</span></span> : shortAddr(r.destination)}
+                <div key={i} className="flex items-center gap-3 text-xs font-mono text-muted-foreground">
+                  <span className="text-foreground/80">
+                    {r.label ? <span>{r.label} <span className="text-muted-foreground">({shortAddr(r.destination)})</span></span> : shortAddr(r.destination)}
                   </span>
                   <StatusChip result={r} network={group.network} />
                   {r.error && <span className="text-red-400/70 truncate max-w-xs" title={r.error}>{r.error}</span>}
@@ -1202,10 +1205,10 @@ function GroupCard({ groupId, runAllStatus }: { groupId: string; runAllStatus?: 
 
           {/* Reserve setting */}
           <div className="flex items-center gap-2">
-            <span className="text-xs text-white/40">Keep in wallet:</span>
+            <span className="text-xs text-muted-foreground">Keep in wallet:</span>
             {editingReserve ? (
               <>
-                <input
+                <Input
                   autoFocus
                   value={reserveInput}
                   onChange={(e) => setReserveInput(e.target.value)}
@@ -1213,35 +1216,36 @@ function GroupCard({ groupId, runAllStatus }: { groupId: string; runAllStatus?: 
                   min={0}
                   step={0.1}
                   placeholder="1.0"
-                  className="w-24 bg-black/30 border border-white/15 rounded px-2 py-1 text-xs text-white font-mono placeholder:text-white/25 outline-none focus:border-white/30"
+                  className="w-24 h-7 text-xs font-mono"
                 />
-                <span className="text-xs text-white/40">XLM</span>
-                <button
+                <span className="text-xs text-muted-foreground">XLM</span>
+                <Button
+                  size="sm"
+                  className="h-7 px-2 text-xs"
                   onClick={() => {
                     const v = parseFloat(reserveInput);
                     updateGroup(group!.id, { minReserve: !isNaN(v) && v >= 0 ? v : 10.0 });
                     setEditingReserve(false);
                   }}
-                  className="px-2 py-1 rounded bg-violet-600 hover:bg-violet-500 text-white text-xs"
-                >Save</button>
-                <button onClick={() => setEditingReserve(false)} className="px-2 py-1 rounded bg-white/10 text-white/50 text-xs">Cancel</button>
+                >Save</Button>
+                <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => setEditingReserve(false)}>Cancel</Button>
               </>
             ) : (
               <>
-                <span className="text-xs font-mono text-white/60">{group.minReserve ?? 10.0} XLM</span>
-                <button onClick={() => { setReserveInput(String(group!.minReserve ?? 1.0)); setEditingReserve(true); }} className="text-white/25 hover:text-white/60 transition-colors">
+                <span className="text-xs font-mono text-muted-foreground">{group.minReserve ?? 10.0} XLM</span>
+                <Button variant="ghost" size="icon" className="h-auto w-auto p-0.5 text-muted-foreground/60 hover:text-muted-foreground" onClick={() => { setReserveInput(String(group!.minReserve ?? 1.0)); setEditingReserve(true); }}>
                   <Pencil size={11} />
-                </button>
+                </Button>
               </>
             )}
           </div>
 
           {/* Min sender threshold setting */}
           <div className="flex items-center gap-2">
-            <span className="text-xs text-white/40">Min sender balance:</span>
+            <span className="text-xs text-muted-foreground">Min sender balance:</span>
             {editingSenderThreshold ? (
               <>
-                <input
+                <Input
                   autoFocus
                   value={senderThresholdInput}
                   onChange={(e) => setSenderThresholdInput(e.target.value)}
@@ -1249,27 +1253,28 @@ function GroupCard({ groupId, runAllStatus }: { groupId: string; runAllStatus?: 
                   min={0}
                   step={0.1}
                   placeholder="0"
-                  className="w-24 bg-black/30 border border-white/15 rounded px-2 py-1 text-xs text-white font-mono placeholder:text-white/25 outline-none focus:border-white/30"
+                  className="w-24 h-7 text-xs font-mono"
                 />
-                <span className="text-xs text-white/40">XLM</span>
-                <button
+                <span className="text-xs text-muted-foreground">XLM</span>
+                <Button
+                  size="sm"
+                  className="h-7 px-2 text-xs"
                   onClick={() => {
                     const v = parseFloat(senderThresholdInput);
                     updateGroup(group!.id, { minSenderThreshold: !isNaN(v) && v >= 0 ? v : 0 });
                     setEditingSenderThreshold(false);
                   }}
-                  className="px-2 py-1 rounded bg-violet-600 hover:bg-violet-500 text-white text-xs"
-                >Save</button>
-                <button onClick={() => setEditingSenderThreshold(false)} className="px-2 py-1 rounded bg-white/10 text-white/50 text-xs">Cancel</button>
+                >Save</Button>
+                <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => setEditingSenderThreshold(false)}>Cancel</Button>
               </>
             ) : (
               <>
-                <span className="text-xs font-mono text-white/60">{group.minSenderThreshold > 0 ? `${group.minSenderThreshold} XLM` : "disabled"}</span>
-                <button onClick={() => { setSenderThresholdInput(String(group!.minSenderThreshold ?? 0)); setEditingSenderThreshold(true); }} className="text-white/25 hover:text-white/60 transition-colors">
+                <span className="text-xs font-mono text-muted-foreground">{group.minSenderThreshold > 0 ? `${group.minSenderThreshold} XLM` : "disabled"}</span>
+                <Button variant="ghost" size="icon" className="h-auto w-auto p-0.5 text-muted-foreground/60 hover:text-muted-foreground" onClick={() => { setSenderThresholdInput(String(group!.minSenderThreshold ?? 0)); setEditingSenderThreshold(true); }}>
                   <Pencil size={11} />
-                </button>
+                </Button>
                 {group.minSenderThreshold > 0 && (
-                  <span className="text-xs text-white/30">Skips entire group if balance is below this</span>
+                  <span className="text-xs text-muted-foreground/70">Skips entire group if balance is below this</span>
                 )}
               </>
             )}
@@ -1278,26 +1283,26 @@ function GroupCard({ groupId, runAllStatus }: { groupId: string; runAllStatus?: 
           {/* Batch memo field (shown when batchSend) */}
           {group.batchSend && (
             <div className="flex items-center gap-2">
-              <span className="text-xs text-white/40">Batch memo:</span>
+              <span className="text-xs text-muted-foreground">Batch memo:</span>
               {editingBatchMemo ? (
                 <>
-                  <input
+                  <Input
                     autoFocus
                     value={batchMemoInput}
                     onChange={(e) => setBatchMemoInput(e.target.value)}
                     maxLength={28}
                     placeholder="Transaction memo (max 28 chars)"
-                    className="flex-1 bg-black/30 border border-white/15 rounded px-2 py-1 text-xs text-white font-mono placeholder:text-white/25 outline-none focus:border-white/30"
+                    className="flex-1 h-7 text-xs font-mono"
                   />
-                  <button onClick={saveBatchMemo} className="px-2 py-1 rounded bg-violet-600 hover:bg-violet-500 text-white text-xs">Save</button>
-                  <button onClick={() => setEditingBatchMemo(false)} className="px-2 py-1 rounded bg-white/10 text-white/50 text-xs">Cancel</button>
+                  <Button size="sm" className="h-7 px-2 text-xs" onClick={saveBatchMemo}>Save</Button>
+                  <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => setEditingBatchMemo(false)}>Cancel</Button>
                 </>
               ) : (
                 <>
-                  <span className="text-xs font-mono text-white/60 italic">{group.batchMemo || "none"}</span>
-                  <button onClick={startEditBatchMemo} className="text-white/25 hover:text-white/60 transition-colors">
+                  <span className="text-xs font-mono text-muted-foreground italic">{group.batchMemo || "none"}</span>
+                  <Button variant="ghost" size="icon" className="h-auto w-auto p-0.5 text-muted-foreground/60 hover:text-muted-foreground" onClick={startEditBatchMemo}>
                     <Pencil size={11} />
-                  </button>
+                  </Button>
                 </>
               )}
             </div>
@@ -1305,38 +1310,40 @@ function GroupCard({ groupId, runAllStatus }: { groupId: string; runAllStatus?: 
 
           {/* Dry-run toggle */}
           <div className="flex items-center gap-2">
-            <button
-              onClick={() => updateGroup(group.id, { previewOnly: !group.previewOnly })}
-              className={`flex items-center gap-1.5 px-2 py-1 rounded border text-xs transition-colors ${
+            <Button
+              variant="outline"
+              size="sm"
+              className={`h-auto gap-1.5 px-2 py-1 text-xs ${
                 group.previewOnly
-                  ? "bg-blue-500/15 border-blue-500/30 text-blue-300"
-                  : "bg-white/5 border-white/10 text-white/40 hover:border-white/20"
+                  ? "bg-blue-500/15 border-blue-500/30 text-blue-300 hover:bg-blue-500/20"
+                  : "bg-muted/50 border-border text-muted-foreground hover:border-foreground/20"
               }`}
+              onClick={() => updateGroup(group.id, { previewOnly: !group.previewOnly })}
             >
               <Eye size={10} />
               {group.previewOnly ? "Dry-run on schedule" : "Live on schedule"}
-            </button>
+            </Button>
             {group.previewOnly && (
-              <span className="text-xs text-white/30">Scheduler will preview only — no real transactions</span>
+              <span className="text-xs text-muted-foreground/70">Scheduler will preview only — no real transactions</span>
             )}
           </div>
 
           {/* Destinations table */}
           {destinations.length > 0 && (
             <div className="flex flex-col gap-1">
-              <p className="text-xs text-white/50 uppercase tracking-wide font-medium">Destinations</p>
-              <div className="rounded border border-white/10 overflow-hidden">
+              <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium">Destinations</p>
+              <div className="rounded border border-border overflow-hidden">
                 <table className="w-full text-xs">
                   <thead>
-                    <tr className="border-b border-white/10 bg-white/5">
+                    <tr className="border-b border-border bg-muted/50">
                       <th className="px-2 py-2 w-10"></th>
-                      <th className="text-left px-3 py-2 text-white/40 font-medium">Destination</th>
-                      <th className="text-left px-3 py-2 text-white/40 font-medium">Label</th>
-                      <th className="text-left px-3 py-2 text-white/40 font-medium">Memo</th>
-                      <th className="text-right px-3 py-2 text-white/40 font-medium">%</th>
-                      <th className="text-right px-3 py-2 text-white/40 font-medium">Min XLM</th>
-                      <th className="text-right px-3 py-2 text-white/40 font-medium">Max cap</th>
-                      <th className="text-right px-3 py-2 text-white/40 font-medium">Total sent</th>
+                      <th className="text-left px-3 py-2 text-muted-foreground font-medium">Destination</th>
+                      <th className="text-left px-3 py-2 text-muted-foreground font-medium">Label</th>
+                      <th className="text-left px-3 py-2 text-muted-foreground font-medium">Memo</th>
+                      <th className="text-right px-3 py-2 text-muted-foreground font-medium">%</th>
+                      <th className="text-right px-3 py-2 text-muted-foreground font-medium">Min XLM</th>
+                      <th className="text-right px-3 py-2 text-muted-foreground font-medium">Max cap</th>
+                      <th className="text-right px-3 py-2 text-muted-foreground font-medium">Total sent</th>
                       <th className="px-3 py-2 w-12"></th>
                     </tr>
                   </thead>
@@ -1363,53 +1370,59 @@ function GroupCard({ groupId, runAllStatus }: { groupId: string; runAllStatus?: 
                           onDragOver={(e) => { e.preventDefault(); setDragOverIdx(idx); }}
                           onDragEnd={() => { setDragIdx(null); setDragOverIdx(null); }}
                           onDrop={() => { if (dragIdx !== null && dragIdx !== idx) handleDragDrop(dragIdx, idx); setDragIdx(null); setDragOverIdx(null); }}
-                          className={`border-b border-white/5 last:border-0 group/row ${d.paused ? "opacity-50" : ""} ${dragOverIdx === idx ? "bg-violet-500/10" : ""}`}
+                          className={`border-b border-border/50 last:border-0 group/row ${d.paused ? "opacity-50" : ""} ${dragOverIdx === idx ? "bg-primary/10" : ""}`}
                         >
                           <td className="px-2 py-2 cursor-grab active:cursor-grabbing">
-                            <GripVertical size={12} className="text-white/20" />
+                            <GripVertical size={12} className="text-muted-foreground/50" />
                           </td>
-                          <td className="px-3 py-2 font-mono text-white/70">{shortAddr(d.destination)}</td>
-                          <td className="px-3 py-2 text-white/50">{d.label ?? "—"}</td>
-                          <td className="px-3 py-2 text-white/40 italic">{d.memo ?? "—"}</td>
+                          <td className="px-3 py-2 font-mono text-foreground/70">{shortAddr(d.destination)}</td>
+                          <td className="px-3 py-2 text-muted-foreground">{d.label ?? "—"}</td>
+                          <td className="px-3 py-2 text-muted-foreground italic">{d.memo ?? "—"}</td>
                           <td className="px-3 py-2 text-right font-medium">
                             {d.paused
                               ? <span className="text-yellow-400/70 text-xs uppercase tracking-wide">paused</span>
                               : d.isRemainder
-                              ? <span className="text-violet-400 text-xs uppercase tracking-wide">REST</span>
-                              : <span className="text-white/80">{d.percentage}%</span>}
+                              ? <span className="text-primary text-xs uppercase tracking-wide">REST</span>
+                              : <span className="text-foreground/80">{d.percentage}%</span>}
                           </td>
-                          <td className="px-3 py-2 text-right text-white/40">{d.minThreshold > 0 ? `${d.minThreshold} XLM` : "—"}</td>
-                          <td className="px-3 py-2 text-right text-white/40">{d.maxCap > 0 ? `${d.maxCap} XLM` : "—"}</td>
+                          <td className="px-3 py-2 text-right text-muted-foreground">{d.minThreshold > 0 ? `${d.minThreshold} XLM` : "—"}</td>
+                          <td className="px-3 py-2 text-right text-muted-foreground">{d.maxCap > 0 ? `${d.maxCap} XLM` : "—"}</td>
                           <td className="px-3 py-2 text-right">
                             {destTotals[d.destination] ? (
                               <span className="text-green-400/70 font-mono text-xs" title={`${destTotals[d.destination].sentCount} payments`}>
                                 {destTotals[d.destination].totalXlm.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} XLM
                               </span>
                             ) : (
-                              <span className="text-white/20">—</span>
+                              <span className="text-muted-foreground/50">—</span>
                             )}
                           </td>
                           <td className="px-3 py-2">
                             <div className="flex items-center gap-1 justify-end">
-                              <button
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className={`h-auto w-auto p-0.5 ${d.paused ? "text-yellow-400 hover:text-yellow-300" : "text-muted-foreground/50 hover:text-yellow-400 opacity-0 group-hover/row:opacity-100"}`}
                                 onClick={() => upsertDestination(group.id, { ...d, paused: !d.paused })}
-                                className={`transition-colors ${d.paused ? "text-yellow-400 hover:text-yellow-300" : "text-white/20 hover:text-yellow-400 opacity-0 group-hover/row:opacity-100"}`}
                                 title={d.paused ? "Resume destination" : "Pause destination"}
                               >
                                 <PauseCircle size={12} />
-                              </button>
-                              <button
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-auto w-auto p-0.5 text-muted-foreground/50 hover:text-muted-foreground opacity-0 group-hover/row:opacity-100"
                                 onClick={() => setEditingDestId(d.id)}
-                                className="text-white/20 hover:text-white/60 transition-colors opacity-0 group-hover/row:opacity-100"
                               >
                                 <Pencil size={11} />
-                              </button>
-                              <button
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-auto w-auto p-0.5 text-muted-foreground/50 hover:text-red-400"
                                 onClick={() => deleteDestination(group.id, d.id)}
-                                className="text-white/20 hover:text-red-400 transition-colors"
                               >
                                 <Trash2 size={12} />
-                              </button>
+                              </Button>
                             </div>
                           </td>
                         </tr>
@@ -1418,9 +1431,9 @@ function GroupCard({ groupId, runAllStatus }: { groupId: string; runAllStatus?: 
                   </tbody>
                   {destCount > 1 && (
                     <tfoot>
-                      <tr className="border-t border-white/10 bg-white/5">
-                        <td colSpan={4} className="px-3 py-1.5 text-xs text-white/30">Total</td>
-                        <td className={`px-3 py-1.5 text-right text-xs font-medium ${overBudget ? "text-red-400" : "text-white/60"}`}>
+                      <tr className="border-t border-border bg-muted/50">
+                        <td colSpan={4} className="px-3 py-1.5 text-xs text-muted-foreground/70">Total</td>
+                        <td className={`px-3 py-1.5 text-right text-xs font-medium ${overBudget ? "text-red-400" : "text-muted-foreground"}`}>
                           {totalPct.toFixed(2)}%{hasRemainder ? " + REST" : ""}
                           {overBudget && <span className="ml-1">⚠ exceeds 100%</span>}
                         </td>
@@ -1459,24 +1472,28 @@ function GroupCard({ groupId, runAllStatus }: { groupId: string; runAllStatus?: 
               onDone={() => setAddingDest(false)}
             />
           ) : (
-            <button
+            <Button
+              variant="outline"
+              size="sm"
               onClick={() => setAddingDest(true)}
-              className="self-start flex items-center gap-1.5 px-3 py-1.5 rounded border border-white/10 hover:border-white/20 text-white/50 hover:text-white/80 text-xs transition-colors"
+              className="self-start text-muted-foreground hover:text-foreground/80"
             >
-              <Plus size={12} />
+              <Plus size={12} className="mr-1.5" />
               Add Destination
-            </button>
+            </Button>
           )}
 
           {/* History toggle */}
           <div>
-            <button
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-auto p-0 gap-1.5 text-xs text-muted-foreground/70 hover:text-muted-foreground hover:bg-transparent"
               onClick={() => setShowHistory((v) => !v)}
-              className="flex items-center gap-1.5 text-xs text-white/30 hover:text-white/60 transition-colors"
             >
               <History size={12} />
               {showHistory ? "Hide history" : "Show run history"}
-            </button>
+            </Button>
             {showHistory && (
               <div className="mt-2">
                 <RunHistory groupId={group.id} network={group.network} onReRun={handleRun} />
@@ -1557,7 +1574,7 @@ export function AutoSendGroupsPanel() {
 
   if (!isLoaded) {
     return (
-      <div className="flex flex-col items-center justify-center gap-3 py-24 text-white/30">
+      <div className="flex flex-col items-center justify-center gap-3 py-24 text-muted-foreground/70">
         <RefreshCw size={22} className="animate-spin" />
         <span className="text-sm">Loading auto-send groups…</span>
       </div>
@@ -1574,38 +1591,36 @@ export function AutoSendGroupsPanel() {
       )}
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-lg font-semibold text-white">Auto-Send Groups</h2>
-          <p className="text-sm text-white/40 mt-0.5">
+          <h2 className="text-lg font-semibold text-foreground">Auto-Send Groups</h2>
+          <p className="text-sm text-muted-foreground mt-0.5">
             Each group has one source wallet and multiple destinations, each receiving a % of the XLM balance.
           </p>
         </div>
         <div className="flex items-center gap-2">
           {notifPermission === "default" && (
-            <button
+            <Button
+              variant="outline"
+              size="icon"
               onClick={() => Notification.requestPermission().then((p) => setNotifPermission(p))}
-              className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-white/40 hover:text-white/70 text-sm"
               title="Enable desktop notifications for run results"
             >
               <Bell size={13} />
-            </button>
+            </Button>
           )}
           {groups.filter((g) => g.destinations.length > 0).length > 1 && (
-            <button
+            <Button
+              variant="outline"
               onClick={handleRunAll}
               disabled={runAllActive}
-              className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-white/10 hover:bg-white/15 disabled:opacity-50 text-white/70 hover:text-white text-sm font-medium border border-white/10"
             >
-              {runAllActive ? <RefreshCw size={14} className="animate-spin" /> : <PlayCircle size={14} />}
+              {runAllActive ? <RefreshCw size={14} className="animate-spin mr-1.5" /> : <PlayCircle size={14} className="mr-1.5" />}
               Run All
-            </button>
+            </Button>
           )}
-          <button
-            onClick={() => setShowNewGroup((v) => !v)}
-            className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-violet-600 hover:bg-violet-500 text-white text-sm font-medium"
-          >
-            <Plus size={14} />
+          <Button onClick={() => setShowNewGroup((v) => !v)}>
+            <Plus size={14} className="mr-1.5" />
             New Group
-          </button>
+          </Button>
         </div>
       </div>
 
@@ -1613,12 +1628,12 @@ export function AutoSendGroupsPanel() {
 
       {/* Overall stats bar */}
       {stats && (stats.totalRuns > 0 || stats.activeGroups > 0) && (
-        <div className="flex flex-wrap gap-x-6 gap-y-1 px-4 py-2.5 rounded-lg border border-white/8 bg-white/[0.03] text-xs text-white/40">
+        <div className="flex flex-wrap gap-x-6 gap-y-1 px-4 py-2.5 rounded-lg border border-border bg-muted/30 text-xs text-muted-foreground">
           {stats.activeGroups > 0 && (
-            <span><span className="text-white/70 font-medium">{stats.activeGroups}</span> scheduled</span>
+            <span><span className="text-foreground/70 font-medium">{stats.activeGroups}</span> scheduled</span>
           )}
           {stats.totalRuns > 0 && (
-            <span><span className="text-white/70 font-medium">{stats.totalRuns}</span> runs</span>
+            <span><span className="text-foreground/70 font-medium">{stats.totalRuns}</span> runs</span>
           )}
           {stats.totalSent > 0 && (
             <span><span className="text-green-400 font-medium">{stats.totalSent}</span> payments sent</span>
@@ -1627,16 +1642,16 @@ export function AutoSendGroupsPanel() {
             <span><span className="text-red-400 font-medium">{stats.totalFailed}</span> failed</span>
           )}
           {stats.totalXlm > 0 && (
-            <span><span className="text-white/70 font-mono font-medium">{stats.totalXlm.toLocaleString(undefined, { maximumFractionDigits: 2 })}</span> XLM total sent</span>
+            <span><span className="text-foreground/70 font-mono font-medium">{stats.totalXlm.toLocaleString(undefined, { maximumFractionDigits: 2 })}</span> XLM total sent</span>
           )}
           {stats.lastRunAt && (
-            <span>last activity <span className="text-white/60">{timeAgo(stats.lastRunAt)}</span></span>
+            <span>last activity <span className="text-muted-foreground">{timeAgo(stats.lastRunAt)}</span></span>
           )}
         </div>
       )}
 
       {groups.length === 0 && !showNewGroup ? (
-        <div className="text-center py-16 text-white/30">
+        <div className="text-center py-16 text-muted-foreground/70">
           <p className="text-base">No auto-send groups yet.</p>
           <p className="text-sm mt-1">Create a group with a source wallet, add destinations with percentages, and schedule automatic sweeps.</p>
         </div>

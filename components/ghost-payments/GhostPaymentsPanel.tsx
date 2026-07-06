@@ -1664,20 +1664,19 @@ export function GhostPaymentsPanel() {
                 <>
                   <div className="space-y-2">
                     <Label htmlFor="group-select">Select Group</Label>
-                    <select
-                      id="group-select"
-                      value={selectedGroupId}
-                      onChange={(e) => setSelectedGroupId(e.target.value)}
-                      className="w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm"
-                    >
-                      <option value="">— choose a group —</option>
-                      {groups.map((g) => (
-                        <option key={g.id} value={g.id}>
-                          {g.name} ({g.members.length} members)
-                          {g.assetCode ? ` · ${g.assetCode}` : ""}
-                        </option>
-                      ))}
-                    </select>
+                    <Select value={selectedGroupId} onValueChange={setSelectedGroupId}>
+                      <SelectTrigger id="group-select">
+                        <SelectValue placeholder="— choose a group —" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {groups.map((g) => (
+                          <SelectItem key={g.id} value={g.id}>
+                            {g.name} ({g.members.length} members)
+                            {g.assetCode ? ` · ${g.assetCode}` : ""}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                   </div>
                   {selectedGroupId &&
                     (() => {

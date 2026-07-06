@@ -34,13 +34,6 @@ export interface TraceResult {
   noNativeCandidates: boolean;
 }
 
-export interface ScanProgress {
-  phase: "scanning_creations" | "matching_funders" | "done";
-  createAccountsFound: number;
-  processed: number;
-  total: number;
-}
-
 export interface KnownIntermediary {
   address: string;
   name: string;

@@ -53,6 +53,8 @@ export async function POST(req: NextRequest) {
     { data: walletFolders },
     { data: wallets },
     { data: appState },
+    { data: autoSendGroups },
+    { data: tieredRewardConfigs },
   ] = await Promise.all([
     sb.from("address_book").select("*").eq("user_id", userId),
     sb.from("known_intermediaries").select("*").eq("user_id", userId),
@@ -66,13 +68,41 @@ export async function POST(req: NextRequest) {
     sb.from("wallet_folders").select("*").eq("user_id", userId),
     sb.from("wallets").select("*").eq("user_id", userId),
     sb.from("app_state").select("*").eq("user_id", userId),
+    sb.from("auto_send_groups").select("*").eq("user_id", userId),
+    sb.from("tiered_reward_configs").select("*").eq("user_id", userId),
   ]);
 
-  // asset_group_members has no user_id column — scoped through parent asset_groups instead
+  // Child tables with no user_id column of their own — scoped through their parent instead
   const assetGroupIds = (assetGroups ?? []).map((g) => g.id as string);
-  const { data: assetGroupMembers } =
+  const autoSendGroupIds = (autoSendGroups ?? []).map((g) => g.id as string);
+  const tieredRewardConfigIds = (tieredRewardConfigs ?? []).map((c) => c.id as string);
+  const [
+    { data: assetGroupMembers },
+    { data: autoSendDestinations },
+    { data: autoSendRunLog },
+    { data: tieredRewardTiers },
+    { data: tieredRewardRunLog },
+  ] = await Promise.all([
     assetGroupIds.length > 0
-      ? await sb.from("asset_group_members").select("*").in("group_id", assetGroupIds)
+      ? sb.from("asset_group_members").select("*").in("group_id", assetGroupIds)
+      : Promise.resolve({ data: [] as Record<string, unknown>[] }),
+    autoSendGroupIds.length > 0
+      ? sb.from("auto_send_destinations").select("*").in("group_id", autoSendGroupIds)
+      : Promise.resolve({ data: [] as Record<string, unknown>[] }),
+    autoSendGroupIds.length > 0
+      ? sb.from("auto_send_run_log").select("*").eq("user_id", userId)
+      : Promise.resolve({ data: [] as Record<string, unknown>[] }),
+    tieredRewardConfigIds.length > 0
+      ? sb.from("tiered_reward_tiers").select("*").in("config_id", tieredRewardConfigIds)
+      : Promise.resolve({ data: [] as Record<string, unknown>[] }),
+    tieredRewardConfigIds.length > 0
+      ? sb.from("tiered_reward_run_log").select("*").eq("user_id", userId)
+      : Promise.resolve({ data: [] as Record<string, unknown>[] }),
+  ]);
+  const tieredRewardTierIds = (tieredRewardTiers ?? []).map((t) => t.id as string);
+  const { data: tieredRewardAssets } =
+    tieredRewardTierIds.length > 0
+      ? await sb.from("tiered_reward_assets").select("*").in("tier_id", tieredRewardTierIds)
       : { data: [] as Record<string, unknown>[] };
 
   let merged = 0;
@@ -162,6 +192,51 @@ export async function POST(req: NextRequest) {
       const result = db.prepare(
         "INSERT OR IGNORE INTO app_state (key, value) VALUES (?, ?)"
       ).run(r.key, r.value);
+      merged += result.changes;
+    }
+    // Auto-send groups — parents before children
+    for (const r of autoSendGroups ?? []) {
+      const result = db.prepare(
+        "INSERT OR IGNORE INTO auto_send_groups (id, name, network, secret_key, interval_minutes, enabled, batch_send, batch_memo, min_reserve, min_sender_threshold, preview_only, last_failure_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+      ).run(r.id, r.name, r.network, r.secret_key, r.interval_minutes, r.enabled, r.batch_send, r.batch_memo, r.min_reserve, r.min_sender_threshold, r.preview_only, r.last_failure_at, r.created_at);
+      merged += result.changes;
+    }
+    for (const r of autoSendDestinations ?? []) {
+      const result = db.prepare(
+        "INSERT OR IGNORE INTO auto_send_destinations (id, group_id, destination, percentage, is_remainder, is_paused, label, memo, min_threshold, max_cap, position) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+      ).run(r.id, r.group_id, r.destination, r.percentage, r.is_remainder, r.is_paused, r.label, r.memo, r.min_threshold, r.max_cap, r.position);
+      merged += result.changes;
+    }
+    for (const r of autoSendRunLog ?? []) {
+      const result = db.prepare(
+        "INSERT OR IGNORE INTO auto_send_run_log (id, group_id, wallet_address, destination, amount_sent, status, error, ran_at, tx_hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+      ).run(r.id, r.group_id, r.wallet_address, r.destination, r.amount_sent, r.status, r.error, r.ran_at, r.tx_hash);
+      merged += result.changes;
+    }
+    // Tiered rewards — configs before tiers before assets
+    for (const r of tieredRewardConfigs ?? []) {
+      const excludeAddresses = JSON.stringify(r.exclude_addresses ?? []);
+      const result = db.prepare(
+        "INSERT OR IGNORE INTO tiered_reward_configs (id, name, asset_code, asset_issuer, network, secret_key, interval_minutes, enabled, min_reserve, min_sender_threshold, preview_only, batch_send, memo, fee_multiplier, exclude_addresses, last_run_at, last_failure_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+      ).run(r.id, r.name, r.asset_code, r.asset_issuer, r.network, r.secret_key, r.interval_minutes, r.enabled, r.min_reserve, r.min_sender_threshold, r.preview_only, r.batch_send, r.memo, r.fee_multiplier, excludeAddresses, r.last_run_at, r.last_failure_at, r.created_at);
+      merged += result.changes;
+    }
+    for (const r of tieredRewardTiers ?? []) {
+      const result = db.prepare(
+        "INSERT OR IGNORE INTO tiered_reward_tiers (id, config_id, tier_number, min_tokens, max_tokens, position) VALUES (?, ?, ?, ?, ?, ?)"
+      ).run(r.id, r.config_id, r.tier_number, r.min_tokens, r.max_tokens, r.position);
+      merged += result.changes;
+    }
+    for (const r of tieredRewardAssets ?? []) {
+      const result = db.prepare(
+        "INSERT OR IGNORE INTO tiered_reward_assets (id, tier_id, asset_code, asset_issuer, amount) VALUES (?, ?, ?, ?, ?)"
+      ).run(r.id, r.tier_id, r.asset_code, r.asset_issuer, r.amount);
+      merged += result.changes;
+    }
+    for (const r of tieredRewardRunLog ?? []) {
+      const result = db.prepare(
+        "INSERT OR IGNORE INTO tiered_reward_run_log (id, config_id, tier_number, holder_address, asset_code, asset_issuer, amount_sent, status, tx_hash, error, ran_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+      ).run(r.id, r.config_id, r.tier_number, r.holder_address, r.asset_code, r.asset_issuer, r.amount_sent, r.status, r.tx_hash, r.error, r.ran_at);
       merged += result.changes;
     }
   })();

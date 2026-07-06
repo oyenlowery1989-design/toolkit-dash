@@ -31,7 +31,7 @@ async function loadSenderAssetBalances(
     const entry = account.balances.find(
       (b: { asset_type: string; asset_code?: string; asset_issuer?: string }) =>
         (b.asset_type === "credit_alphanum4" || b.asset_type === "credit_alphanum12") &&
-        b.asset_code === code &&
+        b.asset_code?.toUpperCase() === code.toUpperCase() &&
         b.asset_issuer === issuer
     ) as { balance: string } | undefined;
     result.set(key, {
@@ -104,7 +104,7 @@ export async function calculatePreview(
   const nonNativeKeys = new Set<string>();
   for (const assignment of assignments) {
     for (const asset of assignment.tier.assets) {
-      if (asset.assetCode !== "XLM" && asset.assetIssuer) {
+      if (asset.assetCode.toUpperCase() !== "XLM" && asset.assetIssuer) {
         nonNativeKeys.add(`${asset.assetCode}:${asset.assetIssuer}`);
       }
     }
@@ -119,11 +119,12 @@ export async function calculatePreview(
     if (holderCount === 0) continue;
 
     for (const asset of assignment.tier.assets) {
-      const key = asset.assetCode === "XLM" ? "XLM" : `${asset.assetCode}:${asset.assetIssuer}`;
+      const isNative = asset.assetCode.toUpperCase() === "XLM";
+      const key = isNative ? "XLM" : `${asset.assetCode}:${asset.assetIssuer}`;
       const required = asset.amount * holderCount;
 
       if (!costMap.has(key)) {
-        if (asset.assetCode === "XLM") {
+        if (isNative) {
           const spendable = Math.max(0, xlmBalance - config.minReserve - FEE_BUDGET);
           costMap.set(key, { required: 0, senderBalance: spendable, hasTrustline: true, code: "XLM" });
         } else {

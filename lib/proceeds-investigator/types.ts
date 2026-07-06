@@ -4,13 +4,6 @@ export interface DestinationSummary {
   count: number;
 }
 
-export interface SellerSummary {
-  address: string;
-  assetSold: number;
-  xlmReceived: number;
-  tradeCount: number;
-}
-
 export interface ProceedsLedgerEntry {
   id: string;
   account: string;

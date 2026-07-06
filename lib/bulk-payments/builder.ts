@@ -33,7 +33,6 @@ export function buildBatchTransaction(
   feeMultiplier: number = 1,
   amount: string = MIN_PAYMENT_AMOUNT,
   asset: Asset = Asset.native(),
-  ghost: boolean = false,
 ): Transaction {
   const fee = String(parseInt(BASE_FEE) * Math.max(1, Math.round(feeMultiplier)));
   const builder = new TransactionBuilder(account, {

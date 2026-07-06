@@ -25,7 +25,7 @@ export async function POST(req: NextRequest) {
       issuer: issuer ?? "",
       secretKey,
       network: network as Network,
-      signal: new AbortController().signal,
+      signal: req.signal,
       onLog: (msg) => logs.push(msg),
     });
 

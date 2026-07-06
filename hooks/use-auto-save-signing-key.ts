@@ -7,6 +7,7 @@ import { useCallback } from "react";
 import { toast } from "sonner";
 import { useAssetGroups } from "@/hooks/use-asset-groups";
 import { useSettings } from "@/lib/settings";
+import { shortAddr } from "@/lib/format";
 
 const MY_KEYS_GROUP_NAME = "My Keys";
 
@@ -41,8 +42,7 @@ export function useAutoSaveSigningKey() {
         notes: `Auto-saved signing key — ${new Date().toLocaleDateString()}`,
       });
 
-      const short = `${publicKey.slice(0, 4)}…${publicKey.slice(-4)}`;
-      toast.success(`Signing key ${short} saved to "${MY_KEYS_GROUP_NAME}" → reassign when ready.`);
+      toast.success(`Signing key ${shortAddr(publicKey)} saved to "${MY_KEYS_GROUP_NAME}" → reassign when ready.`);
     },
     [groups, createGroup, upsertMember, settings.network],
   );

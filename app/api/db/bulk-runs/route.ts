@@ -41,7 +41,8 @@ export async function POST(req: NextRequest) {
   if (!auth.ok) return auth.response;
   const { userId } = auth;
 
-  const b = await req.json();
+  let b: any;
+  try { b = await req.json(); } catch { return NextResponse.json({ error: "Invalid JSON" }, { status: 400 }); }
   const now = b.ranAt ?? Date.now();
 
   if (!isSupabaseOnly()) {

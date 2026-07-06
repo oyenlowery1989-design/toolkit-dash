@@ -9,6 +9,7 @@ import {
   ExternalLink,
   FileCode2,
   Loader2,
+  RefreshCw,
   XCircle,
 } from "lucide-react";
 import { StrKey, Keypair } from "stellar-sdk";
@@ -356,6 +357,12 @@ export function SorobanPanel() {
                 <span className="text-sm text-destructive">
                   {statusError ?? "Status check failed"}
                 </span>
+              )}
+              {deployStatus !== "checking" && (
+                <Button variant="ghost" size="sm" onClick={handleCheckStatus} className="ml-auto">
+                  <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
+                  Recheck
+                </Button>
               )}
             </div>
           </CardContent>

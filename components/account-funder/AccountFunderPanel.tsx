@@ -84,22 +84,6 @@ interface GeneratedAccount {
   error?: string; // Horizon result code if failed (e.g. "op_already_exists")
 }
 
-// Parent account — either from saved wallet or freshly generated
-interface ParentAccount {
-  mode: "wallet" | "generated";
-  // Wallet mode: which saved wallet is selected
-  walletId: string | null;
-  manualKey: string;
-  showManualKey: boolean;
-  // Generated mode: the fresh keypair
-  generatedPublicKey: string;
-  generatedSecretKey: string;
-  showGeneratedSecret: boolean;
-  // Shared: resolved balance from Horizon (null = not yet checked)
-  balance: string | null;
-  balanceLoading: boolean;
-}
-
 // ---------------------------------------------------------------------------
 // Sub-components
 // ---------------------------------------------------------------------------

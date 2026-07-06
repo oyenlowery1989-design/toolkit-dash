@@ -50,7 +50,8 @@ export async function POST(req: NextRequest) {
   if (!auth.ok) return auth.response;
   const { userId } = auth;
 
-  const b = await req.json();
+  let b: any;
+  try { b = await req.json(); } catch { return NextResponse.json({ error: "Invalid JSON" }, { status: 400 }); }
   const now = b.timestamp ?? Date.now();
 
   if (!isSupabaseOnly()) {
@@ -114,7 +115,8 @@ export async function DELETE(req: NextRequest) {
   if (!auth.ok) return auth.response;
   const { userId } = auth;
 
-  const { key } = await req.json();
+  let key: string;
+  try { ({ key } = await req.json()); } catch { return NextResponse.json({ error: "Invalid JSON" }, { status: 400 }); }
 
   if (!isSupabaseOnly()) {
     getDb().prepare("DELETE FROM saved_analyses WHERE id = ?").run(key);
@@ -133,7 +135,8 @@ export async function PATCH(req: NextRequest) {
   if (!auth.ok) return auth.response;
   const { userId } = auth;
 
-  const { id, name, notes, tags } = await req.json();
+  let id: string, name: string | undefined, notes: string | undefined, tags: unknown;
+  try { ({ id, name, notes, tags } = await req.json()); } catch { return NextResponse.json({ error: "Invalid JSON" }, { status: 400 }); }
 
   if (!isSupabaseOnly()) {
     const db = getDb();

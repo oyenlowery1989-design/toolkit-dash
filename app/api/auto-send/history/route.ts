@@ -56,6 +56,7 @@ export async function GET(req: NextRequest) {
           .from("auto_send_run_log")
           .select("destination, amount_sent")
           .eq("group_id", groupId)
+          .eq("user_id", auth.userId!)
           .eq("status", "sent");
         if (error) return NextResponse.json({ error: error.message }, { status: 500 });
         const result: Record<string, { totalXlm: number; sentCount: number }> = {};
@@ -92,6 +93,7 @@ export async function GET(req: NextRequest) {
         .from("auto_send_run_log")
         .select("*")
         .eq("group_id", groupId)
+        .eq("user_id", auth.userId!)
         .order("ran_at", { ascending: false })
         .limit(200);
       if (error) return NextResponse.json({ error: error.message }, { status: 500 });

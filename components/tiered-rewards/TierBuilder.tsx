@@ -112,12 +112,14 @@ function AddAssetRow({ tierId, onAdd }: { tierId: string; onAdd: Props["onUpsert
   const [err, setErr] = useState<string | null>(null);
 
   function handleAdd() {
-    const assetCode = code.trim().toUpperCase();
-    if (!assetCode) { setErr("Asset code required"); return; }
+    const typed = code.trim();
+    if (!typed) { setErr("Asset code required"); return; }
+    const isNative = typed.toUpperCase() === "XLM";
+    const assetCode = isNative ? "XLM" : typed;
     const amt = parseFloat(amount);
     if (isNaN(amt) || amt <= 0) { setErr("Amount must be > 0"); return; }
-    if (assetCode !== "XLM" && !issuer.trim()) { setErr("Issuer required for non-XLM assets"); return; }
-    onAdd(tierId, { assetCode, assetIssuer: assetCode === "XLM" ? undefined : issuer.trim(), amount: amt });
+    if (!isNative && !issuer.trim()) { setErr("Issuer required for non-XLM assets"); return; }
+    onAdd(tierId, { assetCode, assetIssuer: isNative ? undefined : issuer.trim(), amount: amt });
     setCode(""); setIssuer(""); setAmount(""); setErr(null);
   }
 

@@ -38,14 +38,14 @@ function mapTiers(db: any, tierRows: Row[]): Tier[] {
   });
 }
 
-function rowToConfig(c: Row, tiers: Tier[]): TieredRewardConfig {
+function rowToConfig(c: Row, tiers: Tier[], includeSecret = false): TieredRewardConfig {
   return {
     id: c.id as string,
     name: c.name as string,
     assetCode: c.asset_code as string,
     assetIssuer: c.asset_issuer as string,
     network: (c.network as string) ?? "public",
-    secretKey: null,
+    secretKey: includeSecret ? ((c.secret_key as string) || null) : null,
     hasKey: !!((c.secret_key as string) || ""),
     intervalMinutes: (c.interval_minutes as number | null) ?? null,
     enabled: Number(c.enabled) === 1,
@@ -75,21 +75,21 @@ export function loadAllConfigs(db: Db): TieredRewardConfig[] {
   });
 }
 
-/** Load all enabled configs with an interval (for the scheduler). */
+/** Load all enabled configs with an interval (for the scheduler). Includes the secret key — server-only caller. */
 export function loadEnabledConfigs(db: Db): TieredRewardConfig[] {
   const configs = db
     .prepare("SELECT * FROM tiered_reward_configs WHERE enabled = 1 AND interval_minutes IS NOT NULL ORDER BY created_at ASC")
     .all() as Row[];
   return configs.map((c) => {
     const tierRows = db.prepare("SELECT * FROM tiered_reward_tiers WHERE config_id = ? ORDER BY position ASC").all(c.id) as Row[];
-    return rowToConfig(c, mapTiers(db, tierRows));
+    return rowToConfig(c, mapTiers(db, tierRows), true);
   });
 }
 
-/** Load a single config by id. Returns null if not found. */
+/** Load a single config by id. Includes the secret key — server-only caller (run route). Returns null if not found. */
 export function loadConfig(db: Db, configId: string): TieredRewardConfig | null {
   const c = db.prepare("SELECT * FROM tiered_reward_configs WHERE id = ?").get(configId) as Row | undefined;
   if (!c) return null;
   const tierRows = db.prepare("SELECT * FROM tiered_reward_tiers WHERE config_id = ? ORDER BY position ASC").all(configId) as Row[];
-  return rowToConfig(c, mapTiers(db, tierRows));
+  return rowToConfig(c, mapTiers(db, tierRows), true);
 }

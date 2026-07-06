@@ -1,19 +1,28 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { createDbCache, authHeaders, waitForAuth } from "@/lib/db-client";
+import { toast } from "sonner";
+import { createDbCache, authHeaders, waitForAuth, debounce } from "@/lib/db-client";
 import type { TieredRewardConfig, Tier, RewardAsset } from "@/lib/tiered-rewards/types";
 
 const ENDPOINT = "/api/db/tiered-rewards";
 
-function dbAction(action: string, type: string, data: Record<string, unknown>) {
-  waitForAuth().then(() =>
-    fetch(ENDPOINT, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...authHeaders() },
-      body: JSON.stringify({ type, action, data }),
-    })
-  ).catch(() => {});
+async function dbAction(action: string, type: string, data: Record<string, unknown>): Promise<void> {
+  await waitForAuth();
+  const res = await fetch(ENDPOINT, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ type, action, data }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    throw new Error(body?.error ?? `POST ${ENDPOINT} failed: ${res.status}`);
+  }
+}
+
+function handleActionError(e: unknown) {
+  toast.error(e instanceof Error ? e.message : "Save failed");
+  _cache.reload(ENDPOINT);
 }
 
 function triggerSchedulerRefresh() {
@@ -35,7 +44,7 @@ export function useTieredRewardConfigs() {
     const unsub = _cache.subscribe(() => rerender((n) => n + 1));
     _cache.load(ENDPOINT);
 
-    const onFocus = () => _cache.load(ENDPOINT);
+    const onFocus = debounce(() => _cache.reload(ENDPOINT), 2000);
     window.addEventListener("focus", onFocus);
     return () => {
       unsub();
@@ -50,7 +59,7 @@ export function useTieredRewardConfigs() {
       const id = crypto.randomUUID();
       const optimistic: TieredRewardConfig = { ...entry, id, createdAt: Date.now(), tiers: [] };
       _cache.set([optimistic, ..._cache.get()]);
-      dbAction("create", "config", { id, ...entry });
+      dbAction("create", "config", { id, ...entry }).catch(handleActionError);
       if (entry.intervalMinutes) triggerSchedulerRefresh();
     },
     []
@@ -59,7 +68,7 @@ export function useTieredRewardConfigs() {
   const updateConfig = useCallback(
     (id: string, updates: Partial<Omit<TieredRewardConfig, "tiers">>) => {
       _cache.set(_cache.get().map((c) => (c.id === id ? { ...c, ...updates } : c)));
-      dbAction("update", "config", { id, ...updates });
+      dbAction("update", "config", { id, ...updates }).catch(handleActionError);
       if (updates.enabled !== undefined || updates.intervalMinutes !== undefined) {
         triggerSchedulerRefresh();
       }
@@ -69,7 +78,7 @@ export function useTieredRewardConfigs() {
 
   const deleteConfig = useCallback((id: string) => {
     _cache.set(_cache.get().filter((c) => c.id !== id));
-    dbAction("delete", "config", { id });
+    dbAction("delete", "config", { id }).catch(handleActionError);
     triggerSchedulerRefresh();
   }, []);
 
@@ -87,7 +96,7 @@ export function useTieredRewardConfigs() {
           return { ...c, tiers };
         })
       );
-      dbAction(tier.id ? "update" : "create", "tier", { id, configId, ...tier });
+      dbAction(tier.id ? "update" : "create", "tier", { id, configId, ...tier }).catch(handleActionError);
     },
     []
   );
@@ -99,7 +108,7 @@ export function useTieredRewardConfigs() {
         return { ...c, tiers: c.tiers.filter((t) => t.id !== tierId) };
       })
     );
-    dbAction("delete", "tier", { id: tierId });
+    dbAction("delete", "tier", { id: tierId }).catch(handleActionError);
   }, []);
 
   const upsertRewardAsset = useCallback(
@@ -122,7 +131,7 @@ export function useTieredRewardConfigs() {
           };
         })
       );
-      dbAction(asset.id ? "update" : "create", "asset", { id, tierId, ...asset });
+      dbAction(asset.id ? "update" : "create", "asset", { id, tierId, ...asset }).catch(handleActionError);
     },
     []
   );
@@ -140,7 +149,7 @@ export function useTieredRewardConfigs() {
         };
       })
     );
-    dbAction("delete", "asset", { id: assetId });
+    dbAction("delete", "asset", { id: assetId }).catch(handleActionError);
   }, []);
 
   return {

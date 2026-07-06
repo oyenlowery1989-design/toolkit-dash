@@ -45,7 +45,8 @@ export async function POST(req: NextRequest) {
   if (!auth.ok) return auth.response;
   const { userId } = auth;
 
-  const b = await req.json();
+  let b: any;
+  try { b = await req.json(); } catch { return NextResponse.json({ error: "Invalid JSON" }, { status: 400 }); }
   const now = b.timestamp ?? Date.now();
 
   if (!isSupabaseOnly()) {
@@ -115,7 +116,9 @@ export async function DELETE(req: NextRequest) {
   if (!auth.ok) return auth.response;
   const { userId } = auth;
 
-  const { key, id } = await req.json();  // id = row id (preferred); key = created_at fallback for pre-id clients
+  let key: any, id: any;
+  try { ({ key, id } = await req.json()); } catch { return NextResponse.json({ error: "Invalid JSON" }, { status: 400 }); }
+  // id = row id (preferred); key = created_at fallback for pre-id clients
 
   if (!isSupabaseOnly()) {
     if (id !== undefined && id !== null) {

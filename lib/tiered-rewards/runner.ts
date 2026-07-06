@@ -101,7 +101,7 @@ function insertLogRows(rows: Omit<RunLogRow, "id">[]): void {
 }
 
 function buildStellarAsset(assetCode: string, assetIssuer?: string): Asset {
-  return assetCode === "XLM" ? Asset.native() : new Asset(assetCode, assetIssuer!);
+  return assetCode.toUpperCase() === "XLM" ? Asset.native() : new Asset(assetCode, assetIssuer!);
 }
 
 type SendOp = { holder: string; assetCode: string; assetIssuer?: string; amount: number };

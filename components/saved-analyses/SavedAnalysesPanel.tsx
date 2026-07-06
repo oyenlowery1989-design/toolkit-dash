@@ -238,7 +238,9 @@ function AnalysisCard({ analysis }: { analysis: SavedAnalysis }) {
             <p className="text-xs text-muted-foreground">
               <span className="font-semibold text-foreground">Distribution addresses: </span>
               {analysis.distribAddresses.map((addr) => (
-                <span key={addr} className="font-mono mr-2">{addr.slice(0, 6)}…{addr.slice(-4)}</span>
+                <span key={addr} className="inline-block mr-2">
+                  <ShortAddress address={addr} network={analysis.network as "public" | "testnet"} />
+                </span>
               ))}
             </p>
           </div>

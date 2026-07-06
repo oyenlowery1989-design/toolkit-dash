@@ -15,6 +15,7 @@
 - **Never force-uppercase asset codes** from URL params or user input — preserve original case.
 - All asset code comparisons in fetchers must use `.toUpperCase()` on both sides for case-insensitive matching.
 - **Never force-uppercase in display** — always render the code exactly as stored/entered (e.g. `wUSDC`, not `WUSDC`).
+- **Exception: `"XLM"` is a native-asset sentinel, not a real ledger code** — always detect it case-insensitively (`code.toUpperCase() === "XLM"`) and normalize to canonical `"XLM"` at every entry point (manual input, JSON import). This applies only to the native-asset sentinel, never to real custom asset codes.
 
 ## Stellar / Horizon API Rules
 - **ALWAYS** use `/accounts/{address}/operations` — NEVER `/operations?account={address}`.
@@ -46,6 +47,7 @@
 - Proactively look for: dead code, type mismatches, UI states that can never render, duplicated components, inconsistent address display, callbacks with wrong signatures.
 - Propose improvements to the user even if not asked — list them briefly after completing work.
 - Track unfinished features and surface them in reviews. (`detectClusters` is DONE — built in `lib/intermediary-tracer/matcher.ts`, rendered + save-to-DB wired in ScanIntermediaryTab.)
+- To verify a "looks unused" claim before deleting: run `npx tsc --noEmit --noUnusedLocals --noUnusedParameters` as a one-off (don't add to tsconfig) — flags true dead locals/params, but exported symbols still need a repo-wide grep since exports never count as "unused" to TS.
 
 ## Standard Module Layout
 - `AppLayout` already wraps all pages in `container mx-auto p-4 md:p-8 max-w-7xl` — **do not add another `max-w-*` or extra padding in `page.tsx`**.
@@ -58,7 +60,14 @@
           <h1 className="text-3xl font-bold tracking-tight">Title</h1>
           <p className="text-muted-foreground mt-2">Description.</p>
         </div>
-        <Suspense fallback={<LoadingSpinner />}>
+        <Suspense
+          fallback={
+            <div className="flex items-center gap-2 text-sm text-muted-foreground py-8">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Loading…
+            </div>
+          }
+        >
           <MyPanel />
         </Suspense>
       </div>
@@ -72,8 +81,8 @@
 | Module | Status |
 |---|---|
 | `address-investigator` | Working — recently updated with home domain, group buttons |
-| `asset-lookup` | Working, signed off |
-| `search-history` | Working, signed off |
+| `asset-lookup` | Working, signed off — Save/Open Group button is context-aware (checks `useAssetGroups()`) |
+| `search-history` | Working, signed off — standard page shell, filter uses shared `<Input>` |
 | `bulk-asset-sales` | Working — recently updated with context-aware group buttons |
 | `asset-sales` (proceeds) | Working — recently updated with auto-infer distrib, context-aware group buttons |
 | `intermediary-tracer` | Mostly complete — see notes below |
@@ -84,17 +93,17 @@
 | `asset-manager` | Working — shared asset input panel + Asset Flags tab + Holders tab (trustlines + sell offers combined) |
 | `account-funder` | Working — bulk keypair generator + createAccount funder; Direct/Sponsored/Close tabs; save to Asset Group |
 | `trustline-manager` | Working — Single tab (add/remove/drain) + Bulk tab (N assets × M accounts matrix); auto-delete toggle |
-| `soroban` | Working — SAC deploy wizard for wrapping existing classic assets |
+| `soroban` | Working — SAC deploy wizard for wrapping existing classic assets; manual "Recheck" button wired to status check |
 | `dex-orderbook` | Working — bid/ask tables, stats cards, depth chart (recharts) |
 | `wallet-manager` | Working — folders + wallets + connect/disconnect; header switcher added |
 | `my-wallet` | Working — connected wallet overview: XLM/Available/Reserved/30d-net-flow cards, reserve breakdown popup, home domain (editable inline), thresholds+sequence, account flags (AUTH_REQUIRED etc), inflation dest, signers, claimable balances (claim), assets+trustlines (DEX/Send/Remove icons), open offers, payment history (in/out), recent txs, merge account (danger zone), quick actions — all sections collapsible via `Section` component |
 | `payments` | Working — Send (multi-leg, Max, remove-trustline + offer cancel), Path (strict-receive + strict-send), Claimable Balance, Fee Bump; ShortAddress on all destinations |
 | `address-book` | Working, signed off |
-| `saved-analyses` | Working, signed off |
+| `saved-analyses` | Working, signed off — distribution addresses render via `<ShortAddress>` |
 | `settings` | Working — network/Horizon URL + theme config |
 | `transactions` | Working — transaction explorer/viewer |
-| `auto-send-groups` | Working — scheduled XLM distribution groups; see full section below |
-| `tiered-rewards` | Working — tiered per-holder reward distribution; multi-asset tiers; scheduled or manual; batch/separate mode; JSON import; preview modal; run history |
+| `auto-send-groups` | Working — scheduled XLM distribution groups; see full section below; UI fully converted to shared `Button`/`Input`/`Select` (no raw HTML form elements, theme-safe in light mode) |
+| `tiered-rewards` | Working — tiered per-holder reward distribution; multi-asset tiers; scheduled or manual; batch/separate mode; JSON import; preview modal; run history; XLM sentinel handled case-insensitively throughout; `dbAction` rolls back optimistic cache + toasts on server rejection |
 | `wallet-balances` | Working — live XLM balance across all saved wallets; filter by folder or asset group; sort by balance; inline add wallet; copy/connect/investigate/send actions |
 
 ## DB-Backed Hooks (SQLite)
@@ -103,6 +112,7 @@
 - API routes live at `/api/db/{table}`. DB file: `stellar-toolkit.db` in project root.
 - **Do NOT use localStorage for new persistent data** — add a table to `lib/db.ts` and an API route.
 - Intentional localStorage: `use-search-history` factory, `address-generator` page (ephemeral keys, never persisted to DB by design), `use-active-wallet` (mirrors DB for instant restore on mount).
+- **Never hand-roll a `fetch()` wrapper for DB writes** — always use `dbPost`/`dbPatch`/`dbDelete`, which throw on non-OK responses. Pair every write with `.catch(() => _cache.reload(ENDPOINT))` so a server-side rejection (e.g. validation 400) rolls back the optimistic cache update instead of leaving it stuck client-side until the next reload silently erases it.
 
 ## Snapshot Helpers
 - `getSavedSearchesSnapshot()`, `getBulkRunSnapshot()`, `getSavedAnalysesSnapshot()` return `[]` until `load()` completes.
@@ -314,7 +324,7 @@ Full `autoCreate` URL param spec:
 ## Intermediary Tracer — Tab Status
 | Tab | Status |
 |---|---|
-| Trace Single Account | Working, signed off — DO NOT TOUCH |
+| Trace Single Account | Working, signed off — DO NOT TOUCH without explicit sign-off (log panel scroll-guard was ported in under explicit one-off sign-off; policy otherwise unchanged) |
 | Scan Intermediary | Working, Phase 1+2 streaming, cluster detection shown |
 | Known Intermediaries | Working, signed off — DO NOT TOUCH |
 | Known Creators | Working, signed off — DO NOT TOUCH |
@@ -382,6 +392,7 @@ Full `autoCreate` URL param spec:
 - `minutesToCronExpression(minutes)` — `*/N * * * *` for <60m, `0 */N * * *` for hours
 - Intervals: 1m, 15m, 30m, 1h, 3h, 6h, 12h, 24h (Manual = no cron)
 - **CRITICAL**: `createGroup` MUST call `refreshScheduler` if `intervalMinutes` is set — otherwise scheduler never picks up new groups
+- **Safety**: `npm run dev` locally starts the REAL auto-send + tiered-rewards cron schedulers (not a mock, not gated by a test flag) — before running the dev server for testing, check the local DB for enabled groups with short intervals to avoid triggering real scheduled payments.
 
 ### Runner (`lib/auto-send/runner.ts`)
 - `runGroup(group)` — executes the group; batch or separate mode
@@ -424,4 +435,8 @@ Full `autoCreate` URL param spec:
 - **Secret key indicator**: `KeyRound` icon (yellow, `title` via wrapper `<span>`) if `wallet.secretKey` exists; `Eye` icon (muted) for watch-only wallets
 - **Actions per row**: Copy (2s feedback via `copiedId` state), Connect (`setActiveWallet`), Investigate (`/address-investigator?address=`), Send (`/payments`)
 - **Mobile**: `overflow-x-auto` outer + `min-w-[640px]` on header + rows
+
+## Local Dev & Testing Notes
+- To browser-test a page's layout/theme without real Supabase credentials: `document.cookie = "sb-logged-in=1"` (via browser eval) gets past the middleware page-redirect gate. API routes still 401 (real JWT required via `requireAuth`) — this only unblocks shell/layout rendering, not data-dependent UI states.
+- Playwright MCP screenshot files save to the repo root by default (not `.playwright-mcp/`, despite that folder appearing in tool output) — clean up (`rm *.png`, `rm -rf .playwright-mcp`) after a browser-testing session so they don't show up in `git status`.
 

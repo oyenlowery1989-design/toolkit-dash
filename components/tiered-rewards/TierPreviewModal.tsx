@@ -107,7 +107,7 @@ export function TierPreviewModal({ open, onClose, preview, loading, error, onExe
               </div>
             )}
 
-            {preview.assignments.some((a) => a.tier.assets.some((x) => x.assetCode !== "XLM")) && (
+            {preview.assignments.some((a) => a.tier.assets.some((x) => x.assetCode.toUpperCase() !== "XLM")) && (
               <div className="rounded-lg border border-border bg-muted/30 p-3 text-xs text-muted-foreground">
                 Recipients without a trustline for non-XLM reward assets will be skipped automatically.
               </div>

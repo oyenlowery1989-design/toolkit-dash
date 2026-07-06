@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Database, UserSearch, X, Clock, TrendingDown, Search, GitFork, ScanSearch } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useSavedSearches } from "@/hooks/use-saved-searches";
 import { formatXlm } from "@/lib/format";
@@ -36,7 +37,7 @@ export default function SearchHistoryPage() {
   };
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold flex items-center gap-2">
           <Clock className="h-6 w-6" />
@@ -50,8 +51,8 @@ export default function SearchHistoryPage() {
       {/* Search filter */}
       <div className="relative">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
-        <input
-          className="w-full rounded-md border border-input bg-transparent pl-9 pr-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+        <Input
+          className="pl-9"
           placeholder="Filter by asset code, address, distrib…"
           value={query}
           onChange={(e) => setQuery(e.target.value)}

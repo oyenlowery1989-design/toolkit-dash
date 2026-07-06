@@ -152,7 +152,7 @@ export function Sidebar() {
                       const isIntermediary = entry.type === "intermediary-scan" || entry.type === "intermediary-trace";
                       const Icon = isAddress ? UserSearch : isIntermediary ? GitFork : Database;
                       const label = isAddress
-                        ? `${entry.value.slice(0, 6)}…${entry.value.slice(-4)}`
+                        ? `${entry.value.slice(0, 4)}…${entry.value.slice(-4)}`
                         : entry.value.split(":")[0];
                       const sub = isAddress
                         ? undefined

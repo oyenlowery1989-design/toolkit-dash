@@ -99,9 +99,11 @@ export function useAddressBook() {
   }, []);
 
   const setEntries = useCallback((next: AddressBookEntry[]) => {
+    const nextKeys = new Set(next.map((e) => e.publicKey));
+    const removed = _cache.get().filter((e) => !nextKeys.has(e.publicKey));
     _cache.set(next);
-    // Replace all: delete all then re-insert — handled by individual upserts
     next.forEach((e) => dbPost(ENDPOINT, e).catch(() => _cache.reload(ENDPOINT)));
+    removed.forEach((e) => dbDelete(ENDPOINT, e.publicKey).catch(() => _cache.reload(ENDPOINT)));
   }, []);
 
   return { entries, upsert, remove, importBulk, setEntries };

@@ -7,7 +7,6 @@ import {
   Check,
   ChevronDown,
   ChevronRight,
-  ExternalLink,
   HelpCircle,
   Search,
 } from "lucide-react";
@@ -384,7 +383,7 @@ export function OriginResultCard({
             <span>
               Via:{" "}
               <span className="text-foreground">
-                {intermediaryName ?? `${result.intermediary.slice(0, 4)}…${result.intermediary.slice(-4)}`}
+                {intermediaryName ?? <ShortAddress address={result.intermediary} network={network as "public" | "testnet"} />}
               </span>
             </span>
             <span>
@@ -412,7 +411,7 @@ export function OriginResultCard({
             <div className="flex items-start gap-2 rounded-md bg-orange-500/10 border border-orange-500/30 px-3 py-2">
               <AlertTriangle className="h-3.5 w-3.5 text-orange-400 shrink-0 mt-0.5" />
               <p className="text-xs text-orange-300">
-                This funder (<span className="font-mono">{topFunder.address.slice(0, 4)}…{topFunder.address.slice(-4)}</span>) appears as the
+                This funder (<ShortAddress address={topFunder.address} network={network as "public" | "testnet"} />) appears as the
                 probable creator of{" "}
                 <span className="font-semibold">{clusterCount} accounts</span> — possible coordinated
                 activity.

@@ -14,7 +14,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { useSettings } from "@/lib/settings";
 import { useAssetGroups } from "@/hooks/use-asset-groups";
 import { useActiveWallet } from "@/hooks/use-active-wallet";
 import { WalletSelect } from "@/components/ui/wallet-select";
@@ -26,7 +25,6 @@ import { HoldersTab } from "./HoldersTab";
 import { TradesTab } from "./TradesTab";
 
 export function AssetManagerPanel() {
-  const { settings } = useSettings();
   const { groups } = useAssetGroups();
   const { activeWallet } = useActiveWallet();
 

@@ -73,11 +73,13 @@ function parseImportedTiers(raw: string): { tiers: ImportTier[]; error?: string 
     const assets: ImportTier["assets"] = [];
     for (let j = 0; j < t.assets.length; j++) {
       const a = t.assets[j] as Record<string, unknown>;
-      const code = typeof a.assetCode === "string" ? a.assetCode.trim() : "";
-      if (!code) return { tiers: [], error: `Tier ${i + 1}, asset ${j + 1}: assetCode required` };
+      const typed = typeof a.assetCode === "string" ? a.assetCode.trim() : "";
+      if (!typed) return { tiers: [], error: `Tier ${i + 1}, asset ${j + 1}: assetCode required` };
+      const isNative = typed.toUpperCase() === "XLM";
+      const code = isNative ? "XLM" : typed;
       const amount = typeof a.amount === "number" ? a.amount : parseFloat(String(a.amount));
       if (isNaN(amount) || amount <= 0) return { tiers: [], error: `Tier ${i + 1}, asset ${j + 1}: amount must be > 0` };
-      if (code !== "XLM" && !a.assetIssuer) return { tiers: [], error: `Tier ${i + 1}, asset ${j + 1}: assetIssuer required for non-XLM assets` };
+      if (!isNative && !a.assetIssuer) return { tiers: [], error: `Tier ${i + 1}, asset ${j + 1}: assetIssuer required for non-XLM assets` };
       assets.push({ assetCode: code, assetIssuer: typeof a.assetIssuer === "string" ? a.assetIssuer : undefined, amount });
     }
     tiers.push({ minTokens: min, maxTokens: max, assets });

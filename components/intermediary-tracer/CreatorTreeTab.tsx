@@ -16,7 +16,7 @@ import type { CreatorChild } from "@/lib/intermediary-tracer/types";
 export function CreatorTreeTab() {
   const router = useRouter();
   const { entries: creators, upsert: upsertCreator } = useKnownCreators();
-  const { all, forCreator, saveChildren, removeChild, removeAllForCreator } = useCreatorChildren();
+  const { forCreator, saveChildren, removeChild, removeAllForCreator } = useCreatorChildren();
   const { settings } = useSettings();
   const network = settings.network;
   const horizonUrl = resolveHorizonUrl(settings);

@@ -48,12 +48,6 @@ function parseSecrets(text: string): ParsedSecret[] {
 
 type CellStatus = "pending" | "success" | "error" | "idle";
 
-interface CellKey {
-  pubkey: string;
-  code: string;
-  issuer: string;
-}
-
 interface CellData {
   status: CellStatus;
   txHash?: string;

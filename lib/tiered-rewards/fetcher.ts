@@ -73,7 +73,7 @@ export async function fetchHolders(
       const balanceEntry = record.balances.find(
         (b) =>
           (b.asset_type === "credit_alphanum4" || b.asset_type === "credit_alphanum12") &&
-          b.asset_code === assetCode &&
+          b.asset_code?.toUpperCase() === assetCode.toUpperCase() &&
           b.asset_issuer === assetIssuer
       );
       if (!balanceEntry) continue;

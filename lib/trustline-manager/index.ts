@@ -619,8 +619,12 @@ function extractHorizonError(e: unknown): string {
         const data = resp.data as Record<string, unknown>;
         if (data.extras && typeof data.extras === "object") {
           const extras = data.extras as Record<string, unknown>;
-          if (Array.isArray(extras.result_codes)) {
-            return (extras.result_codes as string[]).join(", ");
+          if (extras.result_codes && typeof extras.result_codes === "object") {
+            const codes = extras.result_codes as { transaction?: string; operations?: string[] };
+            const parts: string[] = [];
+            if (codes.transaction) parts.push(`tx: ${codes.transaction}`);
+            if (codes.operations?.length) parts.push(`ops: ${codes.operations.join(", ")}`);
+            if (parts.length) return parts.join(" | ");
           }
         }
         if (typeof data.title === "string") return data.title;

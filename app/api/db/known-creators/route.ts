@@ -37,7 +37,8 @@ export async function POST(req: NextRequest) {
   if (!auth.ok) return auth.response;
   const { userId } = auth;
 
-  const b = await req.json();
+  let b: any;
+  try { b = await req.json(); } catch { return NextResponse.json({ error: "Invalid JSON" }, { status: 400 }); }
   if (!b.address || !StrKey.isValidEd25519PublicKey(b.address)) {
     return NextResponse.json({ error: "Invalid Stellar address" }, { status: 400 });
   }
@@ -78,7 +79,8 @@ export async function DELETE(req: NextRequest) {
   if (!auth.ok) return auth.response;
   const { userId } = auth;
 
-  const { key } = await req.json();
+  let key: string;
+  try { ({ key } = await req.json()); } catch { return NextResponse.json({ error: "Invalid JSON" }, { status: 400 }); }
 
   if (!isSupabaseOnly()) {
     getDb().prepare("DELETE FROM known_creators WHERE address = ?").run(key);

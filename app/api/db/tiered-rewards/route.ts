@@ -160,6 +160,17 @@ export async function POST(req: NextRequest) {
         if (!ownedConfig) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
         if (action === "create") {
+          const { data: existingTiers } = await sb
+            .from("tiered_reward_tiers")
+            .select("min_tokens, max_tokens")
+            .eq("config_id", data.configId);
+          const allTiers = [
+            ...(existingTiers ?? []).map((t: Row) => ({ minTokens: t.min_tokens as number, maxTokens: t.max_tokens as number | null })),
+            { minTokens: data.minTokens as number, maxTokens: (data.maxTokens as number | null) ?? null },
+          ];
+          const overlapErr = validateNoOverlap(allTiers);
+          if (overlapErr) return NextResponse.json({ error: overlapErr }, { status: 400 });
+
           await sb.from("tiered_reward_tiers").insert({
             id: data.id, config_id: data.configId, tier_number: data.tierNumber,
             min_tokens: data.minTokens, max_tokens: data.maxTokens ?? null, position: data.position,

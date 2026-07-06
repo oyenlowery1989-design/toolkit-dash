@@ -21,13 +21,6 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import {
   Table,
   TableBody,
   TableCell,
@@ -61,7 +54,7 @@ import {
   Layers,
 } from "lucide-react";
 import { Horizon, Asset, StrKey } from "stellar-sdk";
-import { useSettings, resolveHorizonUrl, type Network } from "@/lib/settings";
+import { useSettings, resolveHorizonUrl } from "@/lib/settings";
 import { getErrorMessage } from "@/lib/stellar-helpers";
 import { downloadCSV } from "@/lib/csv-export";
 import {
@@ -91,7 +84,6 @@ import { AuthFlag } from "./AuthFlag";
 import {
   ChainDisplay,
   ChainState,
-  ChainNode,
   traceChainStep,
 } from "@/components/shared/ChainDisplay";
 
@@ -224,6 +216,7 @@ export function AssetLookupPanel({
   } = useAssetHistory();
   const { upsert: upsertSearch } = useSavedSearches();
   const { entries: knownIntermediaries } = useKnownIntermediaries();
+  const { groups } = useAssetGroups();
   const knownIntermediarySet = useMemo(
     () => new Set(knownIntermediaries.map((e) => e.address)),
     [knownIntermediaries],
@@ -1141,7 +1134,7 @@ export function AssetLookupPanel({
                               assetCode={assetCode}
                               issuer={issuer}
                               horizonUrl={resolveHorizonUrl(settings)}
-                              knownIntermediaryAddrs={new Set(knownIntermediaries.map((e) => e.address))}
+                              knownIntermediaryAddrs={knownIntermediarySet}
                               onContinue={(addr) => {
                                 const ctrl = new AbortController();
                                 realCreatorAbortRef.current = ctrl;
@@ -1263,7 +1256,7 @@ export function AssetLookupPanel({
                                       assetCode={assetCode}
                                       issuer={issuer}
                                       horizonUrl={resolveHorizonUrl(settings)}
-                                      knownIntermediaryAddrs={new Set(knownIntermediaries.map((e) => e.address))}
+                                      knownIntermediaryAddrs={knownIntermediarySet}
                                       onContinue={(addr) => {
                                         const ctrl = new AbortController();
                                         realCreatorAbortRef.current = ctrl;
@@ -1363,8 +1356,24 @@ export function AssetLookupPanel({
                   )}
                 </div>
 
-                {/* Save to Group button */}
+                {/* Save to Group / Open Group button */}
                 {(() => {
+                  const existingGroup = groups.find(
+                    (g) =>
+                      g.assetCode?.toUpperCase() === assetCode.toUpperCase() &&
+                      g.issuer === issuer &&
+                      g.network === settings.network,
+                  );
+                  if (existingGroup) {
+                    return (
+                      <a href={`/groups?open=${existingGroup.id}`} target="_blank" rel="noopener noreferrer">
+                        <Button variant="outline" size="sm" className="text-xs border-green-400/40 bg-green-400/10 text-green-400 hover:bg-green-400/20">
+                          <Layers className="mr-2 h-3.5 w-3.5" />
+                          Open Group
+                        </Button>
+                      </a>
+                    );
+                  }
                   const highDistrib = distribCandidates.find(
                     (c) => c.confidence === "high",
                   );

@@ -84,7 +84,7 @@ export function useAssetGroups() {
       const normalizedEntry = {
         ...entry,
         name: nameTrimmed,
-        assetCode: assetCodeNorm,
+        assetCode: entry.assetCode?.trim() || undefined,
         issuer: issuerNorm,
         network: networkNorm,
       };
