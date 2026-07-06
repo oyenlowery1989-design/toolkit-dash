@@ -79,15 +79,20 @@ export async function pollWatch(
 
 // ── Cron wiring (not unit-tested — mirrors lib/auto-send/scheduler.ts) ──────
 
+// Inlined (not imported from @/lib/settings) — settings.ts pulls in a client-only
+// `useSyncExternalStore` hook, and this module runs server-side via instrumentation.ts,
+// so importing it would drag the client hook into the server bundle (RSC build error).
+// Keep in sync with HORIZON_URLS in lib/settings.ts.
+const HORIZON_BASE: Record<string, string> = {
+  public: "https://horizon.stellar.org",
+  testnet: "https://horizon-testnet.stellar.org",
+  futurenet: "https://horizon-futurenet.stellar.org",
+};
+
 function resolveHorizonBase(network: string): string {
-  if (network === "public" || network === "testnet" || network === "futurenet") {
-    const { HORIZON_URLS } = require("@/lib/settings") as typeof import("@/lib/settings");
-    return HORIZON_URLS[network];
-  }
-  // "local" network has no server-known localHorizonUrl (that's a per-browser setting) —
+  // "local" network has no server-known Horizon URL (that's a per-browser setting) —
   // fall back to testnet so the poller doesn't crash; local-network watches are a rare case.
-  const { HORIZON_URLS } = require("@/lib/settings") as typeof import("@/lib/settings");
-  return HORIZON_URLS.testnet;
+  return HORIZON_BASE[network] ?? HORIZON_BASE.testnet;
 }
 
 /** Polls every enabled watch once, persisting new events and advancing cursors. */
