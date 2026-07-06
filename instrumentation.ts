@@ -8,5 +8,7 @@ export async function register() {
     startScheduler();
     const { startTieredRewardsScheduler } = await import("./lib/tiered-rewards/scheduler");
     startTieredRewardsScheduler();
+    const { startTracerWatcher } = await import("./lib/tracer-v2/watcher");
+    startTracerWatcher();
   }
 }
