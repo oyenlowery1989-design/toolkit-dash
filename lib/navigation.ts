@@ -87,6 +87,11 @@ export const menuItems: MenuEntry[] = [
     icon: GitFork,
   },
   {
+    title: "Tracer v2",
+    href: "/tracer-v2",
+    icon: Fingerprint,
+  },
+  {
     title: "Transaction Explorer",
     href: "/transactions",
     icon: ArrowDownUp,
