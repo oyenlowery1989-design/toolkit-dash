@@ -18,6 +18,27 @@ const SINGLE_ITEM_CAP   = 0.6;  // one item alone can never exceed 60
 const DOMAIN_CLUTTER_K  = 8;    // domains in >8 groups: skip evidence row entirely
 const MIN_SCORE_DEFAULT = 25;   // UI hides below this
 
+// Wallet / custodial / federation home domains. Many UNRELATED accounts set
+// home_domain to these simply because they use that wallet/exchange — a shared
+// value is NOT operator evidence, so signal 3 ignores it regardless of count.
+// Suffix-matched (so `vault.lobstr.co` matches `lobstr.co`). Extend as needed.
+const WALLET_SERVICE_DOMAINS = new Set<string>([
+  "lobstr.co",
+  "stellarterm.com",
+  "stellarx.com",
+  "stellarport.io",
+  "keybase.io",
+  "stellar.org",
+]);
+
+function isWalletServiceDomain(domain: string): boolean {
+  const d = domain.trim().toLowerCase();
+  for (const w of WALLET_SERVICE_DOMAINS) {
+    if (d === w || d.endsWith("." + w)) return true;
+  }
+  return false;
+}
+
 // IDF dampening: k = number of groups (or distinct assets for signal 2) containing the entity
 const damp = (k: number) => 1 / (1 + Math.log2(Math.max(k, 2) / 2));
 // k=2→1.0, k=4→0.5, k=8→0.33, k=16→0.25
@@ -177,6 +198,7 @@ export function computeFingerprints(input: FingerprintInput): OperatorMatch[] {
       );
       for (const domain of aDomains) {
         if (!bDomains.has(domain)) continue;
+        if (isWalletServiceDomain(domain)) continue; // wallet/federation domain — not operator evidence
         const k = domainToGroupIds.get(domain)?.size ?? 2;
         if (k > DOMAIN_CLUTTER_K) continue; // too common — skip evidence row entirely
         const weight = Math.min(W_HOME_DOMAIN * damp(k), SINGLE_ITEM_CAP);

@@ -58,4 +58,21 @@ describe("computeFingerprints", () => {
     expect(m.score).toBeLessThan(80);
     expect(m.tier).toBe("moderate");
   });
+
+  it("ignores wallet-service home domains (lobstr.co is not operator evidence)", () => {
+    // Two groups whose ONLY link is a shared lobstr.co home domain — must not correlate.
+    const a = grp("1", "public", [["GA1", "destination", "lobstr.co"]]);
+    const b = grp("2", "public", [["GB1", "destination", "lobstr.co"]]);
+    const res = computeFingerprints({ groups: [a, b], analyses: [], creatorChildren: [], minScore: 0 });
+    const pair = res.find((m) => m.groupAId === "1" && m.groupBId === "2");
+    // No shared-domain evidence should be emitted for lobstr.co.
+    expect(pair?.evidence.some((e) => e.signal === "shared-domain")).not.toBe(true);
+  });
+
+  it("still scores a shared PROJECT home domain (non-wallet domain)", () => {
+    const a = grp("1", "public", [["GA1", "bank", "acme-project.io"]]);
+    const b = grp("2", "public", [["GB1", "bank", "acme-project.io"]]);
+    const [m] = computeFingerprints({ groups: [a, b], analyses: [], creatorChildren: [], minScore: 0 });
+    expect(m.evidence.some((e) => e.signal === "shared-domain")).toBe(true);
+  });
 });
