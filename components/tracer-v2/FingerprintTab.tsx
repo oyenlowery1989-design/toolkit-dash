@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import { ChevronDown, ChevronRight, ExternalLink, Loader2 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { ShortAddress } from "@/components/asset-lookup";
+import { ShortAddress } from "@/components/shared/ShortAddress";
 import { useAssetGroups } from "@/hooks/use-asset-groups";
 import { useSavedAnalyses } from "@/hooks/use-saved-analyses";
 import { useCreatorChildren } from "@/hooks/use-creator-children";
