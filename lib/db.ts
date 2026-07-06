@@ -285,6 +285,33 @@ function initDb(): Database.Database {
     CREATE INDEX IF NOT EXISTS idx_tiered_reward_tiers_config ON tiered_reward_tiers(config_id);
     CREATE INDEX IF NOT EXISTS idx_tiered_reward_assets_tier ON tiered_reward_assets(tier_id);
     CREATE INDEX IF NOT EXISTS idx_tiered_reward_run_log_config ON tiered_reward_run_log(config_id, ran_at DESC);
+
+    -- ── Tracer v2 — Watchlist (local-only; poller does not run on Vercel) ──────
+    CREATE TABLE IF NOT EXISTS tracer_watchlist (
+      id              TEXT    PRIMARY KEY,
+      address         TEXT    NOT NULL,
+      label           TEXT    NOT NULL DEFAULT '',
+      network         TEXT    NOT NULL DEFAULT 'public',
+      enabled         INTEGER NOT NULL DEFAULT 1,
+      poll_cursor     TEXT,
+      last_checked_at INTEGER,
+      created_at      INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS tracer_watch_events (
+      id              TEXT    PRIMARY KEY,
+      watch_id        TEXT    NOT NULL,
+      event_type      TEXT    NOT NULL DEFAULT 'create_account',
+      account_created TEXT    NOT NULL,
+      funder          TEXT,
+      amount          TEXT,
+      tx_hash         TEXT,
+      ledger_time     TEXT,
+      seen            INTEGER NOT NULL DEFAULT 0,
+      created_at      INTEGER NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_tracer_watch_events_watch ON tracer_watch_events(watch_id, created_at DESC);
   `);
 
   // ── Auto-send migrations ──────────────────────────────────────────────────

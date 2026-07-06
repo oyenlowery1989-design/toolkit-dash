@@ -31,3 +31,28 @@ export interface FingerprintInput {
   creatorChildren: CreatorChild[];
   minScore?: number;         // default MIN_SCORE_DEFAULT
 }
+
+// ── Phase 3 — Watchlist ────────────────────────────────────────────────────
+export interface WatchlistEntry {
+  id: string;
+  address: string;
+  label: string;
+  network: string;
+  enabled: boolean;
+  pollCursor?: string | null;
+  lastCheckedAt?: number | null;
+  createdAt: number;
+}
+
+export interface WatchEvent {
+  id: string;
+  watchId: string;
+  eventType: string;
+  accountCreated: string;
+  funder?: string | null;
+  amount?: string | null;
+  txHash?: string | null;
+  ledgerTime?: string | null;
+  seen: boolean;
+  createdAt: number;
+}
