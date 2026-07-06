@@ -5,6 +5,7 @@ import { Loader2 } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { FingerprintTab } from "./FingerprintTab";
 import { BulkTraceTab } from "./BulkTraceTab";
+import { WatchlistTab } from "./WatchlistTab";
 
 export function TracerV2Panel() {
   return (
@@ -19,6 +20,7 @@ export function TracerV2Panel() {
         <TabsList className="flex-wrap h-auto gap-y-1">
           <TabsTrigger value="fingerprint">Operator Fingerprint</TabsTrigger>
           <TabsTrigger value="bulk">Bulk Trace</TabsTrigger>
+          <TabsTrigger value="watchlist">Watchlist</TabsTrigger>
         </TabsList>
         <TabsContent value="fingerprint" className="mt-6 space-y-4">
           <FingerprintTab />
@@ -34,6 +36,9 @@ export function TracerV2Panel() {
           >
             <BulkTraceTab />
           </Suspense>
+        </TabsContent>
+        <TabsContent value="watchlist" className="mt-6 space-y-4">
+          <WatchlistTab />
         </TabsContent>
       </Tabs>
     </div>
