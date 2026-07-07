@@ -26,7 +26,8 @@ import { useTheme } from "next-themes";
 import { toast } from "sonner";
 import {
   useSettings,
-  HORIZON_URLS,
+  NETWORK_LABELS,
+  resolveHorizonUrl,
   type Network,
 } from "@/lib/settings";
 
@@ -40,7 +41,6 @@ export default function SettingsPage() {
   const { settings, updateSettings } = useSettings();
   const { theme, setTheme } = useTheme();
 
-  const [network, setNetwork] = useState<Network>(settings.network);
   const [workerThreads, setWorkerThreads] = useState(String(settings.workerThreads));
   const [notifications, setNotifications] = useState(settings.notifications);
 
@@ -57,17 +57,13 @@ export default function SettingsPage() {
       .catch(() => null);
   }, []);
 
-  const handleNotificationsChange = async (enabled: boolean) => {
+  const handleNotificationsChange = async (enabled: boolean): Promise<boolean> => {
     if (enabled && "Notification" in window) {
       const permission = await Notification.requestPermission();
-      if (permission !== "granted") return;
+      if (permission !== "granted") return false;
     }
     setNotifications(enabled);
-  };
-
-  const handleSaveNetwork = () => {
-    updateSettings({ network });
-    toast.success("Network settings saved");
+    return true;
   };
 
   const handleSaveDeveloper = () => {
@@ -195,8 +191,8 @@ export default function SettingsPage() {
                 id="notifications-switch"
                 checked={notifications}
                 onCheckedChange={async (v) => {
-                  await handleNotificationsChange(v);
-                  handleSaveNotifications(v);
+                  const succeeded = await handleNotificationsChange(v);
+                  if (succeeded) handleSaveNotifications(v);
                 }}
               />
             </div>
@@ -216,15 +212,15 @@ export default function SettingsPage() {
               <div className="space-y-2">
                 <Label>Default Network</Label>
                 <Select
-                  value={network}
-                  onValueChange={(v: Network) => setNetwork(v)}
+                  value={settings.network}
+                  onValueChange={(v: Network) => updateSettings({ network: v })}
                 >
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="public">Public Network</SelectItem>
-                    <SelectItem value="testnet">Testnet</SelectItem>
+                    <SelectItem value="public">{NETWORK_LABELS.public}</SelectItem>
+                    <SelectItem value="testnet">{NETWORK_LABELS.testnet}</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -233,7 +229,7 @@ export default function SettingsPage() {
                 <Label htmlFor="horizon-url">Horizon URL</Label>
                 <Input
                   id="horizon-url"
-                  value={HORIZON_URLS[network as "public" | "testnet"]}
+                  value={resolveHorizonUrl(settings)}
                   readOnly
                   disabled
                   className="font-mono text-xs"
@@ -242,11 +238,6 @@ export default function SettingsPage() {
               </div>
             </div>
           </CardContent>
-          <CardFooter>
-            <Button onClick={handleSaveNetwork}>
-              <Save className="mr-2 h-4 w-4" /> Save Changes
-            </Button>
-          </CardFooter>
         </Card>
 
         {/* Data & Backup */}
