@@ -80,7 +80,7 @@ export async function POST(req: NextRequest) {
     if (preview.blocked) return NextResponse.json({ error: preview.blockReasons.join("; ") }, { status: 400 });
 
     const { runConfig } = await import("@/lib/tiered-rewards/runner");
-    const result = await runConfig(config, preview.assignments);
+    const result = await runConfig(config, preview.assignments, auth.userId ?? undefined);
 
     // Persist last_run_at after a successful run. This MUST be durable: if it silently fails,
     // the scheduler will see a stale last_run_at and may re-run (and re-pay) this config on its

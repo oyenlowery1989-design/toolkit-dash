@@ -37,7 +37,17 @@ export function TierPreviewModal({ open, onClose, preview, loading, error, onExe
     setSessionExcluded(new Set());
   }
   return (
-    <Dialog open={open} onOpenChange={(v) => { if (!v) onClose(); }}>
+    <Dialog
+      open={open}
+      onOpenChange={(v) => {
+        // Ignore any close request (Escape, click-outside, the built-in X button) while a
+        // run is in flight, so the in-progress send can't be dismissed/hidden mid-flight —
+        // the caller re-opens this same modal on Preview/Run Now, so losing it here would
+        // hide the only "Sending..." feedback and error surface for the active run.
+        if (!v && executing) return;
+        if (!v) onClose();
+      }}
+    >
       <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Distribution Preview</DialogTitle>
@@ -155,6 +165,13 @@ export function TierPreviewModal({ open, onClose, preview, loading, error, onExe
               </div>
             ))}
 
+            {sessionExcluded.size > 0 && (
+              <div className="rounded-lg border border-amber-700/50 bg-amber-950/30 p-2 text-xs text-amber-400 flex items-start gap-2">
+                <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+                {sessionExcluded.size} exclude{sessionExcluded.size !== 1 ? "s" : ""} not saved yet — the server reloads the exclude list from the config on execute, so unsaved exclusions would still be paid. Save before executing.
+              </div>
+            )}
+
             <div className="flex justify-between gap-2 pt-2 border-t border-border">
               <div>
                 {sessionExcluded.size > 0 && (
@@ -167,7 +184,7 @@ export function TierPreviewModal({ open, onClose, preview, loading, error, onExe
                 <Button variant="outline" onClick={onClose} disabled={executing}>Close</Button>
                 {!preview.holderOnlyPreview && (
                   <Button
-                    disabled={preview.blocked || executing}
+                    disabled={preview.blocked || executing || sessionExcluded.size > 0}
                     onClick={onExecute}
                     className="bg-purple-600 hover:bg-purple-700 text-white"
                   >

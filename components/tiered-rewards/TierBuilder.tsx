@@ -5,6 +5,7 @@ import { Plus, Trash2, ChevronDown, ChevronUp } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { shortAddr } from "@/lib/format";
 import type { Tier, RewardAsset } from "@/lib/tiered-rewards/types";
 
 interface Props {
@@ -30,8 +31,27 @@ function detectOverlap(tiers: Tier[], excludeId?: string): string | null {
   return null;
 }
 
+/**
+ * Detects gaps between adjacent tier ranges (sorted by minTokens) — a balance falling
+ * in a gap matches no tier and silently receives nothing. Not exhaustive against every
+ * possible holder balance; just checks that tier N's maxTokens equals tier N+1's
+ * minTokens for each adjacent pair (the exclusive-upper-bound convention used by
+ * assignHoldersToTiers means equal boundaries tile with no gap and no overlap).
+ */
+function detectGap(tiers: Tier[]): string | null {
+  const byRange = [...tiers].sort((a, b) => a.minTokens - b.minTokens);
+  for (let i = 0; i < byRange.length - 1; i++) {
+    const a = byRange[i], b = byRange[i + 1];
+    if (a.maxTokens != null && a.maxTokens !== b.minTokens) {
+      return `Gap between Tier ${a.tierNumber} and Tier ${b.tierNumber} — balances from ${a.maxTokens.toLocaleString()} to ${b.minTokens.toLocaleString()} match no tier`;
+    }
+  }
+  return null;
+}
+
 export function TierBuilder({ tiers, onUpsertTier, onDeleteTier, onUpsertAsset, onDeleteAsset }: Props) {
   const sorted = [...tiers].sort((a, b) => a.position - b.position);
+  const gapWarning = sorted.length > 1 ? detectGap(sorted) : null;
   const [expandedTier, setExpandedTier] = useState<string | null>(null);
   const [newMin, setNewMin] = useState("");
   const [newMax, setNewMax] = useState("");
@@ -54,6 +74,11 @@ export function TierBuilder({ tiers, onUpsertTier, onDeleteTier, onUpsertAsset, 
 
   return (
     <div className="space-y-3">
+      {gapWarning && (
+        <p className="text-xs text-amber-400 rounded-lg border border-amber-700/50 bg-amber-950/30 px-3 py-2">
+          &#9888; {gapWarning}
+        </p>
+      )}
       {sorted.map((tier) => (
         <div key={tier.id} className="rounded-lg border border-border bg-muted/30">
           <div className="flex items-center gap-3 p-3">
@@ -75,7 +100,7 @@ export function TierBuilder({ tiers, onUpsertTier, onDeleteTier, onUpsertAsset, 
               {tier.assets.map((asset) => (
                 <div key={asset.id} className="flex items-center gap-2 text-sm">
                   <span className="font-mono text-foreground">{asset.amount.toFixed(7)}</span>
-                  <span className="text-muted-foreground">{asset.assetCode}{asset.assetIssuer ? `:${asset.assetIssuer.slice(0, 4)}\u2026` : ""}</span>
+                  <span className="text-muted-foreground">{asset.assetCode}{asset.assetIssuer ? `:${shortAddr(asset.assetIssuer)}` : ""}</span>
                   <Button variant="ghost" size="sm" className="ml-auto text-destructive hover:text-destructive h-6 w-6 p-0" onClick={() => onDeleteAsset(tier.id, asset.id)}>
                     <Trash2 className="h-3 w-3" />
                   </Button>

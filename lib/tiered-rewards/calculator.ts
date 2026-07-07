@@ -1,6 +1,7 @@
 import { Horizon, Keypair } from "stellar-sdk";
-import type { TieredRewardConfig, TierCostItem, RewardsPreview } from "./types";
+import type { TieredRewardConfig, TierAssignment, TierCostItem, RewardsPreview } from "./types";
 import { fetchHolders, assignHoldersToTiers } from "./fetcher";
+import { BASE_FEE } from "@/lib/bulk-payments/builder";
 
 const { Server } = Horizon;
 
@@ -10,7 +11,22 @@ const HORIZON_URLS: Record<string, string> = {
   futurenet: "https://horizon-futurenet.stellar.org",
 };
 
-export const FEE_BUDGET = 1.0; // flat 1 XLM safety buffer — must match runner.ts
+/**
+ * Fee-safety-margin scaled to the actual expected operation count (holders × reward
+ * assets per tier) and the configured fee multiplier — a flat constant under-estimates
+ * cost for large-holder configs or an elevated feeMultiplier during network congestion,
+ * letting a run pass preflight but fail partway through execution on insufficient fee
+ * balance. Mirrors the per-op fee formula in lib/bulk-payments/builder.ts (estimateCost)
+ * and lib/tiered-rewards/runner.ts's baseFee calc.
+ */
+export function estimateFeeBudget(assignments: TierAssignment[], feeMultiplier: number): number {
+  const estimatedOpCount = assignments.reduce(
+    (sum, a) => sum + a.holders.length * a.tier.assets.length,
+    0
+  );
+  const feePerOpStroops = parseInt(BASE_FEE) * Math.max(1, Math.round(feeMultiplier));
+  return (estimatedOpCount * feePerOpStroops) / 1e7;
+}
 
 async function loadSenderAssetBalances(
   server: InstanceType<typeof Server>,
@@ -112,6 +128,7 @@ export async function calculatePreview(
 
   const assetBalances = await loadSenderAssetBalances(server, senderAddress, nonNativeKeys);
 
+  const feeBudget = estimateFeeBudget(assignments, config.feeMultiplier ?? 1.0);
   const costMap = new Map<string, { required: number; senderBalance: number; hasTrustline: boolean; code: string; issuer?: string }>();
 
   for (const assignment of assignments) {
@@ -125,7 +142,7 @@ export async function calculatePreview(
 
       if (!costMap.has(key)) {
         if (isNative) {
-          const spendable = Math.max(0, xlmBalance - config.minReserve - FEE_BUDGET);
+          const spendable = Math.max(0, xlmBalance - config.minReserve - feeBudget);
           costMap.set(key, { required: 0, senderBalance: spendable, hasTrustline: true, code: "XLM" });
         } else {
           const info = assetBalances.get(key) ?? { balance: 0, hasTrustline: false };
@@ -147,6 +164,15 @@ export async function calculatePreview(
   }));
 
   const blockReasons: string[] = [];
+
+  // Check min sender threshold — blocks the run if balance is too low (mirrors the
+  // identical guard in lib/auto-send/runner.ts: `group.minSenderThreshold > 0 && xlmBalance < group.minSenderThreshold`)
+  if (config.minSenderThreshold > 0 && xlmBalance < config.minSenderThreshold) {
+    blockReasons.push(
+      `Balance ${xlmBalance.toFixed(2)} XLM below sender threshold (${config.minSenderThreshold} XLM)`
+    );
+  }
+
   for (const item of costItems) {
     if (!item.hasTrustline) {
       blockReasons.push(`Sender has no trustline for ${item.assetCode}:${item.assetIssuer}`);

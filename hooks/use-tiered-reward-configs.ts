@@ -108,7 +108,9 @@ export function useTieredRewardConfigs() {
         return { ...c, tiers: c.tiers.filter((t) => t.id !== tierId) };
       })
     );
-    dbAction("delete", "tier", { id: tierId }).catch(handleActionError);
+    // Returned so callers that need to sequence a delete-then-create (e.g. tier import/replace)
+    // can await the request's actual completion instead of firing both unawaited in parallel.
+    return dbAction("delete", "tier", { id: tierId }).catch(handleActionError);
   }, []);
 
   const upsertRewardAsset = useCallback(

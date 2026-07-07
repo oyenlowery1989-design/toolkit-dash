@@ -133,15 +133,28 @@ export async function POST(req: NextRequest) {
             exclude_addresses: data.excludeAddresses ?? [], created_at: Date.now(),
           });
         } else if (action === "update") {
-          await sb.from("tiered_reward_configs").update({
-            name: data.name, asset_code: data.assetCode, asset_issuer: data.assetIssuer,
-            network: data.network, secret_key: data.secretKey ?? "",
-            interval_minutes: data.intervalMinutes ?? null, enabled: !!data.enabled,
-            min_reserve: data.minReserve ?? 10.0, min_sender_threshold: data.minSenderThreshold ?? 0,
-            preview_only: !!data.previewOnly, batch_send: data.batchSend !== false,
-            memo: data.memo ?? null, fee_multiplier: data.feeMultiplier ?? 1.0,
-            exclude_addresses: data.excludeAddresses ?? [], last_failure_at: data.lastFailureAt ?? null,
-          }).eq("id", data.id).eq("user_id", userId);
+          // Build partial update — only touch fields present in the request
+          const updates: Row = {};
+          if (data.name !== undefined) updates.name = (data.name as string)?.trim() ?? null;
+          if (data.assetCode !== undefined) updates.asset_code = data.assetCode;
+          if (data.assetIssuer !== undefined) updates.asset_issuer = data.assetIssuer;
+          if (data.network !== undefined) updates.network = data.network;
+          // Only update key when caller supplies a non-empty value (empty/undefined = keep existing)
+          if (data.secretKey !== undefined && data.secretKey !== "") updates.secret_key = data.secretKey;
+          if (data.secretKey === null) updates.secret_key = ""; // explicit clear
+          if (data.intervalMinutes !== undefined) updates.interval_minutes = data.intervalMinutes ?? null;
+          if (data.enabled !== undefined) updates.enabled = !!data.enabled;
+          if (data.minReserve !== undefined) updates.min_reserve = data.minReserve;
+          if (data.minSenderThreshold !== undefined) updates.min_sender_threshold = data.minSenderThreshold ?? 0;
+          if (data.previewOnly !== undefined) updates.preview_only = !!data.previewOnly;
+          if (data.batchSend !== undefined) updates.batch_send = data.batchSend !== false;
+          if (data.memo !== undefined) updates.memo = data.memo ?? null;
+          if (data.feeMultiplier !== undefined) updates.fee_multiplier = data.feeMultiplier;
+          if (data.excludeAddresses !== undefined) updates.exclude_addresses = data.excludeAddresses ?? [];
+          if (data.lastFailureAt !== undefined) updates.last_failure_at = data.lastFailureAt ?? null;
+          if (Object.keys(updates).length > 0) {
+            await sb.from("tiered_reward_configs").update(updates).eq("id", data.id).eq("user_id", userId);
+          }
         } else if (action === "delete") {
           await sb.from("tiered_reward_configs").delete().eq("id", data.id).eq("user_id", userId);
         }

@@ -20,7 +20,7 @@ interface Props {
   onUpdate: (id: string, updates: Partial<TieredRewardConfig>) => void;
   onDelete: (id: string) => void;
   onUpsertTier: (configId: string, tier: Omit<Tier, "id" | "configId" | "assets"> & { id?: string }) => void;
-  onDeleteTier: (configId: string, tierId: string) => void;
+  onDeleteTier: (configId: string, tierId: string) => Promise<void>;
   onUpsertAsset: (configId: string, tierId: string, asset: Omit<RewardAsset, "id" | "tierId"> & { id?: string }) => void;
   onDeleteAsset: (configId: string, tierId: string, assetId: string) => void;
 }
@@ -31,13 +31,15 @@ const INTERVAL_LABELS: Record<number, string> = {
 
 const IMPORT_EXAMPLE = JSON.stringify([
   {
+    // Ranges use an exclusive upper bound (balance >= minTokens && balance < maxTokens),
+    // so maxTokens of one tier equalling minTokens of the next tiles with no gap.
     minTokens: 100,
-    maxTokens: 999,
+    maxTokens: 1000,
     assets: [{ assetCode: "XLM", amount: 1 }],
   },
   {
     minTokens: 1000,
-    maxTokens: 9999,
+    maxTokens: 10000,
     assets: [{ assetCode: "XLM", amount: 5 }, { assetCode: "MYTOKEN", assetIssuer: "GABC...ISSUER", amount: 10 }],
   },
   {
@@ -192,9 +194,16 @@ export function TierConfigCard({ config, onUpdate, onDelete, onUpsertTier, onDel
         headers: { "Content-Type": "application/json", ...authHeaders() },
         body: JSON.stringify({ mode: "run", configId: config.id }),
       });
-      const data = await res.json() as { error?: string };
-      if (data.error) setPreviewError(data.error);
-      else {
+      const data = await res.json() as { error?: string; totalSent?: number; totalFailed?: number };
+      if (data.error) {
+        setPreviewError(data.error);
+      } else if ((data.totalFailed ?? 0) > 0) {
+        // No top-level error, but some payments in this run failed — surface that instead of
+        // silently reporting success. Leave lastFailureAt untouched (only cleared on a fully clean run).
+        setPreviewError(`Run completed with failures — ${data.totalSent ?? 0} sent, ${data.totalFailed} failed. Check History for details.`);
+        onUpdate(config.id, { lastRunAt: Date.now() });
+        setHistoryRefreshKey((k) => k + 1);
+      } else {
         setPreviewOpen(false);
         onUpdate(config.id, { lastRunAt: Date.now(), lastFailureAt: undefined });
         setHistoryRefreshKey((k) => k + 1);
@@ -218,9 +227,16 @@ export function TierConfigCard({ config, onUpdate, onDelete, onUpsertTier, onDel
         headers: { "Content-Type": "application/json", ...authHeaders() },
         body: JSON.stringify({ mode: "run", configId: config.id }),
       });
-      const data = await res.json() as { error?: string };
-      if (data.error) setPreviewError(data.error);
-      else {
+      const data = await res.json() as { error?: string; totalSent?: number; totalFailed?: number };
+      if (data.error) {
+        setPreviewError(data.error);
+      } else if ((data.totalFailed ?? 0) > 0) {
+        // No top-level error, but some payments in this run failed — surface that instead of
+        // silently reporting success. Leave lastFailureAt untouched (only cleared on a fully clean run).
+        setPreviewError(`Run completed with failures — ${data.totalSent ?? 0} sent, ${data.totalFailed} failed. Check History for details.`);
+        onUpdate(config.id, { lastRunAt: Date.now() });
+        setHistoryRefreshKey((k) => k + 1);
+      } else {
         setPreviewOpen(false);
         onUpdate(config.id, { lastRunAt: Date.now(), lastFailureAt: undefined });
         setHistoryRefreshKey((k) => k + 1);
@@ -246,12 +262,12 @@ export function TierConfigCard({ config, onUpdate, onDelete, onUpsertTier, onDel
     setImportPreview(tiers);
   }
 
-  function handleImportConfirm() {
+  async function handleImportConfirm() {
     if (!importPreview) return;
-    // Delete existing tiers first
-    for (const tier of config.tiers) {
-      onDeleteTier(config.id, tier.id);
-    }
+    // Delete existing tiers first, and wait for those deletes to actually complete before
+    // creating the new tiers — otherwise the create request's overlap validation can race
+    // against the still-in-flight deletes and see the old (soon-to-be-removed) ranges.
+    await Promise.all(config.tiers.map((tier) => onDeleteTier(config.id, tier.id)));
     // Insert new tiers with pre-generated IDs so we can attach assets immediately
     importPreview.forEach((t, idx) => {
       const tierId = crypto.randomUUID();
@@ -297,7 +313,7 @@ export function TierConfigCard({ config, onUpdate, onDelete, onUpsertTier, onDel
           </span>
           <div className="flex gap-2 ml-2">
             <Button variant="outline" size="sm" onClick={handlePreview}>Preview</Button>
-            <Button size="sm" className="bg-purple-600 hover:bg-purple-700 text-white" onClick={handleRunNow} disabled={!hasKey}>Run Now</Button>
+            <Button size="sm" className="bg-purple-600 hover:bg-purple-700 text-white" onClick={handleRunNow} disabled={!hasKey || executing}>Run Now</Button>
           </div>
         </div>
 
@@ -380,13 +396,7 @@ export function TierConfigCard({ config, onUpdate, onDelete, onUpsertTier, onDel
                         />
                       )}
                     </div>
-                    {activeWallet ? (
-                      <div className="flex items-center gap-2 rounded-md border border-green-500/40 bg-green-500/5 px-3 py-2 text-sm">
-                        <Wallet className="h-4 w-4 shrink-0 text-green-500" />
-                        <span className="flex-1 truncate font-medium">{activeWallet.name}</span>
-                        <span className="font-mono text-xs text-muted-foreground">{shortAddr(activeWallet.publicKey)}</span>
-                      </div>
-                    ) : editingKey ? (
+                    {editingKey ? (
                       <div className="flex gap-2">
                         <div className="relative flex-1">
                           <Input type={showKey ? "text" : "password"} placeholder="S… (leave blank to clear)" value={keyDraft} onChange={(e) => setKeyDraft(e.target.value)} autoFocus />
@@ -398,10 +408,25 @@ export function TierConfigCard({ config, onUpdate, onDelete, onUpsertTier, onDel
                         <Button size="sm" variant="outline" onClick={() => { setEditingKey(false); setKeyDraft(""); setShowKey(false); }}>Cancel</Button>
                       </div>
                     ) : config.hasKey ? (
-                      <div className="flex items-center gap-2">
-                        <Input type="password" value="••••••••••••••••" readOnly className="flex-1 text-muted-foreground" />
-                        <Button size="sm" variant="outline" onClick={() => { setEditingKey(true); setKeyDraft(""); }}>Change</Button>
-                        <Button size="sm" variant="ghost" className="text-destructive hover:text-destructive" onClick={() => onUpdate(config.id, { secretKey: null })}>Clear</Button>
+                      // A key is already saved server-side for THIS config — always show that (never
+                      // the generic "connected" wallet indicator), since runs always use this saved
+                      // key, not whatever wallet happens to be globally connected.
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2">
+                          <Input type="password" value="••••••••••••••••" readOnly className="flex-1 text-muted-foreground" />
+                          <Button size="sm" variant="outline" onClick={() => { setEditingKey(true); setKeyDraft(""); }}>Change</Button>
+                          <Button size="sm" variant="ghost" className="text-destructive hover:text-destructive" onClick={() => onUpdate(config.id, { secretKey: null })}>Clear</Button>
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                          Runs use this config&rsquo;s saved key{preview?.senderAddress ? <> &mdash; <span className="font-mono">{shortAddr(preview.senderAddress)}</span></> : ""}.
+                          {activeWallet ? " Your connected wallet is not used to execute this config." : ""}
+                        </p>
+                      </div>
+                    ) : activeWallet ? (
+                      <div className="flex items-center gap-2 rounded-md border border-green-500/40 bg-green-500/5 px-3 py-2 text-sm">
+                        <Wallet className="h-4 w-4 shrink-0 text-green-500" />
+                        <span className="flex-1 truncate font-medium">{activeWallet.name}</span>
+                        <span className="font-mono text-xs text-muted-foreground">{shortAddr(activeWallet.publicKey)}</span>
                       </div>
                     ) : (
                       <div className="flex items-center gap-2">

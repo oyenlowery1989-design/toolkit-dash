@@ -2,8 +2,24 @@ import { Keypair, TransactionBuilder, Operation, Asset, Horizon, Memo } from "st
 import type { TieredRewardConfig, TierAssignment, RunLogRow } from "./types";
 import { getDb } from "@/lib/db";
 import { withAccountLock, isBadSeq } from "@/lib/stellar-submit";
+import { getSupabase, isSupabaseOnly } from "@/lib/supabase-server";
 
 const { Server } = Horizon;
+
+declare global {
+  var _tieredRewardsRunningConfigs: Set<string> | undefined;
+}
+
+/**
+ * Globalized (like scheduler.ts's `_tieredRewardsTasks`/`_tieredRewardsStarted`) so an HMR
+ * module reload can't hand a fresh, empty overlap-guard to new closures while a previous
+ * execution for the same config is still in flight. This module (runConfig, below) is the
+ * sole place that adds/removes entries — scheduler.ts only reads this same Set for an early
+ * "still running" skip + log — so a manual run (API route) and a scheduler tick for the same
+ * configId can never execute concurrently, each fully double-paying every holder.
+ */
+if (!global._tieredRewardsRunningConfigs) global._tieredRewardsRunningConfigs = new Set<string>();
+const _runningConfigs = global._tieredRewardsRunningConfigs;
 
 const HORIZON_URLS: Record<string, string> = {
   public: "https://horizon.stellar.org",
@@ -79,7 +95,42 @@ async function sendSingleOp(
   }
 }
 
-function insertLogRows(rows: Omit<RunLogRow, "id">[]): void {
+/**
+ * Persists run-log rows. On Vercel+Supabase (isSupabaseOnly()), getDb() has no writable
+ * SQLite to fall back on — writing there would silently no-op (caught below) and the run
+ * would always report totalSent:0/totalFailed:0, risking an operator re-running (and
+ * double-paying) a run they mistakenly believe failed. `userId` attributes the rows for
+ * the Supabase `tiered_reward_run_log.user_id` column (NOT NULL DEFAULT '').
+ */
+async function insertLogRows(rows: Omit<RunLogRow, "id">[], userId?: string): Promise<void> {
+  if (rows.length === 0) return;
+
+  if (isSupabaseOnly()) {
+    const sb = getSupabase();
+    if (!sb) return;
+    try {
+      const supaRows = rows.map((r) => ({
+        id: crypto.randomUUID(),
+        user_id: userId ?? "",
+        config_id: r.configId ?? null,
+        tier_number: r.tierNumber,
+        holder_address: r.holderAddress,
+        asset_code: r.assetCode,
+        asset_issuer: r.assetIssuer ?? null,
+        amount_sent: r.amountSent,
+        status: r.status,
+        tx_hash: r.txHash ?? null,
+        error: r.error ?? null,
+        ran_at: r.ranAt,
+      }));
+      const { error } = await sb.from("tiered_reward_run_log").insert(supaRows);
+      if (error) console.error("[tiered-rewards] run-log Supabase insert failed:", error);
+    } catch (err) {
+      console.error("[tiered-rewards] run-log Supabase insert threw:", err);
+    }
+    return;
+  }
+
   try {
     const db = getDb();
     const stmt = db.prepare(
@@ -116,7 +167,8 @@ async function runTier(
   batchSend: boolean,
   memo: string | null,
   feeMultiplier: number,
-  excludeSet: Set<string>
+  excludeSet: Set<string>,
+  userId?: string
 ): Promise<void> {
   const { tier, holders } = assignment;
   const eligible = holders.filter((h) => !excludeSet.has(h.address));
@@ -140,14 +192,24 @@ async function runTier(
 
   // Separate mode: always send 1 op per tx
   if (!batchSend) {
+    // Stop on first real failure (not op_no_trust, which sendSingleOp reports as `skipped`) —
+    // same hard-stop as batch mode below. Without this, every remaining recipient would still
+    // be attempted after a failure starts, each doomed transaction still charging a real fee
+    // and draining the sender's XLM further.
+    let aborted = false;
     for (const op of ops) {
+      if (aborted) {
+        await insertLogRows([{ configId, tierNumber: tier.tierNumber, holderAddress: op.holder, assetCode: op.assetCode, assetIssuer: op.assetIssuer, amountSent: 0, status: "aborted" as const, error: "Aborted — earlier payment failed", ranAt }], userId);
+        continue;
+      }
       const result = await sendSingleOp(server, keypair, networkPassphrase, op, baseFee, memo);
       if (result.skipped) {
-        insertLogRows([{ configId, tierNumber: tier.tierNumber, holderAddress: op.holder, assetCode: op.assetCode, assetIssuer: op.assetIssuer, amountSent: 0, status: "skipped" as const, error: "No trustline for reward asset", ranAt }]);
+        await insertLogRows([{ configId, tierNumber: tier.tierNumber, holderAddress: op.holder, assetCode: op.assetCode, assetIssuer: op.assetIssuer, amountSent: 0, status: "skipped" as const, error: "No trustline for reward asset", ranAt }], userId);
       } else if (result.error) {
-        insertLogRows([{ configId, tierNumber: tier.tierNumber, holderAddress: op.holder, assetCode: op.assetCode, assetIssuer: op.assetIssuer, amountSent: 0, status: "failed" as const, error: result.error, ranAt }]);
+        aborted = true;
+        await insertLogRows([{ configId, tierNumber: tier.tierNumber, holderAddress: op.holder, assetCode: op.assetCode, assetIssuer: op.assetIssuer, amountSent: 0, status: "failed" as const, error: result.error, ranAt }], userId);
       } else {
-        insertLogRows([{ configId, tierNumber: tier.tierNumber, holderAddress: op.holder, assetCode: op.assetCode, assetIssuer: op.assetIssuer, amountSent: op.amount, status: "sent" as const, txHash: result.txHash, ranAt }]);
+        await insertLogRows([{ configId, tierNumber: tier.tierNumber, holderAddress: op.holder, assetCode: op.assetCode, assetIssuer: op.assetIssuer, amountSent: op.amount, status: "sent" as const, txHash: result.txHash, ranAt }], userId);
       }
     }
     return;
@@ -181,12 +243,13 @@ async function runTier(
       const response = await server.submitTransaction(tx);
       const txHash = (response as { hash?: string }).hash;
 
-      insertLogRows(
+      await insertLogRows(
         batch.map((op) => ({
           configId, tierNumber: tier.tierNumber, holderAddress: op.holder,
           assetCode: op.assetCode, assetIssuer: op.assetIssuer,
           amountSent: op.amount, status: "sent" as const, txHash, ranAt,
-        }))
+        })),
+        userId
       );
     } catch (err) {
       // Retry once on tx_bad_seq — reload account, rebuild the same batch, resubmit.
@@ -209,12 +272,13 @@ async function runTier(
           const retryResponse = await server.submitTransaction(retryTx);
           const retryTxHash = (retryResponse as { hash?: string }).hash;
 
-          insertLogRows(
+          await insertLogRows(
             batch.map((op) => ({
               configId, tierNumber: tier.tierNumber, holderAddress: op.holder,
               assetCode: op.assetCode, assetIssuer: op.assetIssuer,
               amountSent: op.amount, status: "sent" as const, txHash: retryTxHash, ranAt,
-            }))
+            })),
+            userId
           );
           batchStart += BATCH_SIZE;
           continue;
@@ -231,24 +295,25 @@ async function runTier(
         for (const op of batch) {
           const result = await sendSingleOp(server, keypair, networkPassphrase, op, baseFee, memo);
           if (result.skipped) {
-            insertLogRows([{ configId, tierNumber: tier.tierNumber, holderAddress: op.holder, assetCode: op.assetCode, assetIssuer: op.assetIssuer, amountSent: 0, status: "skipped" as const, error: "No trustline for reward asset", ranAt }]);
+            await insertLogRows([{ configId, tierNumber: tier.tierNumber, holderAddress: op.holder, assetCode: op.assetCode, assetIssuer: op.assetIssuer, amountSent: 0, status: "skipped" as const, error: "No trustline for reward asset", ranAt }], userId);
           } else if (result.error) {
             aborted = true;
-            insertLogRows([{ configId, tierNumber: tier.tierNumber, holderAddress: op.holder, assetCode: op.assetCode, assetIssuer: op.assetIssuer, amountSent: 0, status: "failed" as const, error: result.error, ranAt }]);
+            await insertLogRows([{ configId, tierNumber: tier.tierNumber, holderAddress: op.holder, assetCode: op.assetCode, assetIssuer: op.assetIssuer, amountSent: 0, status: "failed" as const, error: result.error, ranAt }], userId);
             break;
           } else {
-            insertLogRows([{ configId, tierNumber: tier.tierNumber, holderAddress: op.holder, assetCode: op.assetCode, assetIssuer: op.assetIssuer, amountSent: op.amount, status: "sent" as const, txHash: result.txHash, ranAt }]);
+            await insertLogRows([{ configId, tierNumber: tier.tierNumber, holderAddress: op.holder, assetCode: op.assetCode, assetIssuer: op.assetIssuer, amountSent: op.amount, status: "sent" as const, txHash: result.txHash, ranAt }], userId);
           }
         }
       } else {
         aborted = true;
         const message = extractError(err);
-        insertLogRows(
+        await insertLogRows(
           batch.map((op) => ({
             configId, tierNumber: tier.tierNumber, holderAddress: op.holder,
             assetCode: op.assetCode, assetIssuer: op.assetIssuer,
             amountSent: 0, status: "failed" as const, error: message, ranAt,
-          }))
+          })),
+          userId
         );
       }
     }
@@ -258,12 +323,13 @@ async function runTier(
 
   if (aborted && batchStart < ops.length) {
     const remaining = ops.slice(batchStart);
-    insertLogRows(
+    await insertLogRows(
       remaining.map((op) => ({
         configId, tierNumber: tier.tierNumber, holderAddress: op.holder,
         assetCode: op.assetCode, assetIssuer: op.assetIssuer,
         amountSent: 0, status: "aborted" as const, error: "Aborted — earlier batch failed", ranAt,
-      }))
+      })),
+      userId
     );
   }
 }
@@ -277,26 +343,44 @@ export interface RunResult {
   totalFailed: number;
 }
 
-/** Wrapped in a per-account mutex so concurrent runs (manual + scheduler) can't race
- *  on the same sender account's sequence number. */
+/**
+ * Wrapped in a per-account mutex so concurrent runs (manual + scheduler) can't race on the
+ * same sender account's sequence number — but that mutex only serializes *submission order*
+ * for the key, it does not stop a whole redundant second run from starting for this configId
+ * (e.g. a scheduler tick racing a concurrent manual run), which would double-pay every holder.
+ * The `_runningConfigs` guard below (globalized in module scope, shared with scheduler.ts)
+ * closes that gap: it covers same-process races (scheduler-vs-manual, HMR reloads handing a
+ * new closure a stale guard) but is NOT a cross-process/serverless distributed lock — true
+ * multi-instance safety would need a DB-backed lock (schema migration), out of scope here.
+ */
 export async function runConfig(
   config: TieredRewardConfig,
-  assignments: TierAssignment[]
+  assignments: TierAssignment[],
+  userId?: string
 ): Promise<RunResult | { error: string }> {
-  if (!config.secretKey) return runConfigInner(config, assignments);
-  let keypair: Keypair;
-  try {
-    keypair = Keypair.fromSecret(config.secretKey);
-  } catch {
-    // Invalid secret key — let runConfigInner produce the same error result; no account to lock.
-    return runConfigInner(config, assignments);
+  if (_runningConfigs.has(config.id)) {
+    return { error: "This config is already running — try again shortly." };
   }
-  return withAccountLock(keypair.publicKey(), () => runConfigInner(config, assignments));
+  _runningConfigs.add(config.id);
+  try {
+    if (!config.secretKey) return await runConfigInner(config, assignments, userId);
+    let keypair: Keypair;
+    try {
+      keypair = Keypair.fromSecret(config.secretKey);
+    } catch {
+      // Invalid secret key — let runConfigInner produce the same error result; no account to lock.
+      return await runConfigInner(config, assignments, userId);
+    }
+    return await withAccountLock(keypair.publicKey(), () => runConfigInner(config, assignments, userId));
+  } finally {
+    _runningConfigs.delete(config.id);
+  }
 }
 
 async function runConfigInner(
   config: TieredRewardConfig,
-  assignments: TierAssignment[]
+  assignments: TierAssignment[],
+  userId?: string
 ): Promise<RunResult | { error: string }> {
   const horizonUrl = HORIZON_URLS[config.network] ?? HORIZON_URLS.public;
   const networkPassphrase = NETWORK_PASSPHRASES[config.network] ?? NETWORK_PASSPHRASES.public;
@@ -313,24 +397,59 @@ async function runConfigInner(
 
   const excludeSet = new Set(config.excludeAddresses ?? []);
   for (const assignment of assignments) {
-    await runTier(server, keypair, networkPassphrase, assignment, config.id, ranAt, config.batchSend ?? true, config.memo ?? null, config.feeMultiplier ?? 1.0, excludeSet);
+    await runTier(server, keypair, networkPassphrase, assignment, config.id, ranAt, config.batchSend ?? true, config.memo ?? null, config.feeMultiplier ?? 1.0, excludeSet, userId);
   }
 
-  // Update last_run_at — leave last_failure_at for the caller to clear on full success
-  try {
-    const db = getDb();
-    db.prepare("UPDATE tiered_reward_configs SET last_run_at = ? WHERE id = ?")
-      .run(ranAt, config.id);
-  } catch { /* non-fatal */ }
-
-  // Tally results
-  const statusRows = (() => {
+  // Update last_run_at — leave last_failure_at for the caller to clear on full success.
+  // Must be Supabase-aware: this is the only last_run_at write on the scheduler path (the
+  // manual route separately does its own supabase-aware write after runConfig returns), so
+  // on Vercel+Supabase this unconditional getDb() call would silently no-op and the scheduler
+  // would keep re-running (and re-paying) a config it thinks never ran.
+  if (isSupabaseOnly()) {
+    const sb = getSupabase();
+    if (sb) {
+      try {
+        const query = sb.from("tiered_reward_configs").update({ last_run_at: ranAt }).eq("id", config.id);
+        const { error } = await (userId ? query.eq("user_id", userId) : query);
+        if (error) console.error("[tiered-rewards] last_run_at Supabase update failed:", error);
+      } catch (err) {
+        console.error("[tiered-rewards] last_run_at Supabase update threw:", err);
+      }
+    }
+  } else {
     try {
       const db = getDb();
-      return db.prepare("SELECT status FROM tiered_reward_run_log WHERE config_id = ? AND ran_at = ?")
+      db.prepare("UPDATE tiered_reward_configs SET last_run_at = ? WHERE id = ?")
+        .run(ranAt, config.id);
+    } catch { /* non-fatal */ }
+  }
+
+  // Tally results — same Supabase-vs-SQLite split as above. Without it, on Vercel+Supabase
+  // this always reads an empty SQLite result set, so totalSent/totalFailed are always 0 even
+  // though the payments actually went out.
+  let statusRows: { status: string }[] = [];
+  if (isSupabaseOnly()) {
+    const sb = getSupabase();
+    if (sb) {
+      try {
+        const { data, error } = await sb
+          .from("tiered_reward_run_log")
+          .select("status")
+          .eq("config_id", config.id)
+          .eq("ran_at", ranAt);
+        if (error) console.error("[tiered-rewards] tally Supabase query failed:", error);
+        else statusRows = (data ?? []) as { status: string }[];
+      } catch (err) {
+        console.error("[tiered-rewards] tally Supabase query threw:", err);
+      }
+    }
+  } else {
+    try {
+      const db = getDb();
+      statusRows = db.prepare("SELECT status FROM tiered_reward_run_log WHERE config_id = ? AND ran_at = ?")
         .all(config.id, ranAt) as { status: string }[];
-    } catch { return []; }
-  })();
+    } catch { /* leave empty */ }
+  }
 
   return {
     configId: config.id,
