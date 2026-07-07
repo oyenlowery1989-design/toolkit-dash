@@ -78,20 +78,24 @@ import type { AssetProceedsResult } from "@/lib/proceeds-investigator/types";
 import { useAssetHistory, assetHistoryGetSnapshot } from "./useAssetHistory";
 import { useSavedSearches } from "@/hooks/use-saved-searches";
 import { useKnownIntermediaries } from "@/hooks/use-known-intermediaries";
-import { useAssetGroups } from "@/hooks/use-asset-groups";
-import { ShortAddress } from "./ShortAddress";
-import { AuthFlag } from "./AuthFlag";
+import { ShortAddress } from "@/components/shared/ShortAddress";
+import { AuthFlag } from "@/components/shared/AuthFlag";
 import {
   ChainDisplay,
   ChainState,
   traceChainStep,
 } from "@/components/shared/ChainDisplay";
+import { ProceedsStatsCards } from "@/components/shared/proceeds/ProceedsStatsCards";
+import { ProceedsDestinationsTable } from "@/components/shared/proceeds/ProceedsDestinationsTable";
+import { SaveToGroupButton } from "@/components/shared/proceeds/SaveToGroupButton";
+import { parseAssetPair } from "@/lib/asset-pair";
+import { useXlmUsdPrice } from "@/hooks/use-xlm-usd-price";
 
 // ---------------------------------------------------------------------------
 // Validation
 // ---------------------------------------------------------------------------
 
-const ASSET_CODE_RE = /^[A-Z0-9]{1,12}$/;
+const ASSET_CODE_RE = /^[A-Za-z0-9]{1,12}$/;
 
 interface ValidationErrors {
   assetCode?: string;
@@ -103,7 +107,7 @@ function validate(assetCode: string, issuer: string): ValidationErrors {
   if (!assetCode) {
     errors.assetCode = "Asset code is required.";
   } else if (!ASSET_CODE_RE.test(assetCode)) {
-    errors.assetCode = "Must be 1–12 uppercase letters or digits (A–Z, 0–9).";
+    errors.assetCode = "Must be 1–12 letters or digits (A–Z, a–z, 0–9).";
   }
   if (!issuer) {
     errors.issuer = "Issuer address is required.";
@@ -216,7 +220,6 @@ export function AssetLookupPanel({
   } = useAssetHistory();
   const { upsert: upsertSearch } = useSavedSearches();
   const { entries: knownIntermediaries } = useKnownIntermediaries();
-  const { groups } = useAssetGroups();
   const knownIntermediarySet = useMemo(
     () => new Set(knownIntermediaries.map((e) => e.address)),
     [knownIntermediaries],
@@ -303,7 +306,7 @@ export function AssetLookupPanel({
   const [assetTradesProgress, setAssetTradesProgress] = useState<string | null>(
     null,
   );
-  const [xlmUsdPrice, setXlmUsdPrice] = useState<number | null>(null);
+  const { price: xlmUsdPrice, ensure: ensureXlmUsdPrice } = useXlmUsdPrice();
 
   // On-demand: Distribution XLM Sales (proceeds for distrib addresses)
   const [distribSales, setDistribSales] = useState<AssetProceedsResult | null>(
@@ -452,16 +455,12 @@ export function AssetLookupPanel({
   // Tries to parse "CODE:ISSUER" or a URL containing that pattern.
   // Returns true if it successfully split and populated both fields.
   const tryParseAssetPair = (raw: string): boolean => {
-    // Extract the CODE:ISSUER segment from anywhere in the string
-    const match = raw.match(/([A-Za-z0-9]{1,12}):([A-Z2-7]{56})/);
-    if (!match) return false;
-    const code = match[1];
-    const addr = match[2];
-    if (!StrKey.isValidEd25519PublicKey(addr)) return false;
-    setAssetCode(code);
-    setIssuer(addr);
+    const pair = parseAssetPair(raw);
+    if (!pair) return false;
+    setAssetCode(pair.assetCode);
+    setIssuer(pair.issuer);
     setTouched({ assetCode: true, issuer: true });
-    setValidationErrors(validate(code, addr));
+    setValidationErrors(validate(pair.assetCode, pair.issuer));
     return true;
   };
 
@@ -544,7 +543,6 @@ export function AssetLookupPanel({
     setAssetTradesError(null);
     setShowAssetTrades(false);
     setAssetTradesProgress(null);
-    setXlmUsdPrice(null);
     setDistribSales(null);
     setDistribSalesError(null);
     setShowDistribSales(false);
@@ -593,7 +591,6 @@ export function AssetLookupPanel({
     setAssetTradesError(null);
     setShowAssetTrades(false);
     setAssetTradesProgress(null);
-    setXlmUsdPrice(null);
     setDistribSales(null);
     setDistribSalesError(null);
     setShowDistribSales(false);
@@ -774,13 +771,16 @@ export function AssetLookupPanel({
 
   const handleFetchToml = async () => {
     if (!issuerInfo?.homeDomain) return;
+    setShowToml(true);
+    if (tomlContent) return; // already loaded
     setTomlLoading(true);
     setTomlError(null);
     setTomlContent(null);
-    setShowToml(true);
+    const signal = abortRef.current?.signal ?? new AbortController().signal;
     try {
       const res = await fetch(
         `/api/toml?domain=${encodeURIComponent(issuerInfo.homeDomain)}`,
+        { signal },
       );
       const text = await res.text();
       if (!res.ok) {
@@ -790,7 +790,7 @@ export function AssetLookupPanel({
         setTomlContent(text);
       }
     } catch {
-      setTomlError("Network error fetching TOML");
+      if (!signal.aborted) setTomlError("Network error fetching TOML");
     } finally {
       setTomlLoading(false);
     }
@@ -806,6 +806,7 @@ export function AssetLookupPanel({
     if (paymentTotals) return; // already loaded
     setPaymentTotalsLoading(true);
     setPaymentTotalsError(null);
+    const signal = abortRef.current?.signal ?? new AbortController().signal;
     try {
       const serverUrl = resolveHorizonUrl(settings);
       const server = new Horizon.Server(serverUrl);
@@ -815,11 +816,11 @@ export function AssetLookupPanel({
         issuer,
         assetCode,
         tracked,
-        abortRef.current?.signal ?? new AbortController().signal,
+        signal,
       );
       setPaymentTotals(result);
     } catch (err) {
-      setPaymentTotalsError(getErrorMessage(err));
+      if (!signal.aborted) setPaymentTotalsError(getErrorMessage(err));
     } finally {
       setPaymentTotalsLoading(false);
     }
@@ -835,16 +836,17 @@ export function AssetLookupPanel({
     if (claimable) return; // already loaded
     setClaimableLoading(true);
     setClaimableError(null);
+    const signal = abortRef.current?.signal ?? new AbortController().signal;
     try {
       const result = await fetchClaimableBalances(
         new Horizon.Server(resolveHorizonUrl(settings)),
         assetCode,
         issuer,
-        abortRef.current?.signal ?? new AbortController().signal,
+        signal,
       );
       setClaimable(result);
     } catch (err) {
-      setClaimableError(getErrorMessage(err));
+      if (!signal.aborted) setClaimableError(getErrorMessage(err));
     } finally {
       setClaimableLoading(false);
     }
@@ -861,33 +863,26 @@ export function AssetLookupPanel({
     setAssetTradesLoading(true);
     setAssetTradesError(null);
     setAssetTradesProgress("Starting scan…");
+    const signal = abortRef.current?.signal ?? new AbortController().signal;
     try {
       const trackedAddresses = distribCandidates
         .filter((c) => c.confidence === "high")
         .map((c) => c.address);
-      const signal = abortRef.current?.signal ?? new AbortController().signal;
-      const [result] = await Promise.all([
-        fetchAssetXlmTrades(
-          resolveHorizonUrl(settings),
-          assetCode,
-          issuer,
-          trackedAddresses,
-          signal,
-          (count) =>
-            setAssetTradesProgress(
-              `Scanning trades… ${count.toLocaleString()} found`,
-            ),
-        ),
-        fetch(
-          "https://api.coingecko.com/api/v3/simple/price?ids=stellar&vs_currencies=usd",
-        )
-          .then((r) => r.json())
-          .then((data) => setXlmUsdPrice(data?.stellar?.usd ?? null))
-          .catch(() => {}),
-      ]);
+      ensureXlmUsdPrice();
+      const result = await fetchAssetXlmTrades(
+        resolveHorizonUrl(settings),
+        assetCode,
+        issuer,
+        trackedAddresses,
+        signal,
+        (count) =>
+          setAssetTradesProgress(
+            `Scanning trades… ${count.toLocaleString()} found`,
+          ),
+      );
       setAssetTrades(result);
     } catch (err) {
-      setAssetTradesError(getErrorMessage(err));
+      if (!signal.aborted) setAssetTradesError(getErrorMessage(err));
     } finally {
       setAssetTradesLoading(false);
       setAssetTradesProgress(null);
@@ -901,9 +896,9 @@ export function AssetLookupPanel({
     setDistribSalesLoading(true);
     setDistribSalesError(null);
     setDistribSalesProgress("Starting scan…");
+    const signal = abortRef.current?.signal ?? new AbortController().signal;
     try {
       const primaryDistrib = distribCandidates[0].address;
-      const signal = abortRef.current?.signal ?? new AbortController().signal;
       const result = await fetchAssetXlmProceeds(
         resolveHorizonUrl(settings),
         assetCode,
@@ -917,7 +912,7 @@ export function AssetLookupPanel({
       );
       setDistribSales(result);
     } catch (err) {
-      setDistribSalesError(getErrorMessage(err));
+      if (!signal.aborted) setDistribSalesError(getErrorMessage(err));
     } finally {
       setDistribSalesLoading(false);
       setDistribSalesProgress(null);
@@ -1357,54 +1352,25 @@ export function AssetLookupPanel({
                 </div>
 
                 {/* Save to Group / Open Group button */}
-                {(() => {
-                  const existingGroup = groups.find(
-                    (g) =>
-                      g.assetCode?.toUpperCase() === assetCode.toUpperCase() &&
-                      g.issuer === issuer &&
-                      g.network === settings.network,
-                  );
-                  if (existingGroup) {
-                    return (
-                      <a href={`/groups?open=${existingGroup.id}`} target="_blank" rel="noopener noreferrer">
-                        <Button variant="outline" size="sm" className="text-xs border-green-400/40 bg-green-400/10 text-green-400 hover:bg-green-400/20">
-                          <Layers className="mr-2 h-3.5 w-3.5" />
-                          Open Group
-                        </Button>
-                      </a>
-                    );
+                <SaveToGroupButton
+                  assetCode={assetCode}
+                  issuer={issuer}
+                  network={settings.network}
+                  distribAddress={
+                    distribCandidates.find((c) => c.confidence === "high")
+                      ?.address
                   }
-                  const highDistrib = distribCandidates.find(
-                    (c) => c.confidence === "high",
-                  );
-                  const distribHolder = highDistrib
-                    ? holders.find((h) => h.id === highDistrib.address)
-                    : null;
-                  const params = new URLSearchParams({
-                    autoCreate: "1",
-                    name: `${assetCode} Investigation`,
-                    assetCode,
-                    issuer,
-                    network: settings.network,
-                  });
-                  if (issuerInfo.homeDomain)
-                    params.set("issuerHomeDomain", issuerInfo.homeDomain);
-                  if (highDistrib) params.set("distrib", highDistrib.address);
-                  if (distribHolder?.homeDomain)
-                    params.set("distribHomeDomain", distribHolder.homeDomain);
-                  return (
-                    <a
-                      href={`/groups?${params}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                    >
-                      <Button variant="outline" size="sm" className="text-xs">
-                        <Layers className="mr-2 h-3.5 w-3.5" />
-                        Save to Group
-                      </Button>
-                    </a>
-                  );
-                })()}
+                  homeDomain={issuerInfo.homeDomain}
+                  distribHomeDomain={(() => {
+                    const highDistrib = distribCandidates.find(
+                      (c) => c.confidence === "high",
+                    );
+                    return highDistrib
+                      ? holders.find((h) => h.id === highDistrib.address)
+                          ?.homeDomain
+                      : undefined;
+                  })()}
+                />
 
                 {/* TOML button */}
                 {issuerInfo.homeDomain && (
@@ -2264,72 +2230,11 @@ export function AssetLookupPanel({
                 {distribSales && !distribSalesLoading && (
                   <div className="space-y-5">
                     {/* Summary stats */}
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                      <div className="rounded-md border bg-muted/30 p-3">
-                        <p className="text-[10px] uppercase font-semibold text-muted-foreground tracking-wide">
-                          Total XLM Proceeds
-                        </p>
-                        <p className="text-lg font-bold font-mono tabular-nums mt-0.5">
-                          {distribSales.totalXlmProceeds.toLocaleString(
-                            undefined,
-                            { maximumFractionDigits: 2 },
-                          )}
-                        </p>
-                        {xlmUsdPrice !== null && (
-                          <p className="text-[11px] text-muted-foreground">
-                            ≈ $
-                            {(
-                              distribSales.totalXlmProceeds * xlmUsdPrice
-                            ).toLocaleString(undefined, {
-                              maximumFractionDigits: 0,
-                            })}
-                          </p>
-                        )}
-                      </div>
-                      <div className="rounded-md border bg-muted/30 p-3">
-                        <p className="text-[10px] uppercase font-semibold text-muted-foreground tracking-wide">
-                          {assetCode} Sold
-                        </p>
-                        <p className="text-lg font-bold font-mono tabular-nums mt-0.5">
-                          {distribSales.totalAssetSold.toLocaleString(
-                            undefined,
-                            { maximumFractionDigits: 2 },
-                          )}
-                        </p>
-                      </div>
-                      <div className="rounded-md border bg-muted/30 p-3">
-                        <p className="text-[10px] uppercase font-semibold text-muted-foreground tracking-wide">
-                          Total Outgoing XLM
-                        </p>
-                        <p className="text-lg font-bold font-mono tabular-nums mt-0.5">
-                          {distribSales.totalOutgoingXlm.toLocaleString(
-                            undefined,
-                            { maximumFractionDigits: 2 },
-                          )}
-                        </p>
-                      </div>
-                      <div className="rounded-md border bg-muted/30 p-3">
-                        <p className="text-[10px] uppercase font-semibold text-muted-foreground tracking-wide">
-                          Est. On-Hand
-                        </p>
-                        <p className="text-lg font-bold font-mono tabular-nums mt-0.5">
-                          {distribSales.estimatedOnHandXlm.toLocaleString(
-                            undefined,
-                            { maximumFractionDigits: 2 },
-                          )}
-                        </p>
-                        {xlmUsdPrice !== null && (
-                          <p className="text-[11px] text-muted-foreground">
-                            ≈ $
-                            {(
-                              distribSales.estimatedOnHandXlm * xlmUsdPrice
-                            ).toLocaleString(undefined, {
-                              maximumFractionDigits: 0,
-                            })}
-                          </p>
-                        )}
-                      </div>
-                    </div>
+                    <ProceedsStatsCards
+                      result={distribSales}
+                      assetCode={assetCode}
+                      xlmUsdPrice={xlmUsdPrice}
+                    />
 
                     {/* Top destinations */}
                     {distribSales.topDestinations.length > 0 && (
@@ -2337,61 +2242,28 @@ export function AssetLookupPanel({
                         <p className="text-[10px] uppercase font-semibold text-muted-foreground tracking-wide">
                           Where the XLM was sent
                         </p>
-                        <div className="overflow-x-auto border rounded-md">
-                          <table className="w-full text-sm">
-                            <thead>
-                              <tr className="border-b bg-muted/40">
-                                <th className="text-left px-3 py-2">
-                                  Destination
-                                </th>
-                                <th className="text-right px-3 py-2">XLM</th>
-                                <th className="text-right px-3 py-2">
-                                  % of Proceeds
-                                </th>
-                                <th className="text-right px-3 py-2">Txns</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {distribSales.topDestinations.map((row) => (
-                                <tr
-                                  key={row.address}
-                                  className="border-b last:border-0"
-                                >
-                                  <td className="px-3 py-2 text-xs">
-                                    <ShortAddress
-                                      address={row.address}
-                                      network={settings.network}
-                                    />
-                                  </td>
-                                  <td className="px-3 py-2 text-right tabular-nums">
-                                    {row.totalXlm.toLocaleString(undefined, {
-                                      maximumFractionDigits: 2,
-                                    })}
-                                  </td>
-                                  <td className="px-3 py-2 text-right tabular-nums">
-                                    {distribSales.totalXlmProceeds > 0
-                                      ? (
-                                          (row.totalXlm /
-                                            distribSales.totalXlmProceeds) *
-                                          100
-                                        ).toFixed(2)
-                                      : "0.00"}
-                                    %
-                                  </td>
-                                  <td className="px-3 py-2 text-right tabular-nums">
-                                    {row.count}
-                                  </td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
+                        <ProceedsDestinationsTable
+                          destinations={distribSales.topDestinations}
+                          totalXlmProceeds={distribSales.totalXlmProceeds}
+                          network={settings.network}
+                          assetCode={distribSales.assetCode}
+                          issuer={distribSales.issuer}
+                          showGroupAction
+                        />
                       </div>
                     )}
                   </div>
                 )}
                 {distribCandidates.length > 0 && (
-                  <div className="pt-3 border-t flex justify-end">
+                  <div className="pt-3 border-t flex justify-end gap-2">
+                    {distribCandidates[0] && (
+                      <SaveToGroupButton
+                        assetCode={assetCode}
+                        issuer={issuer}
+                        network={settings.network}
+                        distribAddress={distribCandidates[0].address}
+                      />
+                    )}
                     <Button
                       variant="outline"
                       size="sm"

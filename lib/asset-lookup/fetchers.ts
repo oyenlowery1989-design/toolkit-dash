@@ -1,5 +1,6 @@
 import { Horizon, Asset } from "stellar-sdk";
 import { fetchJson } from "../horizon-fetch";
+import { resolveAssetToXlmTrade } from "@/lib/trade-helpers";
 import type {
   Holder,
   DistribCandidate,
@@ -674,36 +675,15 @@ async function scanAccountTrades(
     const records: Record<string, unknown>[] = data._embedded?.records ?? [];
 
     for (const r of records) {
-      const isBase = r.base_account === address;
-      const assetIsBase =
-        r.base_asset_code === assetCode &&
-        r.base_asset_issuer === issuerAddress;
-      const assetIsCounter =
-        r.counter_asset_code === assetCode &&
-        r.counter_asset_issuer === issuerAddress;
-      const xlmIsBase = r.base_asset_type === "native";
-      const xlmIsCounter = r.counter_asset_type === "native";
-
-      let sold = 0;
-      let received = 0;
-
-      // Account is on the ASSET side selling ASSET for XLM
-      if (isBase && assetIsBase && xlmIsCounter) {
-        sold = parseFloat((r.base_amount as string) ?? "0");
-        received = parseFloat((r.counter_amount as string) ?? "0");
-      } else if (!isBase && assetIsCounter && xlmIsBase) {
-        sold = parseFloat((r.counter_amount as string) ?? "0");
-        received = parseFloat((r.base_amount as string) ?? "0");
-      }
-
-      if (sold > 0) {
-        assetSold += sold;
-        xlmReceived += received;
+      const trade = resolveAssetToXlmTrade(r, address, assetCode, issuerAddress);
+      if (trade && trade.sold > 0) {
+        assetSold += trade.sold;
+        xlmReceived += trade.received;
         tradeCount++;
         rawTrades.push({
-          price: received / sold,
-          assetSold: sold,
-          xlmReceived: received,
+          price: trade.received / trade.sold,
+          assetSold: trade.sold,
+          xlmReceived: trade.received,
         });
       }
     }
