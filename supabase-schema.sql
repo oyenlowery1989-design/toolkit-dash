@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS wallets (id TEXT PRIMARY KEY, user_id TEXT NOT NULL D
 CREATE INDEX IF NOT EXISTS idx_wallets_folder ON wallets(folder_id);
 CREATE INDEX IF NOT EXISTS idx_wallets_user ON wallets(user_id);
 CREATE TABLE IF NOT EXISTS app_state (user_id TEXT NOT NULL DEFAULT '', key TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY (user_id, key));
+CREATE TABLE IF NOT EXISTS bulk_scan_state (user_id TEXT PRIMARY KEY, rows_json TEXT NOT NULL, interrupted BOOLEAN NOT NULL DEFAULT false, updated_at BIGINT NOT NULL);
 CREATE TABLE IF NOT EXISTS creator_children (id TEXT PRIMARY KEY, user_id TEXT NOT NULL DEFAULT '', creator_address TEXT NOT NULL, child_address TEXT NOT NULL, network TEXT NOT NULL DEFAULT 'public', via_intermediary TEXT, created_on_chain TEXT, confidence INTEGER, starting_balance DOUBLE PRECISION, home_domain TEXT, issued_assets JSONB, distributed_assets JSONB, parent_address TEXT, discovered_at BIGINT NOT NULL, UNIQUE(user_id, creator_address, child_address, network));
 CREATE INDEX IF NOT EXISTS idx_creator_children_user ON creator_children(user_id);
 CREATE INDEX IF NOT EXISTS idx_creator_children_creator ON creator_children(creator_address, network);

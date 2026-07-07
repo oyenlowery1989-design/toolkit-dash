@@ -162,6 +162,16 @@ function initDb(): Database.Database {
       value       TEXT NOT NULL
     );
 
+    -- ── Bulk Asset Sales in-progress scan state (resume-after-refresh) ───────
+    -- Single row per user (id = 'local' in SQLite single-user mode, = user_id in Supabase mode).
+
+    CREATE TABLE IF NOT EXISTS bulk_scan_state (
+      id          TEXT    PRIMARY KEY,
+      rows_json   TEXT    NOT NULL,
+      interrupted INTEGER NOT NULL DEFAULT 0,
+      updated_at  INTEGER NOT NULL
+    );
+
     -- ── Creator Children (creator tree / ownership graph) ────────────────────
 
     CREATE TABLE IF NOT EXISTS creator_children (
