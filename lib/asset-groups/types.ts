@@ -51,6 +51,9 @@ export interface AssetGroup {
   issuer?: string;
   network: string;
   notes?: string;
+  domain?: string;
+  telegramChannel?: string;
+  telegramLink?: string;
   createdAt: number;
   updatedAt: number;
   members: GroupMember[];
