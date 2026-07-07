@@ -1,8 +1,8 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  AlertTriangle,
   ArrowDown,
   ArrowUp,
   ArrowUpDown,
@@ -10,6 +10,7 @@ import {
   ChevronDown,
   ChevronRight,
   LayoutList,
+  Loader2,
   MessageSquare,
   Pencil,
   PlayCircle,
@@ -39,9 +40,11 @@ import { useSavedAnalyses } from "@/hooks/use-saved-analyses";
 import type { SavedAnalysis } from "@/hooks/use-saved-analyses";
 import { ShortAddress } from "@/components/shared/ShortAddress";
 import { ProceedsDestinationsTable } from "@/components/shared/proceeds/ProceedsDestinationsTable";
+import { fetchAssetXlmProceeds } from "@/lib/proceeds-investigator/fetchers";
 import { formatXlm } from "@/lib/format";
-import { timeAgo } from "@/lib/stellar-helpers";
-import { NETWORK_LABELS } from "@/lib/settings";
+import { getErrorMessage, timeAgo } from "@/lib/stellar-helpers";
+import { NETWORK_LABELS, resolveHorizonUrl, useSettings } from "@/lib/settings";
+import type { Network, Settings } from "@/lib/settings";
 import { SnapshotCompare } from "./SnapshotCompare";
 
 // ---------------------------------------------------------------------------
@@ -80,28 +83,79 @@ function sortAnalyses(analyses: SavedAnalysis[], sort: Sort): SavedAnalysis[] {
 }
 
 // ---------------------------------------------------------------------------
+// Re-run in place — re-scans the same asset/distrib/network and saves a
+// fresh snapshot (so it also shows up in Compare Snapshots), no navigation.
+// ---------------------------------------------------------------------------
+
+type SaveAnalysisFn = (entry: Omit<SavedAnalysis, "id" | "timestamp">) => string;
+
+async function rerunAnalysis(
+  analysis: SavedAnalysis,
+  settings: Settings,
+  saveAnalysis: SaveAnalysisFn,
+  signal: AbortSignal,
+): Promise<void> {
+  const horizonUrl = resolveHorizonUrl({
+    network: analysis.network as Network,
+    localHorizonUrl: settings.localHorizonUrl,
+  });
+  const result = await fetchAssetXlmProceeds(
+    horizonUrl,
+    analysis.assetCode,
+    analysis.issuer,
+    analysis.distribAddresses,
+    signal,
+  );
+  saveAnalysis({
+    name: `${analysis.assetCode} — ${new Date().toLocaleDateString()}`,
+    assetCode: analysis.assetCode,
+    issuer: analysis.issuer,
+    distribAddresses: analysis.distribAddresses,
+    network: analysis.network,
+    result,
+  });
+}
+
+/** Shared re-run state/handler — one instance per row, used by both Card and Table views. */
+function useRerun(analysis: SavedAnalysis, saveAnalysis: SaveAnalysisFn) {
+  const { settings } = useSettings();
+  const [rerunning, setRerunning] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
+
+  useEffect(() => () => abortRef.current?.abort(), []);
+
+  const rerun = async () => {
+    if (rerunning) return;
+    setRerunning(true);
+    setError(null);
+    const controller = new AbortController();
+    abortRef.current = controller;
+    try {
+      await rerunAnalysis(analysis, settings, saveAnalysis, controller.signal);
+    } catch (err) {
+      if (!controller.signal.aborted) setError(getErrorMessage(err));
+    } finally {
+      setRerunning(false);
+    }
+  };
+
+  return { rerunning, error, rerun };
+}
+
+// ---------------------------------------------------------------------------
 // AnalysisCard — expanded card view
 // ---------------------------------------------------------------------------
 
 function AnalysisCard({ analysis }: { analysis: SavedAnalysis }) {
-  const router = useRouter();
-  const { updateName, updateNotes, updateTags, remove } = useSavedAnalyses();
+  const { updateName, updateNotes, updateTags, remove, saveAnalysis } = useSavedAnalyses();
+  const { rerunning, error: rerunError, rerun } = useRerun(analysis, saveAnalysis);
   const [expanded, setExpanded] = useState(false);
   const [editing, setEditing] = useState(false);
   const [nameInput, setNameInput] = useState(analysis.name);
   const [editingNotes, setEditingNotes] = useState(false);
   const [notesInput, setNotesInput] = useState(analysis.notes ?? "");
   const [tagInput, setTagInput] = useState("");
-
-  const handleRerun = () => {
-    const params = new URLSearchParams({
-      asset: analysis.assetCode,
-      issuer: analysis.issuer,
-      account: analysis.distribAddresses[0] ?? "",
-      autorun: "1",
-    });
-    router.push(`/asset-sales?${params.toString()}`);
-  };
 
   const handleSaveName = () => {
     if (nameInput.trim()) updateName(analysis.id, nameInput.trim());
@@ -163,6 +217,12 @@ function AnalysisCard({ analysis }: { analysis: SavedAnalysis }) {
             {" · "}
             {timeAgo(analysis.timestamp)}
           </p>
+          {rerunError && (
+            <p className="text-xs text-destructive flex items-center gap-1 mt-0.5">
+              <AlertTriangle className="h-3 w-3 shrink-0" />
+              Re-run failed: {rerunError}
+            </p>
+          )}
         </div>
 
         <div className="hidden sm:flex gap-6 shrink-0 text-right">
@@ -181,8 +241,19 @@ function AnalysisCard({ analysis }: { analysis: SavedAnalysis }) {
         </div>
 
         <div className="flex items-center gap-1 shrink-0">
-          <Button variant="ghost" size="icon" className="h-8 w-8" title="Re-run analysis" onClick={handleRerun}>
-            <PlayCircle className="h-4 w-4" />
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8"
+            title={rerunError ? "Re-run failed — click to retry" : "Re-run analysis"}
+            onClick={rerun}
+            disabled={rerunning}
+          >
+            {rerunning ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <PlayCircle className={`h-4 w-4 ${rerunError ? "text-destructive" : ""}`} />
+            )}
           </Button>
           <Button
             variant="ghost"
@@ -322,9 +393,6 @@ function TableView({
   sort: Sort;
   onSortChange: (sort: Sort) => void;
 }) {
-  const router = useRouter();
-  const { remove } = useSavedAnalyses();
-
   const toggle = (field: SortField) =>
     onSortChange({ field, dir: sort.field === field && sort.dir === "desc" ? "asc" : "desc" });
 
@@ -366,69 +434,80 @@ function TableView({
         </thead>
         <tbody>
           {sorted.map((a) => (
-            <tr key={a.id} className="border-b last:border-0 hover:bg-muted/20 transition-colors">
-              <td className="px-3 py-2 font-mono font-semibold text-xs whitespace-nowrap">
-                {a.assetCode}
-              </td>
-              <td className="px-3 py-2 text-xs">
-                {a.distribAddresses[0] ? (
-                  <ShortAddress address={a.distribAddresses[0]} network={a.network as "public" | "testnet"} />
-                ) : (
-                  <span className="text-muted-foreground">—</span>
-                )}
-              </td>
-              <td className="px-3 py-2 text-xs text-muted-foreground whitespace-nowrap">
-                {NETWORK_LABELS[a.network as keyof typeof NETWORK_LABELS] ?? a.network}
-              </td>
-              <td className="px-3 py-2 text-right tabular-nums font-mono text-xs">
-                {formatXlm(a.result.totalXlmProceeds)}
-              </td>
-              <td className="px-3 py-2 text-right tabular-nums font-mono text-xs">
-                {formatXlm(a.result.totalAssetSold)}
-              </td>
-              <td className="px-3 py-2 text-right tabular-nums font-mono text-xs">
-                {formatXlm(a.result.totalOutgoingXlm)}
-              </td>
-              <td className="px-3 py-2 text-right tabular-nums font-mono text-xs">
-                {formatXlm(a.result.estimatedOnHandXlm ?? 0)}
-              </td>
-              <td className="px-3 py-2 text-right text-xs text-muted-foreground whitespace-nowrap">
-                {timeAgo(a.timestamp)}
-              </td>
-              <td className="px-3 py-2 text-right">
-                <div className="flex items-center justify-end gap-1">
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-7 w-7"
-                    title="Re-run"
-                    onClick={() => {
-                      const p = new URLSearchParams({ asset: a.assetCode, issuer: a.issuer, account: a.distribAddresses[0] ?? "", autorun: "1" });
-                      router.push(`/asset-sales?${p.toString()}`);
-                    }}
-                  >
-                    <PlayCircle className="h-3.5 w-3.5" />
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-7 w-7 text-muted-foreground hover:text-destructive"
-                    title="Delete"
-                    onClick={() => {
-                      if (window.confirm(`Delete saved analysis "${a.name}"? This cannot be undone.`)) {
-                        remove(a.id);
-                      }
-                    }}
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </Button>
-                </div>
-              </td>
-            </tr>
+            <TableRow key={a.id} analysis={a} />
           ))}
         </tbody>
       </table>
     </div>
+  );
+}
+
+function TableRow({ analysis: a }: { analysis: SavedAnalysis }) {
+  const { remove, saveAnalysis } = useSavedAnalyses();
+  const { rerunning, error: rerunError, rerun } = useRerun(a, saveAnalysis);
+
+  return (
+    <tr className="border-b last:border-0 hover:bg-muted/20 transition-colors">
+      <td className="px-3 py-2 font-mono font-semibold text-xs whitespace-nowrap">
+        {a.assetCode}
+      </td>
+      <td className="px-3 py-2 text-xs">
+        {a.distribAddresses[0] ? (
+          <ShortAddress address={a.distribAddresses[0]} network={a.network as "public" | "testnet"} />
+        ) : (
+          <span className="text-muted-foreground">—</span>
+        )}
+      </td>
+      <td className="px-3 py-2 text-xs text-muted-foreground whitespace-nowrap">
+        {NETWORK_LABELS[a.network as keyof typeof NETWORK_LABELS] ?? a.network}
+      </td>
+      <td className="px-3 py-2 text-right tabular-nums font-mono text-xs">
+        {formatXlm(a.result.totalXlmProceeds)}
+      </td>
+      <td className="px-3 py-2 text-right tabular-nums font-mono text-xs">
+        {formatXlm(a.result.totalAssetSold)}
+      </td>
+      <td className="px-3 py-2 text-right tabular-nums font-mono text-xs">
+        {formatXlm(a.result.totalOutgoingXlm)}
+      </td>
+      <td className="px-3 py-2 text-right tabular-nums font-mono text-xs">
+        {formatXlm(a.result.estimatedOnHandXlm ?? 0)}
+      </td>
+      <td className="px-3 py-2 text-right text-xs text-muted-foreground whitespace-nowrap">
+        {timeAgo(a.timestamp)}
+      </td>
+      <td className="px-3 py-2 text-right">
+        <div className="flex items-center justify-end gap-1">
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7"
+            title={rerunError ? `Re-run failed: ${rerunError} — click to retry` : "Re-run analysis"}
+            onClick={rerun}
+            disabled={rerunning}
+          >
+            {rerunning ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <PlayCircle className={`h-3.5 w-3.5 ${rerunError ? "text-destructive" : ""}`} />
+            )}
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7 text-muted-foreground hover:text-destructive"
+            title="Delete"
+            onClick={() => {
+              if (window.confirm(`Delete saved analysis "${a.name}"? This cannot be undone.`)) {
+                remove(a.id);
+              }
+            }}
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </Button>
+        </div>
+      </td>
+    </tr>
   );
 }
 
