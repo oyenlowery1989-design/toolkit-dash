@@ -33,6 +33,7 @@ import { WalletSelect } from "@/components/ui/wallet-select";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import { useSettings } from "@/lib/settings";
 import { shortAddr } from "@/lib/format";
 import { timeAgo } from "@/lib/stellar-helpers";
@@ -237,12 +238,10 @@ function DestinationForm({
           <span className="text-muted-foreground text-sm">% of spendable</span>
         </div>
         <label className={`flex items-center gap-1.5 select-none ${hasExistingRemainder && !isRemainder ? "opacity-40 cursor-not-allowed" : "cursor-pointer"}`}>
-          <input
-            type="checkbox"
+          <Switch
             checked={isRemainder}
-            onChange={(e) => setIsRemainder(e.target.checked)}
+            onCheckedChange={(checked) => setIsRemainder(checked)}
             disabled={hasExistingRemainder && !isRemainder}
-            className="accent-primary"
           />
           <span className="text-xs text-muted-foreground">
             {hasExistingRemainder && !isRemainder ? "Remainder already set" : "Send remainder"}
@@ -631,9 +630,12 @@ function RunHistory({ groupId, network, onReRun }: { groupId: string; network: s
     <div className="flex flex-col gap-1">
       {runs.map((run, i) => (
         <div key={run.ranAt} className="border border-border rounded overflow-hidden">
-          <button
+          <div
+            role="button"
+            tabIndex={0}
             onClick={() => setExpanded(expanded === i ? null : i)}
-            className="w-full flex items-center gap-3 px-3 py-2 bg-muted/50 hover:bg-accent/50 transition-colors text-left"
+            onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setExpanded(expanded === i ? null : i); } }}
+            className="w-full flex items-center gap-3 px-3 py-2 bg-muted/50 hover:bg-accent/50 transition-colors text-left cursor-pointer"
           >
             <span className="text-xs text-muted-foreground font-mono">{new Date(run.ranAt).toLocaleString()}</span>
             <span className="text-xs text-muted-foreground/70">·</span>
@@ -655,7 +657,7 @@ function RunHistory({ groupId, network, onReRun }: { groupId: string; network: s
             {(run.previewCount ?? 0) > 0 && <span className="text-xs text-blue-300 ml-1">{run.previewCount} preview</span>}
             {run.totalXlm > 0 && <span className="text-xs text-muted-foreground font-mono ml-2">{run.totalXlm.toFixed(7)} XLM</span>}
             <ChevronDown size={12} className={`text-muted-foreground/70 transition-transform ${expanded === i ? "" : "-rotate-90"}`} />
-          </button>
+          </div>
           {expanded === i && (
             <div className="px-3 py-2 border-t border-border/50 flex flex-col gap-1">
               {run.results.map((r, j) => (
@@ -772,7 +774,11 @@ function GroupCard({ groupId, runAllStatus }: { groupId: string; runAllStatus?: 
 
   if (!group) return null;
 
-  const pubkey = group.secretKey ? derivePublicKey(group.secretKey) : null;
+  // group.secretKey always reads back as "" from the API (masked) — group.hasKey is the
+  // truthful "a key is saved server-side" signal. balanceAddr (fetched once expanded, derived
+  // server-side from the real key) is used for cosmetic display when available.
+  const keyPresent = !!group.hasKey || !!group.secretKey;
+  const pubkey = balanceAddr ?? (group.secretKey ? derivePublicKey(group.secretKey) : null);
   const destinations = group.destinations ?? [];
   const destCount = destinations.length;
   const totalPct = destinations.filter((d) => !d.isRemainder).reduce((sum, d) => sum + d.percentage, 0);
@@ -969,7 +975,13 @@ function GroupCard({ groupId, runAllStatus }: { groupId: string; runAllStatus?: 
           </div>
           <p className="text-xs text-muted-foreground mt-0.5 flex items-center gap-2 flex-wrap">
             <Key size={10} className="inline" />
-            <span className="font-mono">{pubkey ? shortAddr(pubkey) : <span className="text-red-400">invalid key</span>}</span>
+            <span className="font-mono">
+              {pubkey
+                ? shortAddr(pubkey)
+                : keyPresent
+                  ? "key saved"
+                  : <span className="text-red-400">invalid key</span>}
+            </span>
             <span>·</span>
             <span>{NETWORK_LABELS[group.network] ?? group.network}</span>
             <span>·</span>
@@ -1041,7 +1053,7 @@ function GroupCard({ groupId, runAllStatus }: { groupId: string; runAllStatus?: 
           variant="outline"
           size="sm"
           onClick={handleCheck}
-          disabled={checking || running || destCount === 0 || !pubkey || destinations.every(d => d.paused)}
+          disabled={checking || running || testRunning || destCount === 0 || !keyPresent || destinations.every(d => d.paused)}
         >
           {checking ? <RefreshCw size={12} className="animate-spin mr-1" /> : <Eye size={12} className="mr-1" />}
           {checking ? "Checking…" : "Check"}
@@ -1051,7 +1063,7 @@ function GroupCard({ groupId, runAllStatus }: { groupId: string; runAllStatus?: 
           variant="outline"
           size="sm"
           onClick={handleTestRun}
-          disabled={testRunning || running || checking || destCount === 0 || !pubkey}
+          disabled={testRunning || running || checking || destCount === 0 || !keyPresent}
           title="Send 0.0000001 XLM to each destination to verify reachability"
         >
           {testRunning ? <RefreshCw size={12} className="animate-spin mr-1" /> : <FlaskConical size={12} className="mr-1" />}
@@ -1061,7 +1073,7 @@ function GroupCard({ groupId, runAllStatus }: { groupId: string; runAllStatus?: 
         <Button
           size="sm"
           onClick={handleRun}
-          disabled={running || checking || destCount === 0 || !pubkey || group.previewOnly || destinations.every(d => d.paused)}
+          disabled={running || checking || testRunning || destCount === 0 || !keyPresent || group.previewOnly || destinations.every(d => d.paused)}
           title={group.previewOnly ? "Group is in preview-only mode — disable to send real transactions" : undefined}
         >
           {running ? <RefreshCw size={12} className="animate-spin mr-1" /> : <Play size={12} className="mr-1" />}

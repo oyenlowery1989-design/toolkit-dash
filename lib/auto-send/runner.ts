@@ -175,8 +175,9 @@ export async function previewGroup(group: AutoSendGroup): Promise<GroupPreview |
   });
 
   const sendCount = items.filter((i) => !i.wouldSkip).length;
-  // 100 stroops per tx; batch = 1 tx, separate = 1 tx per destination
-  const feeStroops = group.batchSend ? 100 : sendCount * 100;
+  // 100 stroops per operation; batch mode is 1 tx with N payment ops (fee = baseFee * opCount),
+  // separate mode is 1 tx per destination — both cost 100 stroops per destination sent.
+  const feeStroops = sendCount * 100;
   const estimatedFees = feeStroops / 1e7;
 
   return { groupId: group.id, walletAddress, xlmBalance, spendable, batchSend: group.batchSend, estimatedFees, items };
@@ -208,7 +209,16 @@ async function runGroupInner(group: AutoSendGroup): Promise<GroupRunResult> {
   try {
     keypair = Keypair.fromSecret(group.secretKey);
   } catch {
-    return { groupId: group.id, walletAddress: "invalid-key", ranAt, results: [] };
+    return {
+      groupId: group.id,
+      walletAddress: "invalid-key",
+      ranAt,
+      results: group.destinations.map((d) => {
+        const r: DestinationRunResult = { destination: d.destination, label: d.label, status: "failed", error: "Invalid secret key" };
+        logResult(group.id, "invalid-key", r, ranAt);
+        return r;
+      }),
+    };
   }
 
   const walletAddress = keypair.publicKey();
@@ -269,7 +279,9 @@ async function runGroupInner(group: AutoSendGroup): Promise<GroupRunResult> {
     // ── Batch mode: one transaction, N payment ops ──────────────────────────
     const sendable = group.destinations.map((dest) => {
       const amount = amounts.get(dest.id ?? dest.destination) ?? 0;
-      return { dest, amount, skip: skipReason(spendable, amount, dest.minThreshold, dest.paused) };
+      // Test mode sends a dust amount by design — don't let the real minThreshold mark it "skipped".
+      const minThreshold = group.testMode ? 0 : dest.minThreshold;
+      return { dest, amount, skip: skipReason(spendable, amount, minThreshold, dest.paused) };
     });
 
     const toSend = sendable.filter((s) => !s.skip);
@@ -319,7 +331,9 @@ async function runGroupInner(group: AutoSendGroup): Promise<GroupRunResult> {
     let aborted = false;
     for (const dest of group.destinations) {
       const amountSent = amounts.get(dest.id ?? dest.destination) ?? 0;
-      const reason = skipReason(spendable, amountSent, dest.minThreshold, dest.paused);
+      // Test mode sends a dust amount by design — don't let the real minThreshold mark it "skipped".
+      const minThreshold = group.testMode ? 0 : dest.minThreshold;
+      const reason = skipReason(spendable, amountSent, minThreshold, dest.paused);
       let result: DestinationRunResult;
 
       if (aborted) {

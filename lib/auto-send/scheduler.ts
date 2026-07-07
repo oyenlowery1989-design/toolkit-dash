@@ -10,9 +10,13 @@ import type { AutoSendGroup } from "./types";
 declare global {
   var _autoSendTasks: Map<string, ScheduledTask> | undefined;
   var _autoSendStarted: boolean | undefined;
+  var _autoSendRunningGroups: Set<string> | undefined;
 }
 
-const _runningGroups = new Set<string>();
+// Globalized like the two singletons above — an HMR module reload must not
+// hand a running group a fresh, empty overlap-guard while its run is in flight.
+if (!global._autoSendRunningGroups) global._autoSendRunningGroups = new Set<string>();
+const _runningGroups = global._autoSendRunningGroups;
 
 function getDb() {
   // Lazy import to avoid issues in non-Node contexts
@@ -139,7 +143,11 @@ function scheduleAll(): void {
               const db = getDb();
               const ranAt = Date.now();
               const hasFailed = result.results.some((r) => r.status === "failed");
-              const allSent = result.results.filter((r) => r.status !== "skipped").every((r) => r.status === "sent");
+              const nonSkipped = result.results.filter((r) => r.status !== "skipped");
+              // Require at least one real send — otherwise an all-skipped run (e.g. every
+              // destination below its threshold) vacuously satisfies .every() and would
+              // wrongly clear an existing failure banner.
+              const allSent = nonSkipped.length > 0 && nonSkipped.every((r) => r.status === "sent");
               if (hasFailed) {
                 db.prepare("UPDATE auto_send_groups SET last_failure_at = ? WHERE id = ?").run(ranAt, fresh.id);
               } else if (allSent) {

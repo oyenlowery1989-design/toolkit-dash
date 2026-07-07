@@ -7,11 +7,13 @@ import type { AutoSendGroup, AutoSendDestination } from "@/lib/auto-send/types";
 const ENDPOINT = "/api/db/auto-send-groups";
 
 function dbDelete(key: string, type: "group" | "destination") {
-  waitForAuth().then(() => fetch(ENDPOINT, {
+  return waitForAuth().then(() => fetch(ENDPOINT, {
     method: "DELETE",
     headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify({ key, type }),
-  })).catch(() => {});
+  })).then((res) => {
+    if (!res.ok) throw new Error(`DELETE ${ENDPOINT} failed: ${res.status}`);
+  });
 }
 
 const _cache = createDbCache<AutoSendGroup>();
@@ -79,7 +81,7 @@ export function useAutoSendGroups() {
 
   const deleteGroup = useCallback((id: string) => {
     _cache.set(_cache.get().filter((g) => g.id !== id));
-    dbDelete(id, "group");
+    dbDelete(id, "group").catch(() => _cache.reload(ENDPOINT));
     waitForAuth().then(() => fetch("/api/auto-send/run", {
       method: "POST",
       headers: { "Content-Type": "application/json", ...authHeaders() },
@@ -123,7 +125,7 @@ export function useAutoSendGroups() {
         return { ...g, destinations: g.destinations.filter((d) => d.id !== destId) };
       })
     );
-    dbDelete(destId, "destination");
+    dbDelete(destId, "destination").catch(() => _cache.reload(ENDPOINT));
   }, []);
 
   return {

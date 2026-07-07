@@ -81,7 +81,13 @@ export async function POST(req: NextRequest) {
       if (!id || !name) return NextResponse.json({ error: "id and name required" }, { status: 400 });
 
       if (isSupabaseOnly()) {
-        const { error } = await getSupabase()!.from("auto_send_groups").upsert({
+        const sb = getSupabase()!;
+        // Reject if this id already belongs to a different user (prevents hijack via client-supplied id)
+        const { data: existingGroup } = await sb.from("auto_send_groups").select("user_id").eq("id", id).single();
+        if (existingGroup && existingGroup.user_id !== auth.userId) {
+          return NextResponse.json({ error: "Not authorized" }, { status: 403 });
+        }
+        const { error } = await sb.from("auto_send_groups").upsert({
           id, user_id: auth.userId!, name: (name as string).trim(),
           network: network ?? "public", secret_key: secretKey ?? "",
           interval_minutes: intervalMinutes ?? null, enabled: 1, created_at: now,
@@ -100,10 +106,15 @@ export async function POST(req: NextRequest) {
       if (!id || !groupId || !destination) return NextResponse.json({ error: "id, groupId, destination required" }, { status: 400 });
 
       if (isSupabaseOnly()) {
+        const sb = getSupabase()!;
+        // Verify the target group belongs to the authenticated user before writing a destination to it
+        const { data: ownerGroup } = await sb.from("auto_send_groups").select("id").eq("id", groupId).eq("user_id", auth.userId!).single();
+        if (!ownerGroup) return NextResponse.json({ error: "Not authorized" }, { status: 403 });
+
         // Upsert by (group_id, destination) — find existing id first to avoid PK conflicts
-        const { data: existing } = await getSupabase()!.from("auto_send_destinations").select("id").eq("group_id", groupId).eq("destination", destination).single();
+        const { data: existing } = await sb.from("auto_send_destinations").select("id").eq("group_id", groupId).eq("destination", destination).single();
         const rowId = existing?.id ?? id;
-        const { error } = await getSupabase()!.from("auto_send_destinations").upsert({
+        const { error } = await sb.from("auto_send_destinations").upsert({
           id: rowId, user_id: auth.userId!, group_id: groupId, destination,
           percentage: percentage ?? 0, is_remainder: isRemainder ? 1 : 0,
           is_paused: paused ? 1 : 0, label: label ?? null, memo: memo ?? null,
