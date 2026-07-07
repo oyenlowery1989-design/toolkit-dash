@@ -14,6 +14,56 @@ import { isAuthEnabled } from "@/lib/supabase-client";
 import { Button } from "@/components/ui/button";
 
 
+function FolderHeader({
+  label,
+  count,
+  collapsed,
+  onToggle,
+}: {
+  label: string;
+  count: number;
+  collapsed: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <Button variant="ghost"
+      onClick={onToggle}
+      className="h-auto w-full flex items-center gap-1.5 px-3 pt-2 pb-1 hover:text-foreground transition-colors"
+    >
+      {collapsed
+        ? <ChevronRight className="h-3 w-3 text-muted-foreground/70" />
+        : <ChevronDown className="h-3 w-3 text-muted-foreground/70" />}
+      <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70">
+        {label}
+      </span>
+      <span className="ml-auto text-[10px] text-muted-foreground/55">{count}</span>
+    </Button>
+  );
+}
+
+function WalletRow({
+  wallet,
+  icon,
+  onClick,
+}: {
+  wallet: { id: string; name: string; publicKey: string };
+  icon: React.ReactNode;
+  onClick: () => void;
+}) {
+  return (
+    <Button variant="ghost"
+      onClick={onClick}
+      className="h-auto w-full flex items-center gap-2.5 rounded-md px-2 py-1.5 text-left hover:bg-muted transition-colors"
+    >
+      {icon}
+      <div className="flex-1 min-w-0">
+        <p className="text-sm font-medium truncate">{wallet.name}</p>
+        <p className="text-xs text-muted-foreground font-mono">{shortAddr(wallet.publicKey)}</p>
+      </div>
+    </Button>
+  );
+}
+
 function WalletButton() {
   const { wallets } = useWalletsV2();
   const { folders } = useWalletFolders();
@@ -68,22 +118,24 @@ function WalletButton() {
   if (!activeWallet) {
     return (
       <div className="relative" ref={ref}>
-        <Button variant="ghost"
-          onClick={() => wallets.length > 0 ? setOpen((v) => !v) : undefined}
-          className="flex items-center gap-2 rounded-md border border-dashed border-border px-3 h-8 text-xs text-muted-foreground hover:text-foreground hover:border-foreground/30 transition-colors"
-        >
-          <Wallet className="h-3.5 w-3.5" />
-          {wallets.length === 0 ? (
-            <Link href="/wallet-manager" className="hover:underline">
-              Connect Wallet
-            </Link>
-          ) : (
-            <>
-              <span>Connect Wallet</span>
-              <ChevronDown className="h-3 w-3" />
-            </>
-          )}
-        </Button>
+        {wallets.length === 0 ? (
+          <Link
+            href="/wallet-manager"
+            className="flex items-center gap-2 rounded-md border border-dashed border-border px-3 h-8 text-xs text-muted-foreground hover:text-foreground hover:border-foreground/30 transition-colors"
+          >
+            <Wallet className="h-3.5 w-3.5" />
+            Connect Wallet
+          </Link>
+        ) : (
+          <Button variant="ghost"
+            onClick={() => setOpen((v) => !v)}
+            className="flex items-center gap-2 rounded-md border border-dashed border-border px-3 h-8 text-xs text-muted-foreground hover:text-foreground hover:border-foreground/30 transition-colors"
+          >
+            <Wallet className="h-3.5 w-3.5" />
+            <span>Connect Wallet</span>
+            <ChevronDown className="h-3 w-3" />
+          </Button>
+        )}
 
         {open && wallets.length > 0 && (
           <div className="absolute right-0 top-12 z-50 w-68 rounded-md border border-border bg-popover shadow-lg" style={{ width: "17rem" }}>
@@ -97,34 +149,25 @@ function WalletButton() {
                 const isCollapsed = !expandedFolders.has(folder.id);
                 return (
                   <div key={folder.id}>
-                    <Button variant="ghost"
-                      onClick={() => toggleFolder(folder.id)}
-                      className="h-auto w-full flex items-center gap-1.5 px-3 pt-2 pb-1 hover:text-foreground transition-colors"
-                    >
-                      {isCollapsed
-                        ? <ChevronRight className="h-3 w-3 text-muted-foreground/60" />
-                        : <ChevronDown className="h-3 w-3 text-muted-foreground/60" />}
-                      <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60">
-                        {folder.name}
-                      </span>
-                      <span className="ml-auto text-[10px] text-muted-foreground/40">{folderWallets.length}</span>
-                    </Button>
+                    <FolderHeader
+                      label={folder.name}
+                      count={folderWallets.length}
+                      collapsed={isCollapsed}
+                      onToggle={() => toggleFolder(folder.id)}
+                    />
                     {!isCollapsed && (
                       <div className="px-1 pb-1">
                         {folderWallets.map((w) => (
-                          <Button variant="ghost"
+                          <WalletRow
                             key={w.id}
+                            wallet={w}
+                            icon={
+                              w.secretKey
+                                ? <span title="Full wallet"><KeyRound className="h-3.5 w-3.5 shrink-0 text-muted-foreground" /></span>
+                                : <span title="Watch only"><Eye className="h-3.5 w-3.5 shrink-0 text-muted-foreground" /></span>
+                            }
                             onClick={() => { connect(w.id); setOpen(false); }}
-                            className="h-auto w-full flex items-center gap-2.5 rounded-md px-2 py-1.5 text-left hover:bg-muted transition-colors"
-                          >
-                            {w.secretKey
-                              ? <span title="Full wallet"><KeyRound className="h-3.5 w-3.5 shrink-0 text-muted-foreground" /></span>
-                              : <span title="Watch only"><Eye className="h-3.5 w-3.5 shrink-0 text-muted-foreground" /></span>}
-                            <div className="flex-1 min-w-0">
-                              <p className="text-sm font-medium truncate">{w.name}</p>
-                              <p className="text-xs text-muted-foreground font-mono">{shortAddr(w.publicKey)}</p>
-                            </div>
-                          </Button>
+                          />
                         ))}
                       </div>
                     )}
@@ -139,32 +182,23 @@ function WalletButton() {
                 const isCollapsed = !expandedFolders.has("__other__");
                 return (
                   <div>
-                    <Button variant="ghost"
-                      onClick={() => toggleFolder("__other__")}
-                      className="h-auto w-full flex items-center gap-1.5 px-3 pt-2 pb-1 hover:text-foreground transition-colors"
-                    >
-                      {isCollapsed
-                        ? <ChevronRight className="h-3 w-3 text-muted-foreground/60" />
-                        : <ChevronDown className="h-3 w-3 text-muted-foreground/60" />}
-                      <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60">Other</span>
-                      <span className="ml-auto text-[10px] text-muted-foreground/40">{orphaned.length}</span>
-                    </Button>
+                    <FolderHeader
+                      label="Other"
+                      count={orphaned.length}
+                      collapsed={isCollapsed}
+                      onToggle={() => toggleFolder("__other__")}
+                    />
                     {!isCollapsed && (
-                    <div className="px-1 pb-1">
-                      {orphaned.map((w) => (
-                        <Button variant="ghost"
-                          key={w.id}
-                          onClick={() => { connect(w.id); setOpen(false); }}
-                          className="h-auto w-full flex items-center gap-2.5 rounded-md px-2 py-1.5 text-left hover:bg-muted transition-colors"
-                        >
-                          <Wallet className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                          <div className="flex-1 min-w-0">
-                            <p className="text-sm font-medium truncate">{w.name}</p>
-                            <p className="text-xs text-muted-foreground font-mono">{shortAddr(w.publicKey)}</p>
-                          </div>
-                        </Button>
-                      ))}
-                    </div>
+                      <div className="px-1 pb-1">
+                        {orphaned.map((w) => (
+                          <WalletRow
+                            key={w.id}
+                            wallet={w}
+                            icon={<Wallet className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />}
+                            onClick={() => { connect(w.id); setOpen(false); }}
+                          />
+                        ))}
+                      </div>
                     )}
                   </div>
                 );
@@ -247,30 +281,21 @@ function WalletButton() {
                 const isCollapsed = !expandedFolders.has(`switch-${folder.id}`);
                 return (
                   <div key={folder.id}>
-                    <Button variant="ghost"
-                      onClick={() => toggleFolder(`switch-${folder.id}`)}
-                      className="h-auto w-full flex items-center gap-1.5 px-3 pt-1 pb-1 hover:text-foreground transition-colors"
-                    >
-                      {isCollapsed
-                        ? <ChevronRight className="h-3 w-3 text-muted-foreground/60" />
-                        : <ChevronDown className="h-3 w-3 text-muted-foreground/60" />}
-                      <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60">{folder.name}</span>
-                      <span className="ml-auto text-[10px] text-muted-foreground/40">{fw.length}</span>
-                    </Button>
+                    <FolderHeader
+                      label={folder.name}
+                      count={fw.length}
+                      collapsed={isCollapsed}
+                      onToggle={() => toggleFolder(`switch-${folder.id}`)}
+                    />
                     {!isCollapsed && (
                       <div className="px-1 pb-1">
                         {fw.map((w) => (
-                          <Button variant="ghost"
+                          <WalletRow
                             key={w.id}
+                            wallet={w}
+                            icon={<RefreshCw className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />}
                             onClick={() => { connect(w.id); setOpen(false); }}
-                            className="h-auto w-full flex items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-sm hover:bg-muted transition-colors"
-                          >
-                            <RefreshCw className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                            <div className="flex-1 min-w-0">
-                              <p className="text-sm truncate">{w.name}</p>
-                              <p className="text-xs text-muted-foreground font-mono">{shortAddr(w.publicKey)}</p>
-                            </div>
-                          </Button>
+                          />
                         ))}
                       </div>
                     )}
@@ -285,30 +310,21 @@ function WalletButton() {
                 const isCollapsed = !expandedFolders.has("switch-__other__");
                 return (
                   <div>
-                    <Button variant="ghost"
-                      onClick={() => toggleFolder("switch-__other__")}
-                      className="h-auto w-full flex items-center gap-1.5 px-3 pt-1 pb-1 hover:text-foreground transition-colors"
-                    >
-                      {isCollapsed
-                        ? <ChevronRight className="h-3 w-3 text-muted-foreground/60" />
-                        : <ChevronDown className="h-3 w-3 text-muted-foreground/60" />}
-                      <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60">Other</span>
-                      <span className="ml-auto text-[10px] text-muted-foreground/40">{orphaned.length}</span>
-                    </Button>
+                    <FolderHeader
+                      label="Other"
+                      count={orphaned.length}
+                      collapsed={isCollapsed}
+                      onToggle={() => toggleFolder("switch-__other__")}
+                    />
                     {!isCollapsed && (
                       <div className="px-1 pb-1">
                         {orphaned.map((w) => (
-                          <Button variant="ghost"
+                          <WalletRow
                             key={w.id}
+                            wallet={w}
+                            icon={<RefreshCw className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />}
                             onClick={() => { connect(w.id); setOpen(false); }}
-                            className="h-auto w-full flex items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-sm hover:bg-muted transition-colors"
-                          >
-                            <RefreshCw className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                            <div className="flex-1 min-w-0">
-                              <p className="text-sm truncate">{w.name}</p>
-                              <p className="text-xs text-muted-foreground font-mono">{shortAddr(w.publicKey)}</p>
-                            </div>
-                          </Button>
+                          />
                         ))}
                       </div>
                     )}

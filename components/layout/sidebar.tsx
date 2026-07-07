@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { Menu, X, Rocket, Sun, Moon, Database, UserSearch, GitFork, ChevronDown, ChevronRight, Clock } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useTheme } from "next-themes";
 import { Button } from "@/components/ui/button";
 import { useSettings, NETWORK_LABELS, type Network } from "@/lib/settings";
@@ -16,7 +16,7 @@ export function Sidebar() {
   const pathname = usePathname();
   const router = useRouter();
   const [isOpen, setIsOpen] = useState(false);
-  const [recentOpen, setRecentOpen] = useState(true);
+  const [recentOpen, setRecentOpen] = useState(false);
   const { settings, updateSettings } = useSettings();
 
   const VISIBLE_NETWORKS: Network[] = ["public", "testnet"];
@@ -28,6 +28,11 @@ export function Sidebar() {
   };
   const { theme, setTheme } = useTheme();
   const { history: savedSearches, remove: removeSearch } = useSavedSearches();
+  const [isMac, setIsMac] = useState(false);
+
+  useEffect(() => {
+    setIsMac(/Mac|iPod|iPhone|iPad/.test(navigator.platform));
+  }, []);
 
   const handleSearchClick = (type: string, value: string) => {
     setIsOpen(false);
@@ -89,7 +94,7 @@ export function Sidebar() {
                   return (
                     <div
                       key={`sec-${index}`}
-                      className="pt-2 pb-0.5 px-2.5 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/60"
+                      className="pt-2 pb-0.5 px-2.5 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/70"
                     >
                       {entry.section}
                     </div>
@@ -102,7 +107,7 @@ export function Sidebar() {
                     href={entry.href}
                     onClick={() => setIsOpen(false)}
                     className={cn(
-                      "flex items-center px-2.5 py-[3px] text-[13px] font-medium rounded-lg transition-colors group leading-tight",
+                      "flex items-center px-2.5 py-2 md:py-[3px] text-[13px] font-medium rounded-lg transition-colors group leading-tight",
                       isActive
                         ? "bg-primary/10 text-primary"
                         : "text-muted-foreground hover:bg-accent hover:text-accent-foreground",
@@ -178,7 +183,7 @@ export function Sidebar() {
                             )}
                           </button>
                           <button
-                            className="opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive shrink-0"
+                            className="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 transition-opacity text-muted-foreground hover:text-destructive shrink-0"
                             onClick={() => removeSearch(entry.timestamp)}
                             aria-label="Remove"
                           >
@@ -237,7 +242,7 @@ export function Sidebar() {
                     <Moon className="absolute h-3.5 w-3.5 rotate-90 scale-0 transition-all dark:rotate-0 dark:scale-100" />
                   </Button>
                   <kbd className="hidden sm:inline-flex h-5 select-none items-center gap-1 rounded border bg-muted px-1.5 font-mono text-[10px] font-medium text-muted-foreground">
-                    <span className="text-xs">Ctrl</span>K
+                    <span className="text-xs">{isMac ? "⌘" : "Ctrl"}</span>K
                   </kbd>
                 </div>
               </div>
