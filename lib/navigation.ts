@@ -96,6 +96,11 @@ export const menuItems: MenuEntry[] = [
     href: "/transactions",
     icon: ArrowDownUp,
   },
+  {
+    title: "DEX Orderbook",
+    href: "/dex-orderbook",
+    icon: BarChart3,
+  },
 
   { section: "Payments" },
   {
@@ -114,11 +119,6 @@ export const menuItems: MenuEntry[] = [
     icon: Ghost,
   },
   {
-    title: "Account Funder",
-    href: "/account-funder",
-    icon: Users,
-  },
-  {
     title: "Auto-Send Groups",
     href: "/auto-send-groups",
     icon: SendHorizonal,
@@ -127,11 +127,6 @@ export const menuItems: MenuEntry[] = [
     title: "Tiered Rewards",
     href: "/tiered-rewards",
     icon: Trophy,
-  },
-  {
-    title: "Wallet Balances",
-    href: "/wallet-balances",
-    icon: LayoutList,
   },
 
   { section: "Asset Lifecycle" },
@@ -155,12 +150,32 @@ export const menuItems: MenuEntry[] = [
     href: "/soroban",
     icon: FileCode2,
   },
-
-  { section: "DEX" },
   {
-    title: "DEX Orderbook",
-    href: "/dex-orderbook",
-    icon: BarChart3,
+    title: "Account Funder",
+    href: "/account-funder",
+    icon: Users,
+  },
+
+  { section: "Wallets" },
+  {
+    title: "My Wallet",
+    href: "/my-wallet",
+    icon: Wallet,
+  },
+  {
+    title: "Wallet Manager",
+    href: "/wallet-manager",
+    icon: Wallet,
+  },
+  {
+    title: "Wallet Balances",
+    href: "/wallet-balances",
+    icon: LayoutList,
+  },
+  {
+    title: "Address Generator",
+    href: "/address-generator",
+    icon: Fingerprint,
   },
 
   { section: "My Data" },
@@ -183,23 +198,6 @@ export const menuItems: MenuEntry[] = [
     title: "Search History",
     href: "/search-history",
     icon: Clock,
-  },
-
-  { section: "Tools" },
-  {
-    title: "My Wallet",
-    href: "/my-wallet",
-    icon: Wallet,
-  },
-  {
-    title: "Address Generator",
-    href: "/address-generator",
-    icon: Fingerprint,
-  },
-  {
-    title: "Wallet Manager",
-    href: "/wallet-manager",
-    icon: Wallet,
   },
 
   { separator: true },

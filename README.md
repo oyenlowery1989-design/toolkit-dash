@@ -8,6 +8,8 @@ A personal power-user dashboard for the Stellar blockchain. Built with Next.js (
 
 Full analysis, payment, and asset-lifecycle toolkit organized in a sidebar:
 
+Sidebar sections mirror `lib/navigation.ts` exactly — that file is the single source of truth for section/module placement; update it (and this table) together when adding a module.
+
 ### Analysis
 | Module | Description |
 |---|---|
@@ -16,7 +18,9 @@ Full analysis, payment, and asset-lifecycle toolkit organized in a sidebar:
 | **Bulk Asset Sales** | Same analysis for a list of assets in one scan |
 | **Account Investigator** | Full account profile — balances, top senders/receivers, payment history |
 | **Intermediary Tracer** | Trace the real creator of an account through known intermediaries |
+| **Tracer v2** | Operator fingerprinting, bulk origin trace, watchlist, interactive flow graph |
 | **Transaction Explorer** | Browse and decode raw Stellar transactions |
+| **DEX Orderbook** | Live bid/ask tables, stats cards, depth chart for any trading pair |
 
 ### Payments
 | Module | Description |
@@ -24,10 +28,8 @@ Full analysis, payment, and asset-lifecycle toolkit organized in a sidebar:
 | **Single Payment** | Multi-leg payments with path finding, claimable balances, fee bump |
 | **Bulk Payments** | Send XLM/assets to hundreds of recipients in batched transactions |
 | **Ghost Payments** | Minimal-value payments with memo — on-chain proof of eligibility/signature |
-| **Account Funder** | Generate N keypairs and fund them from a parent account |
 | **Auto-Send Groups** | Scheduled proportional XLM distribution groups (cron scheduler) |
 | **Tiered Rewards** | Per-holder reward distribution based on asset balance tiers |
-| **Wallet Balances** | Live XLM balance across all saved wallets; filter by folder or group |
 
 ### Asset Lifecycle
 | Module | Description |
@@ -36,11 +38,15 @@ Full analysis, payment, and asset-lifecycle toolkit organized in a sidebar:
 | **Token Control** | Set AUTH_REQUIRED / AUTH_REVOCABLE / AUTH_CLAWBACK flags; freeze/unfreeze holders |
 | **Trustline Manager** | Add/remove trustlines (single or bulk matrix); drain before remove; offer cancel |
 | **Soroban Contracts** | Wrap a classic asset with a Stellar Asset Contract (SAC) |
+| **Account Funder** | Generate N keypairs and fund them from a parent account |
 
-### DEX
+### Wallets
 | Module | Description |
 |---|---|
-| **DEX Orderbook** | Live bid/ask tables, stats cards, depth chart for any trading pair |
+| **My Wallet** | Connected wallet overview — balances, offers, trustlines, payment history, merge |
+| **Wallet Manager** | Folders + wallets + connect/disconnect; secret keys stored in SQLite |
+| **Wallet Balances** | Live XLM balance across all saved wallets; filter by folder or group |
+| **Address Generator** | Vanity keypair generator (Web Worker, client-side only) |
 
 ### My Data
 | Module | Description |
@@ -49,13 +55,6 @@ Full analysis, payment, and asset-lifecycle toolkit organized in a sidebar:
 | **Asset Groups** | Group addresses by role (issuer, distributor, bank, etc.) per asset |
 | **Saved Analyses** | Auto-saved asset proceeds results with cross-asset destination aggregation |
 | **Search History** | Recent account lookups |
-
-### Tools
-| Module | Description |
-|---|---|
-| **My Wallet** | Connected wallet overview — balances, offers, trustlines, payment history, merge |
-| **Address Generator** | Vanity keypair generator (Web Worker, client-side only) |
-| **Wallet Manager** | Folders + wallets + connect/disconnect; secret keys stored in SQLite |
 
 ---
 
@@ -94,23 +93,38 @@ For Vercel deployment, set:
 ```
 app/                    Next.js App Router pages
   (analysis)/           Analysis modules
-  (tools)/              Payment + tool modules
+  (tools)/              Payment + Asset Lifecycle + Wallets modules
   (data)/               My Data modules
   (config)/             Settings
   api/db/               DB CRUD API routes (SQLite ↔ Supabase dual-write)
 
-components/             Panel components (one per module)
-hooks/                  React hooks — DB-backed caches (createDbCache pattern)
+components/
+  <module>/             Panel components, one directory per module
+  shared/               Cross-module UI — ShortAddress, AuthFlag, ChainDisplay
+  shared/proceeds/      ProceedsStatsCards, ProceedsDestinationsTable, SaveToGroupButton, ProceedsStatusBadge
+  ui/                   shadcn kit (Button, Input, Select, Switch, Dialog, WalletSelect, ...)
+
+hooks/                  React hooks — DB-backed caches (createDbCache pattern) + shared helpers
+                        (use-horizon-server, use-xlm-usd-price, use-auto-save-signing-key, use-bulk-scan-state)
 lib/
-  navigation.ts         Sidebar menu definition
+  navigation.ts         Sidebar menu definition — single source of truth for section/module placement
   db.ts                 SQLite schema + query helpers
   db-client.ts          createDbCache<T>() — React hook factory for DB tables
   settings.ts           App-wide settings (network, Horizon URL)
   format.ts             formatXlm(), shortAddr(), parseAddresses()
+  address-resolver.ts   resolveAddress() — powers ShortAddress's badge lookup
+  asset-pair.ts         parseAssetPair()/parseAssetPairs() — CODE:ISSUER text parsing
+  trade-helpers.ts      resolveAssetToXlmTrade() — DEX trade-direction resolution
+  csv-export.ts         downloadCSV() — properly quoted/escaped CSV export
+  horizon-fetch.ts      fetchJson() — retry/backoff wrapper for raw Horizon REST calls
+  stellar-helpers.ts    getErrorMessage() — Horizon error parsing
+  stellar-submit.ts     withAccountLock() — per-key submission-order serialization
+  notifications.ts      notifyIfHidden() — background-tab browser notifications
   asset-groups/         Asset group types + constants
-  bulk-payments/        Bulk payment builder + runner
-  auto-send/            Auto-send scheduler + runner
+  <module>/             Per-module pure logic (types.ts, fetchers.ts/runner.ts/builder.ts)
 ```
+
+See `CLAUDE.md`'s "Reusable Components & Utilities" section for the full catalog with usage notes, and "Creating a New Module — Checklist" for the step-by-step for adding a module.
 
 ### Storage
 
