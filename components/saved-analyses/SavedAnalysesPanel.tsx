@@ -28,74 +28,55 @@ import {
   CardTitle,
   CardDescription,
 } from "@/components/ui/card";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { useSavedAnalyses } from "@/hooks/use-saved-analyses";
 import type { SavedAnalysis } from "@/hooks/use-saved-analyses";
 import { ShortAddress } from "@/components/shared/ShortAddress";
+import { ProceedsDestinationsTable } from "@/components/shared/proceeds/ProceedsDestinationsTable";
 import { formatXlm } from "@/lib/format";
 import { timeAgo } from "@/lib/stellar-helpers";
 import { NETWORK_LABELS } from "@/lib/settings";
 import { SnapshotCompare } from "./SnapshotCompare";
 
 // ---------------------------------------------------------------------------
-// DestinationsTable — used in card expanded view
+// Shared sort logic — used by both Table and Cards views
 // ---------------------------------------------------------------------------
 
-function DestinationsTable({ analysis }: { analysis: SavedAnalysis }) {
-  const { result } = analysis;
-  const total = result.totalXlmProceeds;
-  return (
-    <div className="overflow-x-auto mt-4">
-      <table className="w-full text-xs">
-        <thead>
-          <tr className="border-b border-border text-muted-foreground">
-            <th className="pb-2 text-left font-medium">Destination</th>
-            <th className="pb-2 text-right font-medium">XLM Received</th>
-            <th className="pb-2 text-right font-medium">% of Proceeds</th>
-            <th className="pb-2 text-right font-medium">Tx Count</th>
-          </tr>
-        </thead>
-        <tbody>
-          {result.topDestinations.map((d) => {
-            const pct = total > 0 ? (d.totalXlm / total) * 100 : 0;
-            return (
-              <tr key={d.address} className="border-b border-border/50">
-                <td className="py-2">
-                  <ShortAddress
-                    address={d.address}
-                    network={analysis.network as "public" | "testnet"}
-                  />
-                </td>
-                <td className="py-2 text-right tabular-nums font-mono">
-                  {formatXlm(d.totalXlm)}
-                </td>
-                <td className="py-2 text-right">
-                  <div className="flex items-center justify-end gap-2">
-                    <div className="w-20 h-1.5 rounded-full bg-muted overflow-hidden">
-                      <div
-                        className="h-full rounded-full bg-primary"
-                        style={{ width: `${Math.min(pct, 100)}%` }}
-                      />
-                    </div>
-                    <span className="tabular-nums w-12 text-right">
-                      {pct.toFixed(1)}%
-                    </span>
-                  </div>
-                </td>
-                <td className="py-2 text-right tabular-nums">{d.count}</td>
-              </tr>
-            );
-          })}
-          {result.topDestinations.length === 0 && (
-            <tr>
-              <td colSpan={4} className="py-4 text-center text-muted-foreground">
-                No outgoing XLM transfers found.
-              </td>
-            </tr>
-          )}
-        </tbody>
-      </table>
-    </div>
-  );
+type SortField = "assetCode" | "xlmProceeds" | "assetSold" | "outgoing" | "onHand" | "timestamp";
+type SortDir = "asc" | "desc";
+type Sort = { field: SortField; dir: SortDir };
+
+const SORT_OPTIONS: { value: string; label: string; sort: Sort }[] = [
+  { value: "timestamp:desc", label: "Newest first", sort: { field: "timestamp", dir: "desc" } },
+  { value: "timestamp:asc", label: "Oldest first", sort: { field: "timestamp", dir: "asc" } },
+  { value: "xlmProceeds:desc", label: "Highest XLM Proceeds", sort: { field: "xlmProceeds", dir: "desc" } },
+  { value: "assetSold:desc", label: "Highest Asset Sold", sort: { field: "assetSold", dir: "desc" } },
+  { value: "outgoing:desc", label: "Highest Outgoing", sort: { field: "outgoing", dir: "desc" } },
+  { value: "onHand:desc", label: "Highest On Hand", sort: { field: "onHand", dir: "desc" } },
+  { value: "assetCode:asc", label: "Asset Code A→Z", sort: { field: "assetCode", dir: "asc" } },
+];
+
+function sortAnalyses(analyses: SavedAnalysis[], sort: Sort): SavedAnalysis[] {
+  return [...analyses].sort((a, b) => {
+    let av = 0, bv = 0;
+    switch (sort.field) {
+      case "assetCode": return sort.dir === "asc"
+        ? a.assetCode.localeCompare(b.assetCode)
+        : b.assetCode.localeCompare(a.assetCode);
+      case "xlmProceeds": av = a.result.totalXlmProceeds; bv = b.result.totalXlmProceeds; break;
+      case "assetSold":   av = a.result.totalAssetSold;   bv = b.result.totalAssetSold;   break;
+      case "outgoing":    av = a.result.totalOutgoingXlm; bv = b.result.totalOutgoingXlm; break;
+      case "onHand":      av = a.result.estimatedOnHandXlm ?? 0; bv = b.result.estimatedOnHandXlm ?? 0; break;
+      case "timestamp":   av = a.timestamp; bv = b.timestamp; break;
+    }
+    return sort.dir === "desc" ? bv - av : av - bv;
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -117,6 +98,7 @@ function AnalysisCard({ analysis }: { analysis: SavedAnalysis }) {
       asset: analysis.assetCode,
       issuer: analysis.issuer,
       account: analysis.distribAddresses[0] ?? "",
+      autorun: "1",
     });
     router.push(`/asset-sales?${params.toString()}`);
   };
@@ -207,7 +189,11 @@ function AnalysisCard({ analysis }: { analysis: SavedAnalysis }) {
             size="icon"
             className="h-8 w-8 text-muted-foreground hover:text-destructive"
             title="Delete"
-            onClick={() => remove(analysis.id)}
+            onClick={() => {
+              if (window.confirm(`Delete saved analysis "${analysis.name}"? This cannot be undone.`)) {
+                remove(analysis.id);
+              }
+            }}
           >
             <Trash2 className="h-4 w-4" />
           </Button>
@@ -305,7 +291,13 @@ function AnalysisCard({ analysis }: { analysis: SavedAnalysis }) {
           </div>
 
           <h4 className="text-sm font-semibold mt-4 mb-1">Top Destinations</h4>
-          <DestinationsTable analysis={analysis} />
+          <ProceedsDestinationsTable
+            destinations={analysis.result.topDestinations}
+            totalXlmProceeds={analysis.result.totalXlmProceeds}
+            network={analysis.network}
+            showProgressBar
+            emptyMessage="No outgoing XLM transfers found."
+          />
         </div>
       )}
     </Card>
@@ -316,38 +308,27 @@ function AnalysisCard({ analysis }: { analysis: SavedAnalysis }) {
 // SortableTableView — Phase 1
 // ---------------------------------------------------------------------------
 
-type SortField = "assetCode" | "xlmProceeds" | "assetSold" | "outgoing" | "onHand" | "timestamp";
-type SortDir = "asc" | "desc";
-
-function SortIcon({ field, sort }: { field: SortField; sort: { field: SortField; dir: SortDir } }) {
+function SortIcon({ field, sort }: { field: SortField; sort: Sort }) {
   if (sort.field !== field) return <ArrowUpDown className="h-3 w-3 opacity-40" />;
   return sort.dir === "desc" ? <ArrowDown className="h-3 w-3" /> : <ArrowUp className="h-3 w-3" />;
 }
 
-function TableView({ analyses }: { analyses: SavedAnalysis[] }) {
+function TableView({
+  analyses,
+  sort,
+  onSortChange,
+}: {
+  analyses: SavedAnalysis[];
+  sort: Sort;
+  onSortChange: (sort: Sort) => void;
+}) {
   const router = useRouter();
   const { remove } = useSavedAnalyses();
-  const [sort, setSort] = useState<{ field: SortField; dir: SortDir }>({ field: "xlmProceeds", dir: "desc" });
 
   const toggle = (field: SortField) =>
-    setSort((s) => ({ field, dir: s.field === field && s.dir === "desc" ? "asc" : "desc" }));
+    onSortChange({ field, dir: sort.field === field && sort.dir === "desc" ? "asc" : "desc" });
 
-  const sorted = useMemo(() => {
-    return [...analyses].sort((a, b) => {
-      let av = 0, bv = 0;
-      switch (sort.field) {
-        case "assetCode": return sort.dir === "asc"
-          ? a.assetCode.localeCompare(b.assetCode)
-          : b.assetCode.localeCompare(a.assetCode);
-        case "xlmProceeds": av = a.result.totalXlmProceeds; bv = b.result.totalXlmProceeds; break;
-        case "assetSold":   av = a.result.totalAssetSold;   bv = b.result.totalAssetSold;   break;
-        case "outgoing":    av = a.result.totalOutgoingXlm; bv = b.result.totalOutgoingXlm; break;
-        case "onHand":      av = a.result.estimatedOnHandXlm ?? 0; bv = b.result.estimatedOnHandXlm ?? 0; break;
-        case "timestamp":   av = a.timestamp; bv = b.timestamp; break;
-      }
-      return sort.dir === "desc" ? bv - av : av - bv;
-    });
-  }, [analyses, sort]);
+  const sorted = useMemo(() => sortAnalyses(analyses, sort), [analyses, sort]);
 
   const th = (label: string, field: SortField) => (
     <th
@@ -422,7 +403,7 @@ function TableView({ analyses }: { analyses: SavedAnalysis[] }) {
                     className="h-7 w-7"
                     title="Re-run"
                     onClick={() => {
-                      const p = new URLSearchParams({ asset: a.assetCode, issuer: a.issuer, account: a.distribAddresses[0] ?? "" });
+                      const p = new URLSearchParams({ asset: a.assetCode, issuer: a.issuer, account: a.distribAddresses[0] ?? "", autorun: "1" });
                       router.push(`/asset-sales?${p.toString()}`);
                     }}
                   >
@@ -433,7 +414,11 @@ function TableView({ analyses }: { analyses: SavedAnalysis[] }) {
                     size="icon"
                     className="h-7 w-7 text-muted-foreground hover:text-destructive"
                     title="Delete"
-                    onClick={() => remove(a.id)}
+                    onClick={() => {
+                      if (window.confirm(`Delete saved analysis "${a.name}"? This cannot be undone.`)) {
+                        remove(a.id);
+                      }
+                    }}
                   >
                     <Trash2 className="h-3.5 w-3.5" />
                   </Button>
@@ -584,7 +569,8 @@ function CrossAssetDestinations({ analyses }: { analyses: SavedAnalysis[] }) {
 export function SavedAnalysesPanel() {
   const { analyses } = useSavedAnalyses();
   const [query, setQuery] = useState("");
-  const [view, setView] = useState<"cards" | "table">("table");
+  const [view, setView] = useState<"cards" | "table">("cards");
+  const [sort, setSort] = useState<Sort>({ field: "timestamp", dir: "desc" });
 
   const filtered = useMemo(() => {
     if (!query.trim()) return analyses;
@@ -598,6 +584,8 @@ export function SavedAnalysesPanel() {
         a.issuer.toLowerCase().includes(q),
     );
   }, [analyses, query]);
+
+  const sortedFiltered = useMemo(() => sortAnalyses(filtered, sort), [filtered, sort]);
 
   return (
     <div className="p-6 space-y-6">
@@ -613,19 +601,37 @@ export function SavedAnalysesPanel() {
           </p>
         </div>
         {analyses.length > 0 && (
-          <div className="flex items-center rounded-md border border-border overflow-hidden shrink-0">
-            <button
-              className={`px-3 py-1.5 text-xs flex items-center gap-1.5 transition-colors ${view === "table" ? "bg-primary text-primary-foreground" : "hover:bg-muted"}`}
-              onClick={() => setView("table")}
+          <div className="flex items-center gap-2 shrink-0">
+            <Select
+              value={`${sort.field}:${sort.dir}`}
+              onValueChange={(v) => {
+                const opt = SORT_OPTIONS.find((o) => o.value === v);
+                if (opt) setSort(opt.sort);
+              }}
             >
-              <Table2 className="h-3.5 w-3.5" /> Table
-            </button>
-            <button
-              className={`px-3 py-1.5 text-xs flex items-center gap-1.5 transition-colors ${view === "cards" ? "bg-primary text-primary-foreground" : "hover:bg-muted"}`}
-              onClick={() => setView("cards")}
-            >
-              <LayoutList className="h-3.5 w-3.5" /> Cards
-            </button>
+              <SelectTrigger className="h-9 w-[180px] text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {SORT_OPTIONS.map((o) => (
+                  <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <div className="flex items-center rounded-md border border-border overflow-hidden shrink-0">
+              <button
+                className={`px-3 py-1.5 text-xs flex items-center gap-1.5 transition-colors ${view === "cards" ? "bg-primary text-primary-foreground" : "hover:bg-muted"}`}
+                onClick={() => setView("cards")}
+              >
+                <LayoutList className="h-3.5 w-3.5" /> Cards
+              </button>
+              <button
+                className={`px-3 py-1.5 text-xs flex items-center gap-1.5 transition-colors ${view === "table" ? "bg-primary text-primary-foreground" : "hover:bg-muted"}`}
+                onClick={() => setView("table")}
+              >
+                <Table2 className="h-3.5 w-3.5" /> Table
+              </button>
+            </div>
           </div>
         )}
       </div>
@@ -666,10 +672,10 @@ export function SavedAnalysesPanel() {
           </CardContent>
         </Card>
       ) : view === "table" ? (
-        <TableView analyses={filtered} />
+        <TableView analyses={filtered} sort={sort} onSortChange={setSort} />
       ) : (
         <div className="space-y-3">
-          {filtered.map((a) => <AnalysisCard key={a.id} analysis={a} />)}
+          {sortedFiltered.map((a) => <AnalysisCard key={a.id} analysis={a} />)}
         </div>
       )}
     </div>

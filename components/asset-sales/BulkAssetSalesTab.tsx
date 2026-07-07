@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   Card,
   CardContent,
@@ -99,6 +100,7 @@ async function runConcurrent<T>(
 // ---------------------------------------------------------------------------
 
 export function BulkAssetSalesPanel() {
+  const router = useRouter();
   const { settings } = useSettings();
   const { upsert: upsertSearch } = useSavedSearches();
   const { saveAnalysis } = useSavedAnalyses();
@@ -444,7 +446,7 @@ export function BulkAssetSalesPanel() {
         <div className="space-y-3">
           {/* Save All button */}
           {doneCount > 0 && !running && (
-            <div className="flex justify-end">
+            <div className="flex justify-end gap-2">
               {allSaved ? (
                 <Button variant="outline" size="sm" disabled>
                   <BookmarkCheck className="mr-2 h-3.5 w-3.5 text-green-500" />
@@ -456,6 +458,10 @@ export function BulkAssetSalesPanel() {
                   Save All Completed ({doneCount})
                 </Button>
               )}
+              <Button variant="ghost" size="sm" onClick={() => router.push("/saved-analyses")}>
+                <BookmarkCheck className="mr-2 h-3.5 w-3.5" />
+                View Saved Analyses →
+              </Button>
             </div>
           )}
 

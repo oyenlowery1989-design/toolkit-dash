@@ -694,6 +694,14 @@ export function AssetXlmProceedsTab() {
                     distribAddress={result.accounts[0]}
                   />
                 )}
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => router.push("/saved-analyses")}
+                >
+                  <BookmarkCheck className="mr-2 h-3.5 w-3.5" />
+                  View Saved Analyses →
+                </Button>
               </div>
 
               <ProceedsDestinationsTable
