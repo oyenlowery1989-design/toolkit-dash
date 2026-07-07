@@ -26,8 +26,10 @@ import {
 } from "lucide-react";
 import { useActiveWallet } from "@/hooks/use-active-wallet";
 import { useSettings, resolveHorizonUrl } from "@/lib/settings";
-import { shortAddr } from "@/lib/format";
 import { timeAgo } from "@/lib/stellar-helpers";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { ShortAddress } from "@/components/shared/ShortAddress";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -57,6 +59,8 @@ interface ClaimableBalance {
   amount: string;
   sponsor?: string;
   claimants: { destination: string; predicate: unknown }[];
+  /** Horizon `last_modified_time` — best available proxy for the entry's creation time (used as the reference point for `rel_before` predicates). */
+  createdAt?: string;
 }
 
 interface Payment {
@@ -160,6 +164,63 @@ function assetLabel(type: string, code: string): string {
   return type === "native" ? "XLM" : code;
 }
 
+/** Loose client-side format check — NOT a substitute for StrKey.isValidEd25519PublicKey, just gates when to render the destination preview. */
+function looksLikeStellarAddress(addr: string): boolean {
+  return /^G[A-Z2-7]{55}$/.test(addr.trim());
+}
+
+/**
+ * Recursively evaluates a Horizon claimant predicate against a reference time.
+ * Handles the leaf shapes Horizon actually returns (`unconditional`, `abs_before`,
+ * `abs_before_epoch`, `rel_before`) plus composite `and` / `or` / `not`.
+ * An unrecognized/empty shape (e.g. unconditional) is treated as satisfied.
+ */
+function isPredicateSatisfied(predicate: unknown, referenceMs: number): boolean {
+  if (!predicate || typeof predicate !== "object") return true;
+  const p = predicate as Record<string, unknown>;
+  const now = Date.now();
+
+  if ("unconditional" in p) return true;
+
+  if (typeof p.abs_before === "string") {
+    return now < new Date(p.abs_before).getTime();
+  }
+  if (typeof p.abs_before_epoch === "string" || typeof p.abs_before_epoch === "number") {
+    return now < Number(p.abs_before_epoch) * 1000;
+  }
+  if (typeof p.rel_before === "string" || typeof p.rel_before === "number") {
+    return now < referenceMs + Number(p.rel_before) * 1000;
+  }
+  if (Array.isArray(p.and)) {
+    return p.and.every((sub) => isPredicateSatisfied(sub, referenceMs));
+  }
+  if (Array.isArray(p.or)) {
+    return p.or.some((sub) => isPredicateSatisfied(sub, referenceMs));
+  }
+  if ("not" in p) {
+    return !isPredicateSatisfied(p.not, referenceMs);
+  }
+
+  // Unrecognized shape — treat as satisfied.
+  return true;
+}
+
+/** Best-effort human-readable unlock date for the common "not claimable before X" shape: `{ not: { abs_before: ISO } }`. */
+function predicateUnlockLabel(predicate: unknown): string | null {
+  if (!predicate || typeof predicate !== "object") return null;
+  const p = predicate as Record<string, unknown>;
+  if (p.not && typeof p.not === "object") {
+    const inner = p.not as Record<string, unknown>;
+    if (typeof inner.abs_before === "string") {
+      return new Date(inner.abs_before).toLocaleString();
+    }
+    if (typeof inner.abs_before_epoch === "string" || typeof inner.abs_before_epoch === "number") {
+      return new Date(Number(inner.abs_before_epoch) * 1000).toLocaleString();
+    }
+  }
+  return null;
+}
+
 // ---------------------------------------------------------------------------
 // Collapsible section
 // ---------------------------------------------------------------------------
@@ -182,10 +243,11 @@ function Section({
   const [open, setOpen] = useState(defaultOpen);
   return (
     <div className="rounded-xl border border-border bg-card overflow-hidden">
-      <button
+      <Button
         type="button"
+        variant="ghost"
         onClick={() => setOpen((v) => !v)}
-        className={`w-full flex items-center justify-between px-4 py-3 hover:bg-muted/30 transition-colors ${open ? "border-b border-border" : ""}`}
+        className={`w-full h-auto justify-between rounded-none px-4 py-3 hover:bg-muted/30 ${open ? "border-b border-border" : ""}`}
       >
         <div className="flex items-center gap-2">
           {open
@@ -199,7 +261,7 @@ function Section({
           )}
         </div>
         {right && <div onClick={(e) => e.stopPropagation()}>{right}</div>}
-      </button>
+      </Button>
       {open && children}
     </div>
   );
@@ -213,13 +275,15 @@ function ReserveBreakdown({ breakdown }: { breakdown: { label: string; count: nu
   const [open, setOpen] = useState(false);
   return (
     <div className="relative inline-block">
-      <button
+      <Button
+        variant="ghost"
+        size="icon"
         onClick={() => setOpen((v) => !v)}
-        className="ml-1 text-muted-foreground hover:text-foreground transition-colors"
+        className="ml-1 h-auto w-auto p-0 text-muted-foreground hover:bg-transparent hover:text-foreground"
         title="Reserve breakdown"
       >
         <Info className="h-3 w-3" />
-      </button>
+      </Button>
       {open && (
         <div className="absolute z-50 bottom-full left-1/2 -translate-x-1/2 mb-2 w-56 rounded-lg border border-border bg-popover shadow-lg p-3 text-xs">
           <p className="font-semibold mb-2 text-foreground">Reserve breakdown</p>
@@ -229,9 +293,14 @@ function ReserveBreakdown({ breakdown }: { breakdown: { label: string; count: nu
               <span className={row.xlm < 0 ? "text-green-500" : ""}>{row.xlm < 0 ? "-" : "+"}{fmtXlm(Math.abs(row.xlm))} XLM</span>
             </div>
           ))}
-          <button onClick={() => setOpen(false)} className="absolute top-2 right-2 text-muted-foreground hover:text-foreground">
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => setOpen(false)}
+            className="absolute top-2 right-2 h-auto w-auto p-0 text-muted-foreground hover:bg-transparent hover:text-foreground"
+          >
             <X className="h-3 w-3" />
-          </button>
+          </Button>
         </div>
       )}
     </div>
@@ -276,12 +345,17 @@ export default function MyWalletPage() {
     abortRef.current = ctrl;
     setLoading(true);
     setError(null);
+    setDetails(null);
 
     try {
       const server = new Horizon.Server(horizonUrl, { allowHttp: horizonUrl.startsWith("http://") });
       const acct = await server.loadAccount(pubkey);
 
-      const xlmBalance = acct.balances.find((b) => b.asset_type === "native")?.balance ?? "0";
+      const nativeBalance = acct.balances.find((b) => b.asset_type === "native") as
+        | { balance: string; selling_liabilities?: string }
+        | undefined;
+      const xlmBalance = nativeBalance?.balance ?? "0";
+      const xlmSellingLiabilities = parseFloat(nativeBalance?.selling_liabilities ?? "0");
       const numSubentries = (acct as any).subentry_count ?? 0;
       const numSponsoring = (acct as any).num_sponsoring ?? 0;
       const numSponsored = (acct as any).num_sponsored ?? 0;
@@ -323,35 +397,47 @@ export default function MyWalletPage() {
           amount: cb.amount,
           sponsor: cb.sponsor,
           claimants: cb.claimants ?? [],
+          createdAt: cb.last_modified_time,
         }));
       } catch { /* non-critical */ }
 
-      // Fetch payments (last 50 for flow calc + display)
+      // Fetch payments — paginate until we cover the full 30-day window (records
+      // arrive newest-first), so 30d net flow isn't silently truncated at 50 ops.
       let payments: Payment[] = [];
       let xlmIn30d = 0;
       let xlmOut30d = 0;
       try {
         const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
-        const pmtPage = await server.payments().forAccount(pubkey).limit(50).order("desc").call();
-        payments = (pmtPage.records as any[])
+        const deriveInfo = (p: any) => {
+          const isIn = p.type === "create_account"
+            ? p.account === pubkey
+            : p.to === pubkey;
+          const assetCode = p.asset_type === "native" ? "XLM" : (p.asset_code ?? "?");
+          const amount = p.amount ?? p.starting_balance ?? "0";
+          const counterparty = p.type === "create_account"
+            ? (isIn ? p.funder : p.account)
+            : (isIn ? p.from : p.to);
+          return { isIn, assetCode, amount, counterparty };
+        };
+
+        let page = await server.payments().forAccount(pubkey).limit(50).order("desc").call();
+        const allRecords: any[] = [];
+        const MAX_PAGES = 20;
+        for (let pageIndex = 0; pageIndex < MAX_PAGES; pageIndex++) {
+          const records = page.records as any[];
+          if (records.length === 0) break;
+          allRecords.push(...records);
+          const last = records[records.length - 1];
+          const lastTs = new Date(last.created_at).getTime();
+          if (lastTs < cutoff || pageIndex === MAX_PAGES - 1) break;
+          page = await page.next();
+        }
+
+        payments = allRecords
+          .slice(0, 50)
           .filter((p) => p.type === "payment" || p.type === "create_account")
           .map((p) => {
-            const isIn = p.type === "create_account"
-              ? p.account === pubkey
-              : p.to === pubkey;
-            const assetCode = p.asset_type === "native" ? "XLM" : (p.asset_code ?? "?");
-            const amount = p.amount ?? p.starting_balance ?? "0";
-            const counterparty = p.type === "create_account"
-              ? (isIn ? p.funder : p.account)
-              : (isIn ? p.from : p.to);
-            // accumulate 30d XLM flow
-            if (assetCode === "XLM") {
-              const ts = new Date(p.created_at).getTime();
-              if (ts >= cutoff) {
-                if (isIn) xlmIn30d += parseFloat(amount);
-                else xlmOut30d += parseFloat(amount);
-              }
-            }
+            const { isIn, assetCode, amount, counterparty } = deriveInfo(p);
             return {
               id: p.id,
               type: p.type,
@@ -364,6 +450,19 @@ export default function MyWalletPage() {
               txHash: p.transaction_hash ?? "",
             } as Payment;
           });
+
+        // Accumulate 30d XLM flow across every fetched record (not just the first 50 displayed).
+        for (const p of allRecords) {
+          if (p.type !== "payment" && p.type !== "create_account") continue;
+          const { isIn, assetCode, amount } = deriveInfo(p);
+          if (assetCode === "XLM") {
+            const ts = new Date(p.created_at).getTime();
+            if (ts >= cutoff) {
+              if (isIn) xlmIn30d += parseFloat(amount);
+              else xlmOut30d += parseFloat(amount);
+            }
+          }
+        }
       } catch { /* non-critical */ }
 
       // Fetch last 10 transactions
@@ -386,7 +485,7 @@ export default function MyWalletPage() {
       const { total: reservedXlm, breakdown: reserveBreakdown } = calcReserved(
         numSubentries, numSponsoring, numSponsored, assets, offers
       );
-      const xlmAvailable = Math.max(0, Number(xlmBalance) - reservedXlm - 0.00001).toFixed(7);
+      const xlmAvailable = Math.max(0, Number(xlmBalance) - reservedXlm - xlmSellingLiabilities - 0.00001).toFixed(7);
 
       setDetails({
         publicKey: pubkey,
@@ -433,6 +532,14 @@ export default function MyWalletPage() {
   }
 
   useEffect(() => {
+    // Switching the active wallet must clear any in-progress destructive/edit
+    // flow from the previous wallet — otherwise a confirmed merge state or
+    // stale destination address can silently carry over to the new wallet.
+    setMergeTarget("");
+    setMergeConfirm(false);
+    setMergeSuccess(false);
+    setEditingDomain(false);
+    setDomainInput("");
     if (activeWallet?.publicKey) load(activeWallet.publicKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeWallet?.publicKey, horizonUrl]);
@@ -494,11 +601,16 @@ export default function MyWalletPage() {
 
   async function saveHomeDomain() {
     if (!activeWallet?.secretKey) return;
+    const trimmedDomain = domainInput.trim();
+    if (trimmedDomain.length > 32) {
+      setDomainError("Home domain must be 32 characters or fewer.");
+      return;
+    }
     setSavingDomain(true);
     setDomainError(null);
     try {
       const { Operation } = await import("stellar-sdk");
-      await buildAndSubmit([Operation.setOptions({ homeDomain: domainInput.trim() || undefined })]);
+      await buildAndSubmit([Operation.setOptions({ homeDomain: trimmedDomain || undefined })]);
       setEditingDomain(false);
       await load(activeWallet.publicKey);
     } catch (e: unknown) {
@@ -537,14 +649,16 @@ export default function MyWalletPage() {
           <h1 className="text-2xl font-bold">My Wallet</h1>
           <p className="text-sm text-muted-foreground mt-0.5">{activeWallet.name}</p>
         </div>
-        <button
+        <Button
+          variant="outline"
+          size="sm"
           onClick={() => load(activeWallet.publicKey)}
           disabled={loading}
-          className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded border border-border hover:bg-accent transition-colors disabled:opacity-50"
+          className="h-auto gap-1.5 px-3 py-1.5 text-xs"
         >
           <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
           Refresh
-        </button>
+        </Button>
       </div>
 
       {/* Address bar */}
@@ -552,9 +666,15 @@ export default function MyWalletPage() {
         <span className="font-mono text-sm text-muted-foreground select-all flex-1 break-all">
           {activeWallet.publicKey}
         </span>
-        <button onClick={copyAddr} className="shrink-0 hover:text-foreground text-muted-foreground transition-colors" title="Copy address">
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={copyAddr}
+          className="h-auto w-auto shrink-0 p-0 text-muted-foreground hover:bg-transparent hover:text-foreground"
+          title="Copy address"
+        >
           {copied ? <Check className="h-4 w-4 text-green-500" /> : <Copy className="h-4 w-4" />}
-        </button>
+        </Button>
         <a
           href={`${explorerBase}/account/${activeWallet.publicKey}`}
           target="_blank"
@@ -636,36 +756,44 @@ export default function MyWalletPage() {
               <div className="flex items-center justify-between mb-2">
                 <p className="text-xs text-muted-foreground uppercase tracking-wider">Home Domain</p>
                 {isFullWallet && (
-                  <button
+                  <Button
+                    variant="ghost"
+                    size="icon"
                     onClick={() => { setEditingDomain((v) => !v); setDomainInput(details.homeDomain); setDomainError(null); }}
-                    className="text-muted-foreground hover:text-foreground transition-colors"
+                    className="h-auto w-auto p-0 text-muted-foreground hover:bg-transparent hover:text-foreground"
                     title="Edit home domain"
                   >
                     <Pencil className="h-3 w-3" />
-                  </button>
+                  </Button>
                 )}
               </div>
               {editingDomain ? (
                 <div className="space-y-2">
-                  <input
+                  <Input
                     value={domainInput}
                     onChange={(e) => setDomainInput(e.target.value)}
                     placeholder="example.com"
-                    className="w-full text-sm bg-background border border-border rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-ring"
+                    className="w-full h-auto text-sm px-2 py-1"
                   />
                   {domainError && <p className="text-xs text-destructive">{domainError}</p>}
                   <div className="flex gap-2">
-                    <button
+                    <Button
+                      size="sm"
                       onClick={saveHomeDomain}
                       disabled={savingDomain}
-                      className="text-xs px-2 py-1 rounded bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 flex items-center gap-1"
+                      className="h-auto gap-1 px-2 py-1 text-xs"
                     >
                       {savingDomain && <RefreshCw className="h-3 w-3 animate-spin" />}
                       Save
-                    </button>
-                    <button onClick={() => setEditingDomain(false)} className="text-xs px-2 py-1 rounded border border-border hover:bg-accent">
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setEditingDomain(false)}
+                      className="h-auto px-2 py-1 text-xs"
+                    >
                       Cancel
-                    </button>
+                    </Button>
                   </div>
                 </div>
               ) : details.homeDomain ? (
@@ -721,8 +849,8 @@ export default function MyWalletPage() {
                 ))}
               </div>
               {details.inflationDest && (
-                <p className="text-xs text-muted-foreground mt-2">
-                  Inflation → <span className="font-mono">{shortAddr(details.inflationDest)}</span>
+                <p className="text-xs text-muted-foreground mt-2 flex items-center gap-1">
+                  Inflation → <ShortAddress address={details.inflationDest} network={settings.network} />
                 </p>
               )}
             </div>
@@ -734,7 +862,7 @@ export default function MyWalletPage() {
               <div className="p-4 space-y-1.5">
                 {details.signers.map((s) => (
                   <div key={s.key} className="flex items-center justify-between text-sm">
-                    <span className="font-mono text-muted-foreground">{shortAddr(s.key)}</span>
+                    <ShortAddress address={s.key} network={settings.network} />
                     <div className="flex items-center gap-2">
                       <span className="text-xs text-muted-foreground">{s.type}</span>
                       <span className="text-xs bg-muted rounded px-1.5 py-0.5">w:{s.weight}</span>
@@ -755,6 +883,10 @@ export default function MyWalletPage() {
               <div className="divide-y divide-border">
                 {details.claimableBalances.map((cb) => {
                   const [assetCode] = cb.asset.split(":");
+                  const claimant = cb.claimants.find((c) => c.destination === activeWallet.publicKey);
+                  const referenceMs = cb.createdAt ? new Date(cb.createdAt).getTime() : Date.now();
+                  const predicateOk = !claimant || isPredicateSatisfied(claimant.predicate, referenceMs);
+                  const unlockLabel = claimant ? predicateUnlockLabel(claimant.predicate) : null;
                   return (
                     <div key={cb.id} className="flex items-center justify-between px-4 py-3 gap-4">
                       <div className="flex flex-col min-w-0">
@@ -763,18 +895,30 @@ export default function MyWalletPage() {
                           <span className="font-mono text-sm">{fmtAsset(cb.amount)}</span>
                         </div>
                         {cb.sponsor && (
-                          <span className="text-xs text-muted-foreground mt-0.5">from {shortAddr(cb.sponsor)}</span>
+                          <span className="text-xs text-muted-foreground mt-0.5 flex items-center gap-1">
+                            from <ShortAddress address={cb.sponsor} network={settings.network} />
+                          </span>
                         )}
                       </div>
                       {isFullWallet && (
-                        <button
-                          onClick={() => claimBalance(cb.id)}
-                          disabled={claiming === cb.id}
-                          className="shrink-0 text-xs px-3 py-1.5 rounded border border-border hover:bg-accent transition-colors disabled:opacity-50 flex items-center gap-1"
-                        >
-                          {claiming === cb.id ? <RefreshCw className="h-3 w-3 animate-spin" /> : null}
-                          Claim
-                        </button>
+                        <div className="flex flex-col items-end gap-1 shrink-0">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => claimBalance(cb.id)}
+                            disabled={claiming === cb.id || !predicateOk}
+                            className="h-auto gap-1 px-3 py-1.5 text-xs"
+                            title={!predicateOk ? "Not yet claimable — predicate not satisfied" : undefined}
+                          >
+                            {claiming === cb.id ? <RefreshCw className="h-3 w-3 animate-spin" /> : null}
+                            Claim
+                          </Button>
+                          {!predicateOk && (
+                            <span className="text-[10px] text-muted-foreground">
+                              {unlockLabel ? `claimable after ${unlockLabel}` : "not yet claimable"}
+                            </span>
+                          )}
+                        </div>
                       )}
                     </div>
                   );
@@ -797,7 +941,7 @@ export default function MyWalletPage() {
                     <div className="flex flex-col min-w-0">
                       <div className="flex items-center gap-2">
                         <span className="font-semibold text-sm">{a.assetCode}</span>
-                        <span className="text-xs text-muted-foreground font-mono">{shortAddr(a.assetIssuer)}</span>
+                        <ShortAddress address={a.assetIssuer} network={settings.network} />
                       </div>
                       <div className="flex flex-wrap gap-3 text-xs text-muted-foreground mt-0.5">
                         <span>Limit: {fmtAsset(a.limit)}</span>
@@ -889,8 +1033,8 @@ export default function MyWalletPage() {
                         <span className={`text-sm font-medium ${p.direction === "in" ? "text-green-500" : "text-red-400"}`}>
                           {p.direction === "in" ? "+" : "-"}{fmtAsset(p.amount)} {p.assetCode}
                         </span>
-                        <span className="text-xs text-muted-foreground truncate">
-                          {p.direction === "in" ? "from" : "to"} {shortAddr(p.counterparty)} · {timeAgo(p.createdAt)}
+                        <span className="text-xs text-muted-foreground flex items-center gap-1 min-w-0">
+                          {p.direction === "in" ? "from" : "to"} <ShortAddress address={p.counterparty} network={settings.network} /> · {timeAgo(p.createdAt)}
                         </span>
                       </div>
                     </div>
@@ -959,12 +1103,18 @@ export default function MyWalletPage() {
                 </p>
                 {!mergeSuccess ? (
                   <>
-                    <input
+                    <Input
                       value={mergeTarget}
                       onChange={(e) => { setMergeTarget(e.target.value); setMergeConfirm(false); }}
                       placeholder="Destination address (G…)"
-                      className="w-full text-sm font-mono bg-background border border-border rounded px-3 py-2 focus:outline-none focus:ring-1 focus:ring-ring"
+                      className="w-full h-auto font-mono text-sm px-3 py-2"
                     />
+                    {looksLikeStellarAddress(mergeTarget) && (
+                      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                        <span>Sending to:</span>
+                        <ShortAddress address={mergeTarget.trim()} network={settings.network} />
+                      </div>
+                    )}
                     {mergeError && (
                       <div className="flex items-center gap-2 text-destructive text-xs">
                         <AlertCircle className="h-3.5 w-3.5 shrink-0" />
@@ -972,25 +1122,27 @@ export default function MyWalletPage() {
                       </div>
                     )}
                     {mergeTarget.length > 0 && !mergeConfirm && (
-                      <button
+                      <Button
+                        variant="outline"
                         onClick={() => setMergeConfirm(true)}
-                        className="flex items-center gap-2 text-sm px-3 py-2 rounded border border-destructive/50 text-destructive hover:bg-destructive/10 transition-colors"
+                        className="h-auto gap-2 border-destructive/50 px-3 py-2 text-sm text-destructive hover:bg-destructive/10 hover:text-destructive"
                       >
                         <Shield className="h-4 w-4" />
                         I understand — confirm merge
-                      </button>
+                      </Button>
                     )}
                     {mergeConfirm && (
-                      <button
+                      <Button
+                        variant="destructive"
                         onClick={mergeAccount}
                         disabled={merging}
-                        className="flex items-center gap-2 text-sm px-3 py-2 rounded bg-destructive text-destructive-foreground hover:bg-destructive/90 transition-colors disabled:opacity-50"
+                        className="h-auto gap-2 px-3 py-2 text-sm"
                       >
                         {merging
                           ? <RefreshCw className="h-4 w-4 animate-spin" />
                           : <Trash2 className="h-4 w-4" />}
                         {merging ? "Merging…" : "Merge account now"}
-                      </button>
+                      </Button>
                     )}
                   </>
                 ) : (
