@@ -75,7 +75,7 @@ import { useAddressBook } from "@/hooks/use-address-book";
 import { useActiveWallet } from "@/hooks/use-active-wallet";
 import { useWalletsV2 } from "@/hooks/use-wallets-v2";
 import { useAutoSaveSigningKey } from "@/hooks/use-auto-save-signing-key";
-import { ShortAddress } from "@/components/asset-lookup";
+import { ShortAddress } from "@/components/shared/ShortAddress";
 import { WalletSelect } from "@/components/ui/wallet-select";
 
 // ---------------------------------------------------------------------------
@@ -108,6 +108,10 @@ interface AccountBalance {
   balance: string;
   assetCode: string;
   assetIssuer: string;
+  /** Account's subentry_count (trustlines + offers + signers + data entries) — same for every balance of this account. */
+  subentryCount: number;
+  /** This balance's own selling_liabilities — funds locked in the account's open sell offers for this asset. */
+  sellingLiabilities: string;
 }
 
 interface PathRecord {
@@ -279,6 +283,8 @@ export default function PaymentsPage() {
   // -- Trustline recovery prompt
   interface TrustlineFix { leg: PaymentLeg; secretKey: string; walletName: string }
   const [trustlinePrompt, setTrustlinePrompt] = useState<TrustlineFix[] | null>(null);
+  /** Which tab was active when this prompt was raised — retry must target THIS tab, not whatever tab is active now. */
+  const [trustlinePromptTab, setTrustlinePromptTab] = useState<PaymentTab | null>(null);
   const [trustlineAdding, setTrustlineAdding] = useState(false);
   const [trustlineStatus, setTrustlineStatus] = useState<string | null>(null);
 
@@ -352,32 +358,46 @@ export default function PaymentsPage() {
     try {
       const server = new Horizon.Server(horizonUrl);
       const account = await server.loadAccount(pubKey);
+      const subentryCount = account.subentry_count;
       const balances: AccountBalance[] = account.balances
         .filter((b) => b.asset_type !== "liquidity_pool_shares")
         .map((b) => {
           if (b.asset_type === "native") {
-            return { key: "native", balance: b.balance, assetCode: "XLM", assetIssuer: "" };
+            return {
+              key: "native",
+              balance: b.balance,
+              assetCode: "XLM",
+              assetIssuer: "",
+              subentryCount,
+              sellingLiabilities: b.selling_liabilities,
+            };
           }
-          const bal = b as { asset_type: "credit_alphanum4" | "credit_alphanum12"; asset_code: string; asset_issuer: string; balance: string };
+          const bal = b as { asset_type: "credit_alphanum4" | "credit_alphanum12"; asset_code: string; asset_issuer: string; balance: string; selling_liabilities: string };
           return {
             key: `${bal.asset_code}:${bal.asset_issuer}`,
             balance: bal.balance,
             assetCode: bal.asset_code,
             assetIssuer: bal.asset_issuer,
+            subentryCount,
+            sellingLiabilities: bal.selling_liabilities,
           };
         });
       // XLM always first — splice to front if not already
       const nativeIdx = balances.findIndex((b) => b.key === "native");
       if (nativeIdx > 0) balances.unshift(balances.splice(nativeIdx, 1)[0]);
+      // Discard stale result: the user may have switched wallets while this
+      // fetch was in flight, in which case currentPublicKey has moved on.
+      if (pubKey !== currentPublicKey) return;
       setAccountBalances(balances);
     } catch (e) {
+      if (pubKey !== currentPublicKey) return;
       setBalancesError(getErrorMessage(e));
       setAccountBalances([]);
       loadBalancesRef.current = null;
     } finally {
-      setBalancesLoading(false);
+      if (pubKey === currentPublicKey) setBalancesLoading(false);
     }
-  }, [settings]);
+  }, [settings, currentPublicKey]);
 
   useEffect(() => {
     if (currentPublicKey) {
@@ -556,12 +576,19 @@ export default function PaymentsPage() {
     destIsNative, destAssetCode, destAssetIssuer,
   ]);
 
-  // Clear paths when mode changes
+  // Clear any previously found paths whenever an input that affects path-finding
+  // changes — otherwise a stale route (computed for old inputs) could be submitted
+  // alongside newly-edited assets/amounts/destination.
   useEffect(() => {
     setPaths([]);
     setSelectedPathIndex(null);
     setPathError(null);
-  }, [pathMode]);
+  }, [
+    pathMode,
+    srcIsNative, srcAssetCode, srcAssetIssuer,
+    destIsNative, destAssetCode, destAssetIssuer,
+    pathDest, destAmount, exactSendAmount,
+  ]);
 
   // ---------------------------------------------------------------------------
   // Address book helpers
@@ -659,15 +686,17 @@ export default function PaymentsPage() {
         const cancelCounts: number[] = [];
         for (const leg of legs) {
           let cancelCount = 0;
-          // If removing trustline, cancel any open sell offers for this asset first
+          // If removing trustline, cancel any open offers for this asset first —
+          // both the selling side AND the buying side, since either leaves
+          // liabilities that block changeTrust(limit: "0").
           if (leg.removeTrustline && leg.assetKey !== "native") {
             const [code, issuer] = leg.assetKey.split(":");
             const offersResult = await server.offers().forAccount(publicKey).limit(200).call();
-            const offersToCancel = offersResult.records.filter((o: any) => {
+            const sellOffersToCancel = offersResult.records.filter((o: any) => {
               const selling = o.selling;
               return selling.asset_type !== "native" && selling.asset_code === code && selling.asset_issuer === issuer;
             });
-            for (const o of offersToCancel) {
+            for (const o of sellOffersToCancel) {
               const buyingAsset = (o as any).buying.asset_type === "native"
                 ? Asset.native()
                 : new Asset((o as any).buying.asset_code, (o as any).buying.asset_issuer);
@@ -676,6 +705,25 @@ export default function PaymentsPage() {
                   selling: assetFromKey(leg.assetKey),
                   buying: buyingAsset,
                   amount: "0",
+                  price: (o as any).price,
+                  offerId: (o as any).id,
+                }),
+              );
+              cancelCount++;
+            }
+            const buyOffersToCancel = offersResult.records.filter((o: any) => {
+              const buying = o.buying;
+              return buying.asset_type !== "native" && buying.asset_code === code && buying.asset_issuer === issuer;
+            });
+            for (const o of buyOffersToCancel) {
+              const sellingAsset = (o as any).selling.asset_type === "native"
+                ? Asset.native()
+                : new Asset((o as any).selling.asset_code, (o as any).selling.asset_issuer);
+              builder.addOperation(
+                Operation.manageBuyOffer({
+                  selling: sellingAsset,
+                  buying: assetFromKey(leg.assetKey),
+                  buyAmount: "0",
                   price: (o as any).price,
                   offerId: (o as any).id,
                 }),
@@ -797,6 +845,7 @@ export default function PaymentsPage() {
             setTxStatus("error");
             setTxError("Destination account(s) missing trustline for this asset.");
             setTrustlinePrompt(fixes);
+            setTrustlinePromptTab(activeTab);
             return;
           }
         }
@@ -809,6 +858,20 @@ export default function PaymentsPage() {
           setTxError(
             "Cannot remove trustline: the payment to the destination failed (op_no_trust), " +
             "so the balance is still in your account. Fix the destination trustline first, then retry.",
+          );
+          return;
+        }
+
+        // A bare op_invalid_limit (without op_no_trust) on a trustline-removal leg most likely
+        // means the account still has open liabilities for this asset (e.g. an offer that wasn't
+        // detected/cancelled in the pre-flight step above) blocking changeTrust(limit: "0").
+        const hasRemoveTrustlineLeg = legs.some((l) => l.removeTrustline && l.assetKey !== "native");
+        if (activeTab === "send" && hasInvalidLimit && !isNoTrust && hasRemoveTrustlineLeg) {
+          setTxStatus("error");
+          setTxError(
+            "Cannot remove trustline: the account still has open liabilities for this asset " +
+            "(e.g. a remaining open offer using it). Cancel any remaining offers for this asset " +
+            "and retry.",
           );
           return;
         }
@@ -891,6 +954,7 @@ export default function PaymentsPage() {
     setTxHash(null);
     setTxError(null);
     setTrustlinePrompt(null);
+    setTrustlinePromptTab(null);
     setTrustlineStatus(null);
     setCopied(false);
   }
@@ -901,6 +965,13 @@ export default function PaymentsPage() {
 
   async function handleAddTrustlinesAndRetry() {
     if (!trustlinePrompt) return;
+    // Guard against the user switching tabs while this prompt is showing — retrying
+    // must re-evaluate the SAME tab's form that originally failed, not whatever tab
+    // happens to be active now.
+    if (trustlinePromptTab && activeTab !== trustlinePromptTab) {
+      toast.error(`Switch back to the "${trustlinePromptTab}" tab to retry this trustline fix.`);
+      return;
+    }
     setTrustlineAdding(true);
     setTxError(null);
     setTrustlineStatus("Adding trustlines\u2026");
@@ -925,6 +996,7 @@ export default function PaymentsPage() {
 
       setTrustlineStatus("Trustlines added \u2014 retrying payment\u2026");
       setTrustlinePrompt(null);
+      setTrustlinePromptTab(null);
       setTrustlineAdding(false);
       setTrustlineStatus(null);
       // Retry the original payment
@@ -1058,7 +1130,7 @@ export default function PaymentsPage() {
                 <Wallet className="h-4 w-4 shrink-0 text-green-500" />
                 <span className="flex-1 truncate font-medium">{w.name}</span>
                 <span className="font-mono text-xs text-muted-foreground">
-                  {w.publicKey.slice(0, 4)}…{w.publicKey.slice(-4)}
+                  {shortAddr(w.publicKey)}
                 </span>
               </div>
             );
@@ -1212,7 +1284,12 @@ export default function PaymentsPage() {
                       {accountBalances.length > 0 ? (
                         <Select
                           value={leg.assetKey}
-                          onValueChange={(val) => updateLeg(leg.id, { assetKey: val })}
+                          onValueChange={(val) => {
+                            if (val === leg.assetKey) return;
+                            // Switching assets invalidates any amount/removeTrustline state
+                            // computed for the OLD asset's balance — reset to a neutral default.
+                            updateLeg(leg.id, { assetKey: val, removeTrustline: false, amount: "" });
+                          }}
                         >
                           <SelectTrigger>
                             <SelectValue placeholder="Select asset…" />
@@ -1254,10 +1331,13 @@ export default function PaymentsPage() {
                         {(() => {
                           const bal = accountBalances.find((b) => b.key === leg.assetKey);
                           if (!bal) return null;
-                          // For XLM, reserve ~1 XLM minimum
+                          // Real minimum reserve: (2 + subentry_count) * 0.5 XLM base reserve,
+                          // plus whatever's locked in this asset's own open sell offers.
+                          const raw = parseFloat(bal.balance);
+                          const sellingLiab = parseFloat(bal.sellingLiabilities || "0");
                           const maxAmt = leg.assetKey === "native"
-                            ? Math.max(0, parseFloat(bal.balance) - 1).toFixed(7)
-                            : bal.balance;
+                            ? Math.max(0, raw - (2 + bal.subentryCount) * 0.5 - sellingLiab).toFixed(7)
+                            : Math.max(0, raw - sellingLiab).toFixed(7);
                           return (
                             <Button
                               variant="outline"
@@ -1957,16 +2037,26 @@ export default function PaymentsPage() {
                     key={i}
                     className="flex items-center gap-2 rounded-md border border-border p-3 hover:bg-muted/50 transition-colors"
                   >
-                    <button
-                      type="button"
-                      className="flex-1 text-left"
+                    {/* Plain div (not <button>) — ShortAddress renders its own interactive
+                        copy/link controls, so nesting it inside a <button> would produce
+                        invalid nested interactive elements. */}
+                    <div
+                      role="button"
+                      tabIndex={0}
+                      className="flex-1 text-left cursor-pointer"
                       onClick={() => handleSelectAddress(entry.publicKey)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          handleSelectAddress(entry.publicKey);
+                        }
+                      }}
                     >
                       <div className="text-sm font-medium">{entry.label}</div>
-                      <div className="text-xs font-mono text-muted-foreground">
-                        {shortAddr(entry.publicKey)}
+                      <div className="text-xs font-mono text-muted-foreground" onClick={(e) => e.stopPropagation()}>
+                        <ShortAddress address={entry.publicKey} network={network} />
                       </div>
-                    </button>
+                    </div>
                     <Button
                       variant="ghost"
                       size="icon"
@@ -2097,7 +2187,10 @@ export default function PaymentsPage() {
                   <Button
                     size="sm"
                     variant="ghost"
-                    onClick={() => setTrustlinePrompt(null)}
+                    onClick={() => {
+                      setTrustlinePrompt(null);
+                      setTrustlinePromptTab(null);
+                    }}
                     disabled={trustlineAdding}
                   >
                     Dismiss
