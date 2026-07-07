@@ -524,6 +524,9 @@ export function AddressInvestigatorTab() {
     CLAIMABLE_DISPLAY_PAGE_SIZE,
   );
   const [claimableWarning, setClaimableWarning] = useState<string | null>(null);
+  const [fromDate, setFromDate] = useState("");
+  const [toDate, setToDate] = useState("");
+  const [investigationWarning, setInvestigationWarning] = useState<string | null>(null);
   const [searched, setSearched] = useState(false);
   const [homeDomain, setHomeDomain] = useState<string | null>(null);
   const [groupDialog, setGroupDialog] = useState<{
@@ -808,6 +811,7 @@ export function AddressInvestigatorTab() {
     setClaimableBalances([]);
     setClaimableVisibleCount(CLAIMABLE_DISPLAY_PAGE_SIZE);
     setClaimableWarning(null);
+    setInvestigationWarning(null);
     setPaymentAssetQuery("");
     setSearched(true);
     setProgressText("Initializing scan...");
@@ -818,6 +822,8 @@ export function AddressInvestigatorTab() {
     try {
       const horizonBase = resolveHorizonUrl(settings);
       const server = new Horizon.Server(resolveHorizonUrl(settings));
+      const parsedFromDate = fromDate ? new Date(fromDate) : undefined;
+      const parsedToDate = toDate ? new Date(toDate + "T23:59:59") : undefined;
 
       const [
         investigation,
@@ -834,6 +840,8 @@ export function AddressInvestigatorTab() {
               `${progress.phase} (${progress.records.toLocaleString()} records)`,
             );
           },
+          parsedFromDate,
+          parsedToDate,
         ),
         fetchAllOperations(
           account,
@@ -855,6 +863,9 @@ export function AddressInvestigatorTab() {
 
       if (controller.signal.aborted) return;
       setResult(investigation);
+      setInvestigationWarning(
+        investigation.complete === false ? (investigation.warning ?? null) : null,
+      );
       setHomeDomain((accountDetails as { home_domain?: string }).home_domain ?? null);
       upsertHistory({ address: account, network: settings.network });
       upsertSearch({ type: "address", value: account, network: settings.network });
@@ -1045,8 +1056,43 @@ export function AddressInvestigatorTab() {
             </div>
           </div>
 
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="space-y-2">
+              <Label htmlFor="investigator-from-date">From (optional)</Label>
+              <Input
+                id="investigator-from-date"
+                type="date"
+                value={fromDate}
+                onChange={(e) => setFromDate(e.target.value)}
+                disabled={loading}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="investigator-to-date">To (optional)</Label>
+              <Input
+                id="investigator-to-date"
+                type="date"
+                value={toDate}
+                onChange={(e) => setToDate(e.target.value)}
+                disabled={loading}
+              />
+            </div>
+          </div>
+          {(fromDate || toDate) && (
+            <p className="text-xs text-muted-foreground">
+              Scanning only within the selected date range — much faster for recent data.
+            </p>
+          )}
+
           {progressText && (
             <p className="text-xs text-muted-foreground">{progressText}</p>
+          )}
+
+          {investigationWarning && (
+            <p className="text-xs text-amber-600 flex items-center gap-2">
+              <AlertTriangle className="h-4 w-4" />
+              {investigationWarning}
+            </p>
           )}
 
           {opsFetchWarning && (
