@@ -15,7 +15,14 @@
 //   Step 3 — Create children (Direct / Sponsored / Close tabs)
 //   Step 4 — Save parent + all children to one Asset Group
 
-import { useState, useRef, useEffect, useCallback } from "react";
+import {
+  useState,
+  useRef,
+  useEffect,
+  useCallback,
+  Dispatch,
+  SetStateAction,
+} from "react";
 import {
   Keypair,
   TransactionBuilder,
@@ -36,6 +43,8 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { WalletSelect } from "@/components/ui/wallet-select";
+import { Switch } from "@/components/ui/switch";
+import { ShortAddress } from "@/components/shared/ShortAddress";
 import {
   Copy,
   Check,
@@ -64,7 +73,6 @@ import {
 import { useActiveWallet } from "@/hooks/use-active-wallet";
 import { useWalletsV2 } from "@/hooks/use-wallets-v2";
 import { useAssetGroups } from "@/hooks/use-asset-groups";
-import { shortAddr } from "@/lib/format";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -85,6 +93,41 @@ interface GeneratedAccount {
 }
 
 // ---------------------------------------------------------------------------
+// Verification helper
+//
+// Stellar transactions are atomic — if a batch submission fails, NOTHING in
+// it was committed to the ledger, even though Horizon's per-op result codes
+// can still list "op_success" for ops that would have succeeded had the tx
+// not aborted. The only way to know whether an address actually exists
+// on-ledger after a failed submission is to ask Horizon directly.
+// ---------------------------------------------------------------------------
+
+async function verifyAmbiguousAccounts(
+  addresses: string[],
+  server: InstanceType<typeof StellarSdk.Horizon.Server>,
+  setAccounts: Dispatch<SetStateAction<GeneratedAccount[]>>
+) {
+  for (const address of addresses) {
+    let confirmed = false;
+    try {
+      await server.loadAccount(address);
+      confirmed = true;
+    } catch {
+      confirmed = false;
+    }
+    setAccounts((prev) =>
+      prev.map((a) =>
+        a.publicKey === address
+          ? confirmed
+            ? { ...a, status: "funded" as FundStatus, error: undefined }
+            : { ...a, status: "failed" as FundStatus, error: "unconfirmed on ledger" }
+          : a
+      )
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Sub-components
 // ---------------------------------------------------------------------------
 
@@ -102,6 +145,7 @@ function WalletPicker({
   onToggleShow,
   label,
   manualPlaceholder = "S...",
+  network = "public",
 }: {
   wallets: ReturnType<typeof useWalletsV2>["wallets"];
   walletId: string | null;
@@ -112,6 +156,7 @@ function WalletPicker({
   onToggleShow: () => void;
   label: string;
   manualPlaceholder?: string;
+  network?: string;
 }) {
   const selectedWallet = wallets.find((w) => w.id === walletId);
 
@@ -133,8 +178,8 @@ function WalletPicker({
         <div className="flex items-center gap-2 rounded-md border border-green-500/40 bg-green-500/5 px-3 py-2 text-sm">
           <Wallet className="h-4 w-4 shrink-0 text-green-500" />
           <span className="flex-1 font-medium">{selectedWallet.name}</span>
-          <span className="font-mono text-xs text-muted-foreground">
-            {shortAddr(selectedWallet.publicKey)}
+          <span className="text-xs text-muted-foreground">
+            <ShortAddress address={selectedWallet.publicKey} network={network} />
           </span>
         </div>
       )}
@@ -184,6 +229,7 @@ function AccountList({
   copiedKey,
   copiedAll,
   labelPrefix = "Child",
+  network = "public",
 }: {
   accounts: GeneratedAccount[];
   revealAll: boolean;
@@ -194,6 +240,7 @@ function AccountList({
   copiedKey: string | null;
   copiedAll: boolean;
   labelPrefix?: string;
+  network?: string;
 }) {
   const funded = accounts.filter((a) => a.status === "funded");
 
@@ -252,7 +299,9 @@ function AccountList({
                   {/* Child label (Child 1, Child 2, etc.) */}
                   <span className="text-muted-foreground">{labelPrefix} {i + 1}</span>
                   {/* Short address always visible */}
-                  <span className="truncate">{shortAddr(acc.publicKey)}</span>
+                  <span className="truncate">
+                    <ShortAddress address={acc.publicKey} network={network} />
+                  </span>
                   {/* Full address only on wider screens */}
                   <span className="hidden sm:block truncate text-muted-foreground/60">
                     {acc.publicKey}
@@ -418,7 +467,9 @@ function SaveToGroup({
             <Badge variant="outline" className="text-orange-400 border-orange-400/30 bg-orange-400/10 text-[10px]">
               BANK
             </Badge>
-            <span className="font-mono">{shortAddr(parentPublicKey)}</span>
+            <span className="font-mono">
+              <ShortAddress address={parentPublicKey} network={settings.network} />
+            </span>
             <span className="text-muted-foreground">Parent</span>
           </div>
           {funded.slice(0, 3).map((acc, i) => (
@@ -426,7 +477,9 @@ function SaveToGroup({
               <Badge variant="outline" className="text-gray-400 border-gray-400/30 bg-gray-400/10 text-[10px]">
                 OTHER
               </Badge>
-              <span className="font-mono">{shortAddr(acc.publicKey)}</span>
+              <span className="font-mono">
+                <ShortAddress address={acc.publicKey} network={settings.network} />
+              </span>
               <span className="text-muted-foreground">Child {i + 1}</span>
             </div>
           ))}
@@ -524,6 +577,14 @@ export function AccountFunderPanel() {
   const [isDirectFunding, setIsDirectFunding] = useState(false);
   const [isSponsoring, setIsSponsoring] = useState(false);
 
+  // The parent public key that actually performed the funding, captured at
+  // the moment a funding run starts. Save to Group must use THIS value, not
+  // whatever the parent selector currently shows — the user may switch
+  // parents after funding completes but before saving.
+  const [fundedByParentPublicKey, setFundedByParentPublicKey] = useState<string | null>(
+    null
+  );
+
   // Close tab state
   const [closeKeypairsText, setCloseKeypairsText] = useState("");
   const [closeDestination, setCloseDestination] = useState("");
@@ -617,6 +678,22 @@ export function AccountFunderPanel() {
 
   /** Generate a new parent keypair (for "generated" mode) */
   function handleGenerateParent() {
+    // A previously generated parent may already hold real, unrecoverable XLM —
+    // never silently discard its secret key.
+    const hasBalance =
+      generatedParentPublic.length > 0 &&
+      parentBalance !== null &&
+      parseFloat(parentBalance) > 0;
+    if (hasBalance) {
+      const confirmed = window.confirm(
+        "The current generated parent keypair has a non-zero XLM balance. " +
+          "Regenerating will PERMANENTLY DISCARD its secret key — that XLM may " +
+          "become unrecoverable unless you have already saved the secret key " +
+          "elsewhere. Continue?"
+      );
+      if (!confirmed) return;
+    }
+
     const kp = Keypair.random();
     setGeneratedParentPublic(kp.publicKey());
     setGeneratedParentSecret(kp.secret());
@@ -651,7 +728,12 @@ export function AccountFunderPanel() {
 
   // Stop auto-check once balance is sufficient
   const n = parseInt(count) || 0;
-  const requiredXlm = (parseFloat(xlmEach) || 0) * n + 2; // buffer for fees + base reserve
+  // Once children are actually generated, cost estimates must track the real
+  // accounts that will be funded — not the live "count" field, which can be
+  // edited afterward without re-generating and would silently diverge from
+  // what the Fund/Create loops (which use accounts.length) actually spend.
+  const effectiveN = accounts.length > 0 ? accounts.length : n;
+  const requiredXlm = (parseFloat(xlmEach) || 0) * effectiveN + 2; // buffer for fees + base reserve
   useEffect(() => {
     if (
       autoCheck &&
@@ -678,6 +760,20 @@ export function AccountFunderPanel() {
 
   /** Generate N fresh random keypairs for children */
   function handleGenerateChildren() {
+    // Any account already funded holds real, unrecoverable XLM tied to a
+    // secret key that only exists in this component's state — never silently
+    // discard it.
+    const hasFundedAccounts = accounts.some((a) => a.status === "funded");
+    if (hasFundedAccounts) {
+      const confirmed = window.confirm(
+        "One or more generated children have already been funded with real " +
+          "XLM. Regenerating will PERMANENTLY DISCARD their secret keys — that " +
+          "XLM may become unrecoverable unless you have already saved/exported " +
+          "them. Continue?"
+      );
+      if (!confirmed) return;
+    }
+
     const num = Math.min(Math.max(parseInt(count) || 1, 1), 100);
     const generated: GeneratedAccount[] = Array.from({ length: num }, () => {
       const kp = Keypair.random(); // cryptographically random, runs in browser
@@ -686,6 +782,25 @@ export function AccountFunderPanel() {
     setAccounts(generated);
     setRevealAll(false);
   }
+
+  // Warn before leaving the page if any child has already been funded with
+  // real XLM — secret keys only ever live in this component's state and are
+  // never persisted, so navigating away without copying/exporting them first
+  // can permanently strand real funds.
+  useEffect(() => {
+    const hasFundedAccounts = accounts.some((a) => a.status === "funded");
+    if (!hasFundedAccounts) return;
+
+    function handleBeforeUnload(e: BeforeUnloadEvent) {
+      e.preventDefault();
+      e.returnValue =
+        "Funded accounts have secret keys that only exist on this page — leaving now may permanently strand real XLM.";
+      return e.returnValue;
+    }
+
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [accounts]);
 
   // ---------------------------------------------------------------------------
   // Shared stop handler
@@ -706,6 +821,7 @@ export function AccountFunderPanel() {
   // ---------------------------------------------------------------------------
 
   async function handleDirectFund() {
+    if (isDirectFunding) return;
     if (!accounts.length) { toast.error("Generate children first."); return; }
     if (!parentSecretKey) { toast.error("Select or generate a parent account."); return; }
 
@@ -715,6 +831,10 @@ export function AccountFunderPanel() {
     let parentKeypair: Keypair;
     try { parentKeypair = Keypair.fromSecret(parentSecretKey); }
     catch { toast.error("Invalid parent secret key."); return; }
+
+    // Capture the actual funding parent now — the live selector may be
+    // switched later, before the user saves to a group.
+    setFundedByParentPublicKey(parentKeypair.publicKey());
 
     setIsDirectFunding(true);
     abortRef.current = new AbortController();
@@ -776,18 +896,33 @@ export function AccountFunderPanel() {
         const opCodes: string[] =
           err?.response?.data?.extras?.result_codes?.operations ?? [];
 
+        // Stellar transactions are atomic — since submitTransaction threw,
+        // NOTHING in this batch was committed to the ledger, even though
+        // Horizon may still report "op_success" for ops that would have
+        // succeeded had the tx not aborted. Only "op_already_exists" is real
+        // evidence (the account genuinely exists on-ledger already); anything
+        // reported as "op_success" here is ambiguous and must be verified
+        // directly against Horizon before it can be trusted.
+        const ambiguous: string[] = [];
         setAccounts((prev) =>
           prev.map((a, idx) => {
             if (idx < i || idx >= i + BATCH_SIZE) return a;
             const opIdx = idx - i;
             const code = opCodes[opIdx] ?? "unknown";
-            // op_already_exists means the account was already created — treat as success
-            if (code === "op_success" || code === "op_already_exists") {
+            if (code === "op_already_exists") {
               return { ...a, status: "funded" };
+            }
+            if (code === "op_success") {
+              ambiguous.push(a.publicKey);
+              return { ...a, status: "failed", error: "unconfirmed — verifying…" };
             }
             return { ...a, status: "failed", error: code };
           })
         );
+
+        if (ambiguous.length > 0) {
+          await verifyAmbiguousAccounts(ambiguous, server, setAccounts);
+        }
       }
     }
 
@@ -808,12 +943,17 @@ export function AccountFunderPanel() {
   // ---------------------------------------------------------------------------
 
   async function handleSponsoredCreate() {
+    if (isSponsoring) return;
     if (!accounts.length) { toast.error("Generate children first."); return; }
     if (!parentSecretKey) { toast.error("Select or generate a parent account."); return; }
 
     let parentKeypair: Keypair;
     try { parentKeypair = Keypair.fromSecret(parentSecretKey); }
     catch { toast.error("Invalid parent secret key."); return; }
+
+    // Capture the actual funding parent now — the live selector may be
+    // switched later, before the user saves to a group.
+    setFundedByParentPublicKey(parentKeypair.publicKey());
 
     setIsSponsoring(true);
     abortRef.current = new AbortController();
@@ -844,7 +984,11 @@ export function AccountFunderPanel() {
         const fee = await server.fetchBaseFee();
 
         const builder = new TransactionBuilder(parentAccount, {
-          fee: String(fee * 3 * batch.length), // 3 ops per child
+          // TransactionBuilder treats `fee` as a PER-OPERATION rate and
+          // multiplies it internally by the actual op count on build() — do
+          // NOT also multiply by batch.length here, or the total fee is
+          // squared (way off at larger batch sizes).
+          fee: String(fee * 3), // 3 ops per child
           networkPassphrase,
         });
 
@@ -900,15 +1044,32 @@ export function AccountFunderPanel() {
         const opCodes: string[] =
           err?.response?.data?.extras?.result_codes?.operations ?? [];
 
+        // Stellar transactions are atomic — since submitTransaction threw,
+        // NOTHING in this batch was committed to the ledger, even though
+        // Horizon may still report "op_success" for ops that would have
+        // succeeded had the tx not aborted. Only "op_already_exists" is real
+        // evidence; "op_success" here is ambiguous and must be verified
+        // directly against Horizon before it can be trusted.
+        const ambiguous: string[] = [];
         setAccounts((prev) =>
           prev.map((a, idx) => {
             if (idx < i || idx >= i + BATCH_SIZE) return a;
             const acctIdx = idx - i;
             const code = opCodes[acctIdx * 3 + 2] ?? opCodes[acctIdx * 3] ?? "unknown";
-            if (code === "op_success") return { ...a, status: "funded" };
+            if (code === "op_already_exists") {
+              return { ...a, status: "funded" };
+            }
+            if (code === "op_success") {
+              ambiguous.push(a.publicKey);
+              return { ...a, status: "failed", error: "unconfirmed — verifying…" };
+            }
             return { ...a, status: "failed", error: code };
           })
         );
+
+        if (ambiguous.length > 0) {
+          await verifyAmbiguousAccounts(ambiguous, server, setAccounts);
+        }
       }
     }
 
@@ -928,6 +1089,7 @@ export function AccountFunderPanel() {
   // ---------------------------------------------------------------------------
 
   async function handleCloseAccounts() {
+    if (isClosing) return;
     const sponsorKey = resolveKey(closeSponsorWalletId, closeSponsorManualKey);
     if (!sponsorKey) { toast.error("Select a sponsor wallet or enter a secret key."); return; }
 
@@ -1028,7 +1190,7 @@ export function AccountFunderPanel() {
     }
 
     setIsClosing(false);
-    toast.success("Done — accounts closed, reserves returned to sponsor.");
+    toast.success("Done — accounts closed.");
   }
 
   // ---------------------------------------------------------------------------
@@ -1036,18 +1198,30 @@ export function AccountFunderPanel() {
   // ---------------------------------------------------------------------------
 
   function handleCopyOne(key: string) {
-    navigator.clipboard.writeText(key);
-    setCopiedKey(key);
-    setTimeout(() => setCopiedKey(null), 2000);
+    navigator.clipboard.writeText(key).then(
+      () => {
+        setCopiedKey(key);
+        setTimeout(() => setCopiedKey(null), 2000);
+      },
+      () => {
+        toast.error("Failed to copy to clipboard.");
+      }
+    );
   }
 
   function handleCopyAll() {
     if (!accounts.length) { toast.error("No accounts to copy."); return; }
     const text = accounts.map((a) => `${a.publicKey}\t${a.secretKey}`).join("\n");
-    navigator.clipboard.writeText(text);
-    setCopiedAll(true);
-    setTimeout(() => setCopiedAll(false), 2000);
-    toast.success("Copied (public + secret, tab-separated).");
+    navigator.clipboard.writeText(text).then(
+      () => {
+        setCopiedAll(true);
+        setTimeout(() => setCopiedAll(false), 2000);
+        toast.success("Copied (public + secret, tab-separated).");
+      },
+      () => {
+        toast.error("Failed to copy to clipboard.");
+      }
+    );
   }
 
   function handleDownloadCSV() {
@@ -1067,29 +1241,53 @@ export function AccountFunderPanel() {
   // ---------------------------------------------------------------------------
 
   const hasChildren = accounts.length > 0;
-  const directTotalCost = (parseFloat(xlmEach) || 0) * n;
+  const directTotalCost = (parseFloat(xlmEach) || 0) * effectiveN;
   // Sponsored reserves: 1 XLM locked per child in the parent's balance (not spent)
-  const sponsoredReserveCost = n * 1;
+  const sponsoredReserveCost = effectiveN * 1;
   // Whether the generated parent has enough balance
   const parentFunded =
     parentMode === "generated" &&
     parentBalance !== null &&
     parseFloat(parentBalance) >= requiredXlm;
 
+  // Mode-agnostic balance checks for the Fund/Create submit buttons — applies
+  // to wallet-mode and manual-key parents too, not just generated-mode.
+  // Only blocks submission when a balance has actually been fetched and is
+  // known to be insufficient; an unfetched (null) balance never blocks.
+  const directRequiredXlm = directTotalCost + 2; // amount sent + fee buffer
+  const directParentInsufficient =
+    parentBalance !== null && parseFloat(parentBalance) < directRequiredXlm;
+
+  const sponsoredRequiredXlm = sponsoredReserveCost + 1; // reserve + fee buffer
+  const sponsoredParentInsufficient =
+    parentBalance !== null && parseFloat(parentBalance) < sponsoredRequiredXlm;
+
   // For the "Copy parent public key" button
   const [copiedParentPub, setCopiedParentPub] = useState(false);
   function handleCopyParentPublic() {
     if (!generatedParentPublic) return;
-    navigator.clipboard.writeText(generatedParentPublic);
-    setCopiedParentPub(true);
-    setTimeout(() => setCopiedParentPub(false), 2000);
+    navigator.clipboard.writeText(generatedParentPublic).then(
+      () => {
+        setCopiedParentPub(true);
+        setTimeout(() => setCopiedParentPub(false), 2000);
+      },
+      () => {
+        toast.error("Failed to copy to clipboard.");
+      }
+    );
   }
   const [copiedParentSec, setCopiedParentSec] = useState(false);
   function handleCopyParentSecret() {
     if (!generatedParentSecret) return;
-    navigator.clipboard.writeText(generatedParentSecret);
-    setCopiedParentSec(true);
-    setTimeout(() => setCopiedParentSec(false), 2000);
+    navigator.clipboard.writeText(generatedParentSecret).then(
+      () => {
+        setCopiedParentSec(true);
+        setTimeout(() => setCopiedParentSec(false), 2000);
+      },
+      () => {
+        toast.error("Failed to copy to clipboard.");
+      }
+    );
   }
 
   // ---------------------------------------------------------------------------
@@ -1145,10 +1343,17 @@ export function AccountFunderPanel() {
                 walletId={parentWalletId}
                 manualKey={parentManualKey}
                 showManual={parentShowManualKey}
-                onWalletChange={setParentWalletId}
-                onManualKeyChange={setParentManualKey}
+                onWalletChange={(id) => {
+                  setParentWalletId(id);
+                  setParentBalance(null);
+                }}
+                onManualKeyChange={(val) => {
+                  setParentManualKey(val);
+                  setParentBalance(null);
+                }}
                 onToggleShow={() => setParentShowManualKey((v) => !v)}
                 label="Parent wallet"
+                network={settings.network}
               />
               {/* Show balance when a wallet is selected */}
               {parentPublicKey && (
@@ -1254,7 +1459,7 @@ export function AccountFunderPanel() {
                     <p>
                       <strong>Required:</strong> Send at least{" "}
                       <strong>{requiredXlm.toFixed(2)} XLM</strong> to the address
-                      above ({n} children x {xlmEach} XLM + ~2 XLM fees buffer).
+                      above ({effectiveN} children x {xlmEach} XLM + ~2 XLM fees buffer).
                     </p>
                     <p>Then click "Check Balance" or enable auto-check.</p>
                   </div>
@@ -1278,11 +1483,9 @@ export function AccountFunderPanel() {
 
                     {/* Auto-check toggle — polls every 5s */}
                     <label className="flex items-center gap-2 text-xs cursor-pointer">
-                      <input
-                        type="checkbox"
+                      <Switch
                         checked={autoCheck}
-                        onChange={(e) => setAutoCheck(e.target.checked)}
-                        className="rounded"
+                        onCheckedChange={(checked) => setAutoCheck(checked)}
                       />
                       Auto-check every 5s
                     </label>
@@ -1351,7 +1554,11 @@ export function AccountFunderPanel() {
           </div>
         </CardContent>
         <CardFooter>
-          <Button onClick={handleGenerateChildren} className="gap-2">
+          <Button
+            onClick={handleGenerateChildren}
+            disabled={isDirectFunding || isSponsoring || isClosing}
+            className="gap-2"
+          >
             <RefreshCw className="h-4 w-4" />
             {hasChildren ? "Re-generate" : "Generate"} children
           </Button>
@@ -1372,6 +1579,7 @@ export function AccountFunderPanel() {
           copiedKey={copiedKey}
           copiedAll={copiedAll}
           labelPrefix="Child"
+          network={settings.network}
         />
       )}
 
@@ -1436,7 +1644,17 @@ export function AccountFunderPanel() {
                 <div className="flex items-center gap-2 rounded-md border px-3 py-2 text-xs">
                   <Wallet className="h-3 w-3 text-muted-foreground" />
                   <span className="text-muted-foreground">Parent:</span>
-                  <span className="font-mono">{shortAddr(parentPublicKey)}</span>
+                  <span className="font-mono">
+                    <ShortAddress address={parentPublicKey} network={settings.network} />
+                  </span>
+                </div>
+              )}
+              {/* Insufficient parent balance warning — applies to any parent mode */}
+              {hasParent && directParentInsufficient && (
+                <div className="flex items-center gap-2 rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive">
+                  <AlertTriangle className="h-3 w-3 shrink-0" />
+                  Parent balance ({parseFloat(parentBalance!).toFixed(2)} XLM) is below
+                  the required {directRequiredXlm.toFixed(2)} XLM for this batch.
                 </div>
               )}
             </CardContent>
@@ -1444,7 +1662,7 @@ export function AccountFunderPanel() {
               {!isDirectFunding ? (
                 <Button
                   onClick={handleDirectFund}
-                  disabled={!hasParent || !hasChildren}
+                  disabled={!hasParent || !hasChildren || directParentInsufficient}
                   className="gap-2"
                 >
                   <UserPlus className="h-4 w-4" />
@@ -1486,7 +1704,7 @@ export function AccountFunderPanel() {
                 <div className="rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-700 dark:text-amber-400 space-y-1">
                   <p>
                     <strong>{sponsoredReserveCost} XLM</strong> will be locked in the
-                    parent's balance as reserve ({n} x 1 XLM).
+                    parent's balance as reserve ({effectiveN} x 1 XLM).
                   </p>
                   <p>
                     This XLM is not spent — but the parent cannot withdraw it while the
@@ -1499,7 +1717,17 @@ export function AccountFunderPanel() {
                 <div className="flex items-center gap-2 rounded-md border px-3 py-2 text-xs">
                   <Shield className="h-3 w-3 text-muted-foreground" />
                   <span className="text-muted-foreground">Sponsor (parent):</span>
-                  <span className="font-mono">{shortAddr(parentPublicKey)}</span>
+                  <span className="font-mono">
+                    <ShortAddress address={parentPublicKey} network={settings.network} />
+                  </span>
+                </div>
+              )}
+              {/* Insufficient parent balance warning — applies to any parent mode */}
+              {hasParent && sponsoredParentInsufficient && (
+                <div className="flex items-center gap-2 rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive">
+                  <AlertTriangle className="h-3 w-3 shrink-0" />
+                  Parent balance ({parseFloat(parentBalance!).toFixed(2)} XLM) is below
+                  the required {sponsoredRequiredXlm.toFixed(2)} XLM for this batch.
                 </div>
               )}
             </CardContent>
@@ -1507,7 +1735,7 @@ export function AccountFunderPanel() {
               {!isSponsoring ? (
                 <Button
                   onClick={handleSponsoredCreate}
-                  disabled={!hasParent || !hasChildren}
+                  disabled={!hasParent || !hasChildren || sponsoredParentInsufficient}
                   className="gap-2"
                 >
                   <Shield className="h-4 w-4" />
@@ -1534,8 +1762,9 @@ export function AccountFunderPanel() {
               <CardDescription>
                 Permanently deletes accounts using <code>accountMerge</code>.
                 The sponsor fee-bumps every transaction so accounts with 0 XLM
-                can close themselves. The sponsor's locked reserve is returned
-                for each account closed.
+                can close themselves. If an account was sponsored, its reserve
+                may be returned to whichever account originally sponsored it —
+                not necessarily the wallet selected here to pay fees.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-5">
@@ -1587,6 +1816,7 @@ export function AccountFunderPanel() {
                 onManualKeyChange={setCloseSponsorManualKey}
                 onToggleShow={() => setCloseSponsorShowKey((v) => !v)}
                 label="Sponsor wallet (pays fees)"
+                network={settings.network}
               />
 
               {/* Results list — shown once close has started */}
@@ -1612,7 +1842,9 @@ export function AccountFunderPanel() {
                       {r.status === "failed" && (
                         <XCircle className="h-3 w-3 text-destructive shrink-0" />
                       )}
-                      <span className="shrink-0">{shortAddr(r.publicKey)}</span>
+                      <span className="shrink-0">
+                        <ShortAddress address={r.publicKey} network={settings.network} />
+                      </span>
                       <span className="hidden sm:block truncate text-muted-foreground/60">
                         {r.publicKey}
                       </span>
@@ -1654,7 +1886,7 @@ export function AccountFunderPanel() {
       {/* ================================================================== */}
       <SaveToGroup
         accounts={accounts}
-        parentPublicKey={parentPublicKey}
+        parentPublicKey={fundedByParentPublicKey ?? parentPublicKey}
         stepNumber={4}
       />
     </div>
