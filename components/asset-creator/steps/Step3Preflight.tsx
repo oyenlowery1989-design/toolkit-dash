@@ -77,7 +77,7 @@ export function Step3Preflight({ form, completedSteps, onBack, onComplete }: Pro
       push(await checkAccountExists(form.issuerPublicKey, server, onLog, signal, horizonUrl));
       push(await checkBalance(form.issuerPublicKey, 1.5, server, onLog, signal, horizonUrl));
       push(await checkAccountExists(form.distributorPublicKey, server, onLog, signal, horizonUrl));
-      push(await checkBalance(form.distributorPublicKey, 1.5, server, onLog, signal, horizonUrl));
+      push(await checkBalance(form.distributorPublicKey, 1.51, server, onLog, signal, horizonUrl));
       push(await checkAssetExists(form.assetCode, form.issuerPublicKey, server, onLog, signal, horizonUrl));
 
       // On mainnet: also check funding wallet balance if key is present
@@ -224,14 +224,16 @@ export function Step3Preflight({ form, completedSteps, onBack, onComplete }: Pro
       {/* Activity log */}
       {logs.length > 0 && (
         <div className="space-y-1">
-          <button
+          <Button
             type="button"
+            variant="ghost"
+            size="sm"
             onClick={() => setLogOpen((v) => !v)}
-            className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+            className="h-auto px-0 py-0 gap-1 text-xs font-normal text-muted-foreground hover:text-foreground hover:bg-transparent"
           >
             {logOpen ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
             Activity log ({logs.length} entries)
-          </button>
+          </Button>
           {logOpen && (
             <div
               className="bg-muted rounded-md p-3 h-40 overflow-y-auto font-mono text-xs space-y-0.5"

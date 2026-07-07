@@ -3,6 +3,7 @@
 
 import { CheckCircle2, XCircle, SkipForward, ExternalLink } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { ShortAddress } from "@/components/shared/ShortAddress";
 import type { StepResult } from "@/lib/asset-creator/types";
 
 const STEP_LABELS: Record<string, string> = {
@@ -17,11 +18,13 @@ interface Props {
   results: StepResult[];
   groupId?: string;
   network: string;
+  issuerPublicKey?: string;
+  distributorPublicKey?: string;
   onRetry: (failedStepIds: string[]) => void;
   onStartOver: () => void;
 }
 
-export function Step4Result({ results, groupId, network, onRetry, onStartOver }: Props) {
+export function Step4Result({ results, groupId, network, issuerPublicKey, distributorPublicKey, onRetry, onStartOver }: Props) {
   const expertBase = network === "public"
     ? "https://stellar.expert/explorer/public/tx"
     : network === "testnet"
@@ -41,8 +44,22 @@ export function Step4Result({ results, groupId, network, onRetry, onStartOver }:
   return (
     <div className="space-y-6">
       {allSuccess && (
-        <div className="rounded-md bg-green-500/10 border border-green-500/30 p-4 text-green-700 dark:text-green-300 text-sm font-medium">
-          ✓ Asset created successfully!
+        <div className="rounded-md bg-green-500/10 border border-green-500/30 p-4 text-green-700 dark:text-green-300 text-sm font-medium space-y-2">
+          <p>✓ Asset created successfully!</p>
+          {(issuerPublicKey || distributorPublicKey) && (
+            <div className="flex flex-col gap-1 text-xs font-normal text-foreground">
+              {issuerPublicKey && (
+                <span className="flex items-center gap-1">
+                  Issuer: <ShortAddress address={issuerPublicKey} role="issuer" network={network} />
+                </span>
+              )}
+              {distributorPublicKey && (
+                <span className="flex items-center gap-1">
+                  Distributor: <ShortAddress address={distributorPublicKey} role="distrib" network={network} />
+                </span>
+              )}
+            </div>
+          )}
         </div>
       )}
 

@@ -43,13 +43,16 @@ export function AssetCreatorPanel() {
   const [groupId, setGroupId] = useState<string | undefined>();
   const [completedSteps, setCompletedSteps] = useState<Set<string>>(new Set());
 
-  // Keep resolvedFundingSecretKey in sync with active wallet (handles cross-tab disconnect)
+  // Keep resolvedFundingSecretKey + network in sync with live global state
+  // (handles cross-tab wallet disconnect, and a network change elsewhere in
+  // the app while sitting on a later wizard step)
   useEffect(() => {
     setForm((prev) => ({
       ...prev,
+      network,
       resolvedFundingSecretKey: activeWallet?.secretKey ?? (prev.resolvedFundingSecretKey || ""),
     }));
-  }, [activeWallet]);
+  }, [activeWallet, network]);
 
   const onChange = (patch: Partial<AssetCreatorForm>) => {
     setForm((prev) => ({
@@ -58,10 +61,29 @@ export function AssetCreatorPanel() {
       network, // network always from global settings
       resolvedFundingSecretKey: activeWallet?.secretKey ?? patch.resolvedFundingSecretKey ?? prev.resolvedFundingSecretKey,
     }));
+
+    // Changing the identity fields invalidates any previously-completed
+    // steps — those were completed for a different issuer/distributor/asset.
+    if (
+      patch.issuerPublicKey !== undefined ||
+      patch.distributorPublicKey !== undefined ||
+      patch.assetCode !== undefined
+    ) {
+      setCompletedSteps(new Set());
+    }
   };
 
   const handleComplete = async (stepResults: StepResult[]) => {
-    setResults(stepResults);
+    // Merge by stepId instead of a flat replace — a retry run only covers
+    // the previously-failed steps, so earlier genuinely-succeeded results
+    // (and their tx-hash links) must not disappear from the UI.
+    setResults((prev) => {
+      const merged = new Map(prev.map((r) => [r.stepId, r] as const));
+      for (const r of stepResults) {
+        merged.set(r.stepId, r);
+      }
+      return Array.from(merged.values());
+    });
     setStep("result");
 
     const succeeded = stepResults
@@ -69,10 +91,11 @@ export function AssetCreatorPanel() {
       .map((r) => r.stepId);
     setCompletedSteps((prev) => new Set([...prev, ...succeeded]));
 
-    // Auto-save to Asset Groups on full success
-    const allSucceeded = stepResults.every(
-      (r) => r.status === "success" || r.status === "skipped"
-    );
+    // Auto-save to Asset Groups on full success (guard against an empty
+    // stepResults array vacuously satisfying .every())
+    const allSucceeded =
+      stepResults.length > 0 &&
+      stepResults.every((r) => r.status === "success" || r.status === "skipped");
     if (allSucceeded && form.assetCode && form.issuerPublicKey) {
       const gId = createGroup({
         name: `${form.assetCode} Asset`,
@@ -119,7 +142,7 @@ export function AssetCreatorPanel() {
               <TabsTrigger
                 key={s}
                 value={s}
-                disabled={i > stepIndex && step !== "result"}
+                disabled={step === "result" ? i !== stepIndex : i > stepIndex}
                 className="capitalize"
               >
                 {i + 1}. {s === "accounts" ? "Accounts" : s === "config" ? "Asset Config" : s === "preflight" ? "Preflight" : "Result"}
@@ -160,6 +183,8 @@ export function AssetCreatorPanel() {
               results={results}
               groupId={groupId}
               network={form.network}
+              issuerPublicKey={form.issuerPublicKey}
+              distributorPublicKey={form.distributorPublicKey}
               onRetry={handleRetry}
               onStartOver={handleStartOver}
             />

@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { WalletSelect } from "@/components/ui/wallet-select";
+import { ShortAddress } from "@/components/shared/ShortAddress";
 import type { AssetCreatorForm } from "@/lib/asset-creator/types";
 
 interface Props {
@@ -31,12 +32,14 @@ function KeypairField({
   label,
   secretKey,
   derivedPublicKey,
+  network,
   onSecretChange,
   onGenerate,
 }: {
   label: string;
   secretKey: string;
   derivedPublicKey: string;
+  network: AssetCreatorForm["network"];
   onSecretChange: (secret: string, publicKey: string) => void;
   onGenerate: () => void;
 }) {
@@ -70,18 +73,18 @@ function KeypairField({
           onChange={(e) => handleSecretChange(e.target.value)}
           className="font-mono text-xs pr-10"
         />
-        <button
+        <Button
           type="button"
-          className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+          variant="ghost"
+          size="icon"
+          className="absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7 text-muted-foreground hover:text-foreground"
           onClick={() => setShowSecret((v) => !v)}
         >
           {showSecret ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-        </button>
+        </Button>
       </div>
       {derivedPublicKey && (
-        <p className="text-xs font-mono text-muted-foreground break-all">
-          {derivedPublicKey}
-        </p>
+        <ShortAddress address={derivedPublicKey} network={network} />
       )}
       {secretKey && !derivedPublicKey && (
         <p className="text-xs text-destructive">Invalid secret key</p>
@@ -136,6 +139,13 @@ export function Step1Accounts({ form, onChange, activeWalletName, activeWalletKe
             </div>
           ) : (
             <div className="space-y-1">
+              <div className="flex justify-end">
+                <WalletSelect
+                  currentValue={form.resolvedFundingSecretKey}
+                  onPick={(w) => onChange({ resolvedFundingSecretKey: w.secretKey })}
+                  triggerClassName="h-7"
+                />
+              </div>
               <div className="relative">
                 <Input
                   type={showFundingSecret ? "text" : "password"}
@@ -144,13 +154,15 @@ export function Step1Accounts({ form, onChange, activeWalletName, activeWalletKe
                   onChange={(e) => onChange({ resolvedFundingSecretKey: e.target.value.trim() })}
                   className="font-mono text-xs pr-10"
                 />
-                <button
+                <Button
                   type="button"
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  variant="ghost"
+                  size="icon"
+                  className="absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7 text-muted-foreground hover:text-foreground"
                   onClick={() => setShowFundingSecret((v) => !v)}
                 >
                   {showFundingSecret ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                </button>
+                </Button>
               </div>
               <p className="text-xs text-muted-foreground">Connect a wallet in Wallet Manager to use it here automatically.</p>
             </div>
@@ -168,6 +180,7 @@ export function Step1Accounts({ form, onChange, activeWalletName, activeWalletKe
         label="Issuer Keypair"
         secretKey={form.issuerSecretKey}
         derivedPublicKey={form.issuerPublicKey}
+        network={form.network}
         onSecretChange={(secret, pubKey) => onChange({ issuerSecretKey: secret, issuerPublicKey: pubKey })}
         onGenerate={() => generateKeypair("issuer")}
       />
@@ -177,6 +190,7 @@ export function Step1Accounts({ form, onChange, activeWalletName, activeWalletKe
         label="Distributor Keypair"
         secretKey={form.distributorSecretKey}
         derivedPublicKey={form.distributorPublicKey}
+        network={form.network}
         onSecretChange={(secret, pubKey) => onChange({ distributorSecretKey: secret, distributorPublicKey: pubKey })}
         onGenerate={() => generateKeypair("distributor")}
       />

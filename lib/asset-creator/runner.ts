@@ -7,6 +7,8 @@ import type {
   StepResult,
   CreationStrategy,
 } from "./types";
+import { accountExists } from "./builder";
+import { shortAddr } from "@/lib/format";
 
 const FRIENDBOT_URL = "https://friendbot.stellar.org";
 
@@ -71,7 +73,7 @@ export async function runAssetCreation(
               const err: StepResult = {
                 stepId: "friendbot",
                 status: "failed",
-                error: `Friendbot failed for ${addr.slice(0, 4)}…${addr.slice(-4)}: ${JSON.stringify(body)}`,
+                error: `Friendbot failed for ${shortAddr(addr)}: ${JSON.stringify(body)}`,
               };
               results.push(err);
               onStep(err);
@@ -132,13 +134,29 @@ export async function runAssetCreation(
     } catch (e: unknown) {
       if (signal.aborted) break;
 
-      // Check for op_already_exists (skippable on fund-accounts)
+      // Check for op_already_exists (skippable on fund-accounts) — but only mark
+      // the step successful after individually re-verifying both accounts now
+      // actually exist, rather than assuming the error implies full success.
       const errStr = JSON.stringify(e);
       if (stepId === "fund-accounts" && errStr.includes("op_already_exists")) {
-        const ok: StepResult = { stepId, status: "success" };
-        results.push(ok);
-        onStep(ok);
-        continue;
+        const [issuerExists, distribExists] = await Promise.all([
+          accountExists(server, form.issuerPublicKey),
+          accountExists(server, form.distributorPublicKey),
+        ]);
+        if (issuerExists && distribExists) {
+          const ok: StepResult = { stepId, status: "success" };
+          results.push(ok);
+          onStep(ok);
+          continue;
+        }
+        const failed: StepResult = {
+          stepId,
+          status: "failed",
+          error: "op_already_exists, but account(s) still missing on ledger after re-check",
+        };
+        results.push(failed);
+        onStep(failed);
+        return results;
       }
 
       const failed: StepResult = {

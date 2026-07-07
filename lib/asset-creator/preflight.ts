@@ -1,6 +1,7 @@
 // lib/asset-creator/preflight.ts
 import type { Horizon } from "stellar-sdk";
 import type { PreflightCheck } from "./types";
+import { shortAddr } from "@/lib/format";
 
 export async function checkAccountExists(
   address: string,
@@ -13,15 +14,24 @@ export async function checkAccountExists(
   try {
     if (signal.aborted) throw new DOMException("Aborted", "AbortError");
     await server.loadAccount(address);
-    return { id: `exists-${address}`, label: `Account ${address.slice(0, 4)}…${address.slice(-4)} exists`, status: "pass", blocking: true };
+    return { id: `exists-${address}`, label: `Account ${shortAddr(address)} exists`, status: "pass", blocking: true };
   } catch (e: unknown) {
     if (e instanceof DOMException && e.name === "AbortError") throw e;
     const is404 = (e as { response?: { status?: number } })?.response?.status === 404;
+    if (is404) {
+      return {
+        id: `exists-${address}`,
+        label: `Account ${shortAddr(address)} exists`,
+        status: "warning",
+        message: "Account does not exist yet — will be created by the fund-accounts step",
+        blocking: false,
+      };
+    }
     return {
       id: `exists-${address}`,
-      label: `Account ${address.slice(0, 4)}…${address.slice(-4)} exists`,
+      label: `Account ${shortAddr(address)} exists`,
       status: "fail",
-      message: is404 ? "Account not found — enable funding to create it" : "Could not reach Horizon",
+      message: "Could not reach Horizon",
       blocking: true,
     };
   }
@@ -44,13 +54,23 @@ export async function checkBalance(
     const pass = balance >= minXlm;
     return {
       id: `balance-${address}`,
-      label: `${address.slice(0, 4)}…${address.slice(-4)} has ≥ ${minXlm} XLM`,
+      label: `${shortAddr(address)} has ≥ ${minXlm} XLM`,
       status: pass ? "pass" : "fail",
       message: pass ? undefined : `Balance is ${balance.toFixed(2)} XLM — need at least ${minXlm} XLM`,
       blocking: true,
     };
   } catch (e: unknown) {
     if (e instanceof DOMException && e.name === "AbortError") throw e;
+    const is404 = (e as { response?: { status?: number } })?.response?.status === 404;
+    if (is404) {
+      return {
+        id: `balance-${address}`,
+        label: `${shortAddr(address)} has ≥ ${minXlm} XLM`,
+        status: "warning",
+        message: "Account does not exist yet — will be created by the fund-accounts step",
+        blocking: false,
+      };
+    }
     return { id: `balance-${address}`, label: `Balance check`, status: "fail", message: "Could not load account", blocking: true };
   }
 }

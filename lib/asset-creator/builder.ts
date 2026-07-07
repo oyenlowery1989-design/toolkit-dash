@@ -15,10 +15,32 @@ const DISTRIB_FUND_XLM = "2.0";
 const TX_TIMEOUT = 180;
 
 /** Check if an account already exists on Horizon. */
-async function accountExists(server: Horizon.Server, publicKey: string): Promise<boolean> {
+export async function accountExists(server: Horizon.Server, publicKey: string): Promise<boolean> {
   try {
     await server.loadAccount(publicKey);
     return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Check if an account already holds at least `minAmount` of the given asset. */
+async function hasSufficientBalance(
+  server: Horizon.Server,
+  publicKey: string,
+  asset: Asset,
+  minAmount: number,
+): Promise<boolean> {
+  try {
+    const account = await server.loadAccount(publicKey);
+    const match = account.balances.find(
+      (b: { asset_type: string; asset_code?: string; asset_issuer?: string; balance: string }) =>
+        asset.isNative()
+          ? b.asset_type === "native"
+          : b.asset_code === asset.getCode() && b.asset_issuer === asset.getIssuer(),
+    );
+    if (!match) return false;
+    return parseFloat(match.balance) >= minAmount;
   } catch {
     return false;
   }
@@ -121,11 +143,24 @@ export const StandardStrategy: CreationStrategy = {
       }
 
       if (stepId === "issuance") {
+        const asset = new Asset(form.assetCode, form.issuerPublicKey);
+
+        // Idempotency guard: if the distributor already holds the full supply,
+        // a prior submission likely committed even though the client saw a
+        // timeout/error — skip re-minting to avoid permanently double-issuing.
+        const alreadyIssued = await hasSufficientBalance(
+          server,
+          form.distributorPublicKey,
+          asset,
+          form.supply,
+        );
+        if (signal.aborted) throw new DOMException("Aborted", "AbortError");
+        if (alreadyIssued) continue;
+
         const issuerKp = Keypair.fromSecret(form.issuerSecretKey);
         const issuerAccount = await server.loadAccount(issuerKp.publicKey());
         if (signal.aborted) throw new DOMException("Aborted", "AbortError");
 
-        const asset = new Asset(form.assetCode, form.issuerPublicKey);
         const builder = new TransactionBuilder(issuerAccount, { fee: BASE_FEE, networkPassphrase })
           .addOperation(Operation.payment({
             destination: form.distributorPublicKey,
