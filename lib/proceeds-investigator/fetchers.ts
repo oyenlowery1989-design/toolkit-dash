@@ -5,6 +5,9 @@ import type {
   ProceedsLedgerEntry,
   ScanProgress,
 } from "./types";
+import { fetchJson } from "@/lib/horizon-fetch";
+import { resolveAssetToXlmTrade } from "@/lib/trade-helpers";
+import { getErrorMessage } from "@/lib/stellar-helpers";
 
 const FETCH_LIMIT = 200;
 
@@ -29,33 +32,6 @@ function isTargetAsset(
   const code = String(raw[`${prefix}_code`] ?? "").toUpperCase();
   const assetIssuer = String(raw[`${prefix}_issuer`] ?? "");
   return code === assetCode.toUpperCase() && assetIssuer === issuer;
-}
-
-async function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function fetchJson(
-  url: string,
-  signal: AbortSignal,
-): Promise<Record<string, any>> {
-  const MAX_RETRIES = 4;
-  let delay = 2000;
-  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-    const res = await fetch(url, { signal });
-    if (res.status === 429 || res.status === 503) {
-      if (attempt === MAX_RETRIES) {
-        throw new Error(`Horizon rate limited (${res.status}) — try again later`);
-      }
-      const retryAfter = parseInt(res.headers.get("retry-after") ?? "0") * 1000;
-      await sleep(retryAfter > 0 ? retryAfter : delay);
-      delay = Math.min(delay * 2, 30_000);
-      continue;
-    }
-    if (!res.ok) throw new Error(`Horizon request failed (${res.status})`);
-    return (await res.json()) as Record<string, any>;
-  }
-  throw new Error("Max retries exceeded");
 }
 
 async function fetchAccountMergeAmount(
@@ -134,26 +110,9 @@ async function scanAccountDexAssetToXlm(
       if (ts > toTs) continue;
       if (ts < fromTs) { doneEarly = true; break; }
 
-      const isBase = raw.base_account === account;
-      const assetIsBase =
-        String(raw.base_asset_code ?? "").toUpperCase() ===
-          assetCode.toUpperCase() && raw.base_asset_issuer === issuer;
-      const assetIsCounter =
-        String(raw.counter_asset_code ?? "").toUpperCase() ===
-          assetCode.toUpperCase() && raw.counter_asset_issuer === issuer;
-      const xlmIsBase = raw.base_asset_type === "native";
-      const xlmIsCounter = raw.counter_asset_type === "native";
-
-      let sold = 0;
-      let received = 0;
-
-      if (isBase && assetIsBase && xlmIsCounter) {
-        sold = parseAmount(raw.base_amount);
-        received = parseAmount(raw.counter_amount);
-      } else if (!isBase && assetIsCounter && xlmIsBase) {
-        sold = parseAmount(raw.counter_amount);
-        received = parseAmount(raw.base_amount);
-      }
+      const trade = resolveAssetToXlmTrade(raw, account, assetCode, issuer);
+      const sold = trade?.sold ?? 0;
+      const received = trade?.received ?? 0;
 
       if (sold <= 0 || received < 0) continue;
 
@@ -484,6 +443,8 @@ export async function fetchAddressInvestigation(
   account: string,
   signal: AbortSignal,
   onProgress?: (progress: ScanProgress) => void,
+  fromDate?: Date,
+  toDate?: Date,
 ): Promise<AddressInvestigationResult> {
   const base = horizonBase.replace(/\/+$/, "");
   const incomingLedger: AddressLedgerEntry[] = [];
@@ -491,10 +452,17 @@ export async function fetchAddressInvestigation(
   const senders = new Map<string, { total: number; count: number }>();
   const recipients = new Map<string, { total: number; count: number }>();
 
+  const fromTs = fromDate ? fromDate.getTime() : 0;
+  const toTs = toDate ? toDate.getTime() : Date.now() + 86_400_000;
+
+  let complete = true;
+  let warning: string | undefined;
+
   let cursor: string | undefined;
   let pages = 0;
   let recordsSeen = 0;
 
+  try {
   while (!signal.aborted) {
     const params = new URLSearchParams({
       order: "asc",
@@ -513,7 +481,11 @@ export async function fetchAddressInvestigation(
     pages += 1;
     recordsSeen += records.length;
 
+    let doneEarly = false;
     for (const raw of records) {
+      const opTs = new Date(String(raw.created_at ?? "")).getTime();
+      if (opTs < fromTs) continue;
+      if (opTs > toTs) { doneEarly = true; break; }
       const type = String(raw.type ?? "");
       const opId = String(raw.id ?? "");
       const txHash = String(raw.transaction_hash ?? "");
@@ -714,14 +686,21 @@ export async function fetchAddressInvestigation(
       hits: incomingLedger.length + outgoingLedger.length,
     });
 
-    if (records.length < FETCH_LIMIT) break;
+    if (doneEarly || records.length < FETCH_LIMIT) break;
     cursor = String(records[records.length - 1].paging_token);
+  }
+  } catch (e) {
+    if (!signal.aborted) {
+      complete = false;
+      warning = `Operation scan incomplete: ${getErrorMessage(e)}`;
+    }
   }
 
   cursor = undefined;
   pages = 0;
   recordsSeen = 0;
 
+  try {
   while (!signal.aborted) {
     const params = new URLSearchParams({
       order: "asc",
@@ -740,7 +719,11 @@ export async function fetchAddressInvestigation(
     pages += 1;
     recordsSeen += records.length;
 
+    let doneEarly = false;
     for (const raw of records) {
+      const feeTs = new Date(String(raw.created_at ?? "")).getTime();
+      if (feeTs < fromTs) continue;
+      if (feeTs > toTs) { doneEarly = true; break; }
       if (raw.fee_account !== account) continue;
       const fee = parseAmount(raw.fee_charged) / 10_000_000;
       if (fee <= 0) continue;
@@ -769,8 +752,16 @@ export async function fetchAddressInvestigation(
       hits: incomingLedger.length + outgoingLedger.length,
     });
 
-    if (records.length < FETCH_LIMIT) break;
+    if (doneEarly || records.length < FETCH_LIMIT) break;
     cursor = String(records[records.length - 1].paging_token);
+  }
+  } catch (e) {
+    if (!signal.aborted) {
+      complete = false;
+      warning = warning
+        ? `${warning}; Fee scan incomplete: ${getErrorMessage(e)}`
+        : `Fee scan incomplete: ${getErrorMessage(e)}`;
+    }
   }
 
   const totalIncomingXlm = incomingLedger.reduce(
@@ -781,6 +772,16 @@ export async function fetchAddressInvestigation(
     (sum, row) => sum + row.amountXlm,
     0,
   );
+
+  // Compute totals from the FULL maps before slicing to top-N, so percentages
+  // shown/exported aren't undercounted when there are >20 unique counterparties.
+  const totalIncomingFromSendersXlm = [...senders.values()].reduce(
+    (sum, entry) => sum + entry.total,
+    0,
+  );
+  const totalOutgoingToRecipientsXlm = [...recipients.entries()]
+    .filter(([address]) => address !== "NETWORK_FEES")
+    .reduce((sum, [, entry]) => sum + entry.total, 0);
 
   const topSenders = [...senders.entries()]
     .map(([address, info]) => ({
@@ -801,20 +802,18 @@ export async function fetchAddressInvestigation(
     .sort((a, b) => b.totalXlm - a.totalXlm)
     .slice(0, 20);
 
-  const totalOutgoingToRecipientsXlm = topRecipients.reduce(
-    (sum, row) => sum + row.totalXlm,
-    0,
-  );
-
   return {
     account,
     totalIncomingXlm,
     totalOutgoingXlm,
+    totalIncomingFromSendersXlm,
     totalOutgoingToRecipientsXlm,
     netXlm: totalIncomingXlm - totalOutgoingXlm,
     topSenders,
     topRecipients,
     incomingLedger: sortByDateDesc(incomingLedger),
     outgoingLedger: sortByDateDesc(outgoingLedger),
+    complete,
+    warning,
   };
 }

@@ -66,12 +66,17 @@ export interface AddressInvestigationResult {
   account: string;
   totalIncomingXlm: number;
   totalOutgoingXlm: number;
+  totalIncomingFromSendersXlm: number;
   totalOutgoingToRecipientsXlm: number;
   netXlm: number;
   topSenders: CounterpartySummary[];
   topRecipients: CounterpartySummary[];
   incomingLedger: AddressLedgerEntry[];
   outgoingLedger: AddressLedgerEntry[];
+  /** False when a pagination loop was cut short by a transient error — result is partial. */
+  complete?: boolean;
+  /** Human-readable note describing why the result is partial, if applicable. */
+  warning?: string;
 }
 
 export interface ScanProgress {

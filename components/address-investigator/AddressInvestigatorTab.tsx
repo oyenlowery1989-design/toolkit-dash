@@ -31,7 +31,6 @@ import {
   ExternalLink,
   Gift,
   Globe,
-  Layers,
   Loader2,
   Search,
   X,
@@ -50,7 +49,7 @@ import {
   timeAgo,
 } from "@/lib/stellar-helpers";
 import { shortAddr, formatXlm } from "@/lib/format";
-import { ShortAddress } from "@/components/asset-lookup";
+import { ShortAddress } from "@/components/shared/ShortAddress";
 import { useSavedSearches } from "@/hooks/use-saved-searches";
 import { useKnownIntermediaries } from "@/hooks/use-known-intermediaries";
 import { useAssetGroups } from "@/hooks/use-asset-groups";
@@ -75,6 +74,7 @@ import {
   ChainState,
   traceChainStep,
 } from "@/components/shared/ChainDisplay";
+import { ProceedsDestinationsTable } from "@/components/shared/proceeds/ProceedsDestinationsTable";
 
 const DISPLAY_PAGE_SIZE = 10;
 const CLAIMABLE_DISPLAY_PAGE_SIZE = 5;
@@ -584,6 +584,7 @@ export function AddressInvestigatorTab() {
     setProgressText(null);
     realCreatorAbortRef.current?.abort();
     setAddressChain({ status: "idle", chain: [] });
+    setGroupDialog(null);
 
     handleRun(urlAddress);
     // handleRun is intentionally omitted from deps — it's stable in shape
@@ -737,6 +738,7 @@ export function AddressInvestigatorTab() {
         if (cursor) builder = builder.cursor(cursor);
 
         const page = await builder.call();
+        if (signal.aborted) break;
         const records = page.records as Record<string, unknown>[];
 
         for (const record of records) {
@@ -811,6 +813,7 @@ export function AddressInvestigatorTab() {
     setProgressText("Initializing scan...");
     realCreatorAbortRef.current?.abort();
     setAddressChain({ status: "idle", chain: [] });
+    setGroupDialog(null);
 
     try {
       const horizonBase = resolveHorizonUrl(settings);
@@ -930,7 +933,9 @@ export function AddressInvestigatorTab() {
       setError(getErrorMessage(e));
       setProgressText(null);
     } finally {
-      setLoading(false);
+      if (abortRef.current === controller) {
+        setLoading(false);
+      }
     }
   };
 
@@ -977,24 +982,32 @@ export function AddressInvestigatorTab() {
                 key={entry.timestamp}
                 className="flex items-center gap-1 rounded-md border border-border bg-muted/40 pl-2 pr-1 py-1 text-xs"
               >
-                <button
-                  className="flex items-center gap-1.5 hover:text-foreground text-muted-foreground transition-colors"
+                <div
+                  role="button"
+                  tabIndex={0}
+                  className="flex items-center gap-1.5 cursor-pointer text-muted-foreground transition-colors"
                   onClick={() => {
                     setAddress(entry.address);
                   }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      setAddress(entry.address);
+                    }
+                  }}
                 >
-                  <span className="font-mono font-semibold text-foreground">
-                    {entry.address.slice(0, 6)}…{entry.address.slice(-6)}
-                  </span>
+                  <ShortAddress address={entry.address} network={entry.network} />
                   <span className="opacity-50">{entry.network}</span>
-                </button>
-                <button
-                  className="ml-1 text-muted-foreground hover:text-destructive transition-colors p-0.5 rounded"
+                </div>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="ml-1 h-5 w-5 p-0.5 text-muted-foreground hover:text-destructive"
                   onClick={() => removeHistory(entry.timestamp)}
                   aria-label="Remove"
                 >
                   <X className="h-3 w-3" />
-                </button>
+                </Button>
               </div>
             ))}
           </div>
@@ -1003,11 +1016,7 @@ export function AddressInvestigatorTab() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Address Investigator</CardTitle>
-          <CardDescription>
-            Analyze incoming and outgoing native XLM flow for one address,
-            including top counterparties.
-          </CardDescription>
+          <CardTitle>Search</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="grid gap-4 md:grid-cols-[1fr_auto]">
@@ -1015,13 +1024,15 @@ export function AddressInvestigatorTab() {
               <div className="flex items-center justify-between">
                 <Label htmlFor="investigator-address">Address</Label>
                 {activeWallet && (
-                  <button
+                  <Button
                     type="button"
+                    variant="ghost"
+                    size="sm"
                     onClick={() => setAddress(activeWallet.publicKey)}
-                    className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+                    className="h-auto p-0 text-xs text-muted-foreground hover:text-foreground hover:bg-transparent"
                   >
                     Use my wallet
-                  </button>
+                  </Button>
                 )}
               </div>
               <Input
@@ -1234,7 +1245,11 @@ export function AddressInvestigatorTab() {
                           {row.asset}
                         </td>
                         <td className="px-3 py-2 font-mono text-xs whitespace-nowrap">
-                          {row.issuer ? shortAddr(row.issuer) : "—"}
+                          {row.issuer ? (
+                            <ShortAddress address={row.issuer} network={settings.network} />
+                          ) : (
+                            "—"
+                          )}
                         </td>
                         <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap">
                           {formatBalance(row.balance)}
@@ -1312,7 +1327,11 @@ export function AddressInvestigatorTab() {
                             {row.asset}
                           </td>
                           <td className="px-3 py-2 font-mono text-xs whitespace-nowrap">
-                            {row.sponsor ? shortAddr(row.sponsor) : "—"}
+                            {row.sponsor ? (
+                              <ShortAddress address={row.sponsor} network={settings.network} />
+                            ) : (
+                              "—"
+                            )}
                           </td>
                           <td
                             className="px-3 py-2 text-xs"
@@ -1361,65 +1380,34 @@ export function AddressInvestigatorTab() {
                   variant="outline"
                   size="sm"
                   onClick={() =>
-                    exportCounterparties("top-senders.csv", result.topSenders)
+                    exportCounterparties(
+                      "top-senders.csv",
+                      result.topSenders,
+                      result.totalIncomingFromSendersXlm,
+                    )
                   }
                 >
                   <Download className="mr-2 h-3.5 w-3.5" />
                   Export CSV
                 </Button>
-                <div className="overflow-x-auto border rounded-md">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="border-b bg-muted/40">
-                        <th className="text-left px-3 py-2">Sender</th>
-                        <th className="text-right px-3 py-2">Amount XLM</th>
-                        <th className="text-right px-3 py-2">Count</th>
-                        <th className="text-right px-3 py-2"></th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {result.topSenders.map((row) => (
-                        <tr
-                          key={row.address}
-                          className="border-b last:border-0"
-                        >
-                          <td className="px-3 py-2 text-xs">
-                            {row.address === "NETWORK_FEES" ? (
-                              row.address
-                            ) : (
-                              <ShortAddress
-                                address={row.address}
-                                network={settings.network}
-                              />
-                            )}
-                          </td>
-                          <td className="px-3 py-2 text-right tabular-nums">
-                            {formatXlm(row.totalXlm)}
-                          </td>
-                          <td className="px-3 py-2 text-right tabular-nums">
-                            {row.count}
-                          </td>
-                          <td className="px-3 py-2 text-right">
-                            {row.address !== "NETWORK_FEES" && groups.length > 0 && (
-                              <button
-                                title="Add to group"
-                                onClick={() => {
-                                  setDialogGroupId(groups[0].id);
-                                  setDialogRole("bank");
-                                  setGroupDialog({ address: row.address, role: "bank" });
-                                }}
-                                className="inline-flex items-center gap-1 rounded border border-purple-400/40 bg-purple-400/10 px-2 py-0.5 text-[10px] font-medium text-purple-400 hover:bg-purple-400/20 transition-colors"
-                              >
-                                <Layers className="h-3 w-3" />
-                                + Group
-                              </button>
-                            )}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                <ProceedsDestinationsTable
+                  destinations={result.topSenders}
+                  totalXlmProceeds={result.totalIncomingFromSendersXlm}
+                  network={settings.network}
+                  showPercentColumn
+                  percentColumnLabel="% of Total"
+                  addressColumnLabel="Sender"
+                  emptyMessage="No incoming payments found."
+                  onAddToGroup={
+                    groups.length > 0
+                      ? (addr) => {
+                          setDialogGroupId(groups[0].id);
+                          setDialogRole("bank");
+                          setGroupDialog({ address: addr, role: "bank" });
+                        }
+                      : undefined
+                  }
+                />
               </CardContent>
             </Card>
 
@@ -1445,70 +1433,24 @@ export function AddressInvestigatorTab() {
                   <Download className="mr-2 h-3.5 w-3.5" />
                   Export CSV
                 </Button>
-                <div className="overflow-x-auto border rounded-md">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="border-b bg-muted/40">
-                        <th className="text-left px-3 py-2">Recipient</th>
-                        <th className="text-right px-3 py-2">Amount XLM</th>
-                        <th className="text-right px-3 py-2">% of Total</th>
-                        <th className="text-right px-3 py-2">Count</th>
-                        <th className="text-right px-3 py-2"></th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {result.topRecipients.map((row) => (
-                        <tr
-                          key={row.address}
-                          className="border-b last:border-0"
-                        >
-                          <td className="px-3 py-2 text-xs">
-                            {row.address === "NETWORK_FEES" ? (
-                              row.address
-                            ) : (
-                              <ShortAddress
-                                address={row.address}
-                                network={settings.network}
-                              />
-                            )}
-                          </td>
-                          <td className="px-3 py-2 text-right tabular-nums">
-                            {formatXlm(row.totalXlm)}
-                          </td>
-                          <td className="px-3 py-2 text-right tabular-nums">
-                            {result.totalOutgoingToRecipientsXlm > 0
-                              ? (
-                                  (row.totalXlm /
-                                    result.totalOutgoingToRecipientsXlm) *
-                                  100
-                                ).toFixed(2)
-                              : "0.00"}
-                            %
-                          </td>
-                          <td className="px-3 py-2 text-right tabular-nums">
-                            {row.count}
-                          </td>
-                          <td className="px-3 py-2 text-right">
-                            {row.address !== "NETWORK_FEES" && groups.length > 0 && (
-                              <button
-                                title="Add to group"
-                                onClick={() => {
-                                  setDialogGroupId(groups[0].id);
-                                  setDialogRole("bank");
-                                  setGroupDialog({ address: row.address, role: "bank" });
-                                }}
-                                className="inline-flex items-center gap-1 rounded border border-purple-400/40 bg-purple-400/10 px-2 py-0.5 text-[10px] font-medium text-purple-400 hover:bg-purple-400/20 transition-colors"
-                              >
-                                <Layers className="h-3 w-3" />
-                                + Group
-                              </button>
-                            )}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                <ProceedsDestinationsTable
+                  destinations={result.topRecipients}
+                  totalXlmProceeds={result.totalOutgoingToRecipientsXlm}
+                  network={settings.network}
+                  showPercentColumn
+                  percentColumnLabel="% of Total"
+                  addressColumnLabel="Recipient"
+                  emptyMessage="No outgoing payments found."
+                  onAddToGroup={
+                    groups.length > 0
+                      ? (addr) => {
+                          setDialogGroupId(groups[0].id);
+                          setDialogRole("bank");
+                          setGroupDialog({ address: addr, role: "bank" });
+                        }
+                      : undefined
+                  }
+                />
               </CardContent>
             </Card>
           </div>
@@ -1526,7 +1468,7 @@ export function AddressInvestigatorTab() {
                     size="sm"
                     onClick={() =>
                       downloadCSV(
-                        `address-ops-${address.trim().slice(0, 8)}.csv`,
+                        `address-ops-${result.account.slice(0, 8)}.csv`,
                         [
                           "Action",
                           "Category",
@@ -1626,7 +1568,7 @@ export function AddressInvestigatorTab() {
                       placeholder="e.g. USDC or USDC:G..."
                       value={paymentAssetQuery}
                       onChange={(e) =>
-                        setPaymentAssetQuery(e.target.value.toUpperCase())
+                        setPaymentAssetQuery(e.target.value)
                       }
                     />
                   </div>
