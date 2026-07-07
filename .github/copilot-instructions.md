@@ -8,9 +8,10 @@
 - **Never force-uppercase Stellar asset codes** — `wUSDC` ≠ `WUSDC`. Preserve case from input and storage.
 - **Always use `/accounts/{address}/payments`** — never `/payments?account={address}`. The `?account=` form includes ops where the address is not the actor.
 - **All persistent data goes in SQLite/Supabase** via the DB hook pattern. Never `localStorage` for new features.
-- **Never use raw `<input>`, `<button>`, `<select>`** — always use `@/components/ui` equivalents.
-- **Display addresses as `GABC…WXYZ`** via the `ShortAddress` component.
+- **Never use raw `<input>`, `<button>`, `<select>`** — always use `@/components/ui` equivalents; use `<Switch>` for any boolean toggle (no `Checkbox` exists yet).
+- **Display addresses as `GABC…WXYZ`** via the `ShortAddress` component — never wrap it in a `<button>`/`<Button>` (it renders its own internal button; use `<div role="button" tabIndex={0}>` if the row itself needs to be clickable).
 - **Standard page shell**: `AppLayout` already adds padding/max-width — never add another `max-w-*` wrapper in a page file.
+- **Before writing new UI or a new utility function, check `CLAUDE.md`'s "Reusable Components & Utilities" section first** — most address display, CSV export, save-to-group, XLM/USD pricing, and stats-card needs already have a shared implementation.
 
 ## Workflow
 
@@ -32,4 +33,7 @@ All data hooks use `createDbCache<T>()` from `lib/db-client.ts`. API routes live
 | `lib/settings.ts` | Global settings hook + Horizon URL resolution |
 | `lib/db-client.ts` | `createDbCache<T>()`, `dbPost`, `dbPatch`, `dbDelete` |
 | `lib/asset-groups/types.ts` | `GroupMemberRole`, `ROLE_LABELS`, `ROLE_COLORS` |
-| `components/asset-lookup/index.ts` | Re-exports `ShortAddress` (import from here) |
+| `lib/stellar-submit.ts` | `withAccountLock()` — per-key tx submission-order lock |
+| `lib/csv-export.ts` | `downloadCSV()` — quoted/escaped CSV export, never hand-roll this |
+| `components/shared/ShortAddress.tsx` | `<ShortAddress address network />` — import from `@/components/shared/ShortAddress` (moved out of `asset-lookup` — that copy no longer exists) |
+| `components/shared/proceeds/` | `ProceedsDestinationsTable`, `ProceedsStatsCards`, `SaveToGroupButton`, `ProceedsStatusBadge` — shared destination-table/stats-card UI |

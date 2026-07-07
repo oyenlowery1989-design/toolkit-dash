@@ -75,7 +75,18 @@
   }
   ```
 - Always use shared UI components: `<Input>`, `<Button>`, `<Select>` from `@/components/ui`; `<WalletSelect>` for wallet pickers; `<ShortAddress>` for any Stellar address display.
-- Never use raw HTML `<input>`, `<button>`, `<select>` in module UI.
+- Never use raw HTML `<input>`, `<button>`, `<select>` in module UI. For boolean toggles use `<Switch>` (there is no shared `Checkbox` yet — every module so far has used `Switch` for on/off settings, even ones that read like a checkbox, e.g. "drain first", "auto-delete").
+
+### Creating a New Module — Checklist
+1. **Route**: add `app/(group)/my-module/page.tsx` in whichever route group matches the sidebar section (`(analysis)`, `(tools)`, `(config)`, `(data)`) — check `lib/navigation.ts` for the section list and add the sidebar entry there.
+2. **`page.tsx`**: thin shell only — h1 + description + `<Suspense>` wrapping the panel (exact snippet above). Never put fetch logic, `useState`, or `"use client"` in `page.tsx` itself.
+3. **Panel**: `components/my-module/MyModulePanel.tsx`, `"use client"`. Owns all state/tabs. If the module has multiple tabs, split each tab into its own file (`components/my-module/TabOneTab.tsx`, etc.) and keep the panel itself as a thin `<Tabs>` shell — this is the pattern used by `intermediary-tracer`, `trustline-manager`, `asset-creator` (all "Clean decomposition"); do not repeat the giant-single-file pattern (`AssetLookupPanel`, `AddressInvestigatorTab`, `GhostPaymentsPanel`, `payments/page.tsx` — all 1300+ lines) unless the module is genuinely simple enough to stay under a few hundred lines.
+4. **Lib layer**: `lib/my-module/types.ts` (types + any role/constant enums), `lib/my-module/index.ts` or `fetchers.ts`/`runner.ts`/`builder.ts` split (mirror `asset-creator` or `trustline-manager` for a multi-file split, `asset-manager` for a single `index.ts`). Pure functions only — no React, no `"use client"`. Every fetcher takes `onLog`/`onResult` callbacks (see Fetcher Pattern above) and an `AbortSignal`.
+5. **Network**: always read from `useSettings()` — never add a per-module network selector. For a plain Horizon server instance, use `useHorizonServer()` (below) instead of hand-rolling `new Horizon.Server(url)`.
+6. **If the module submits transactions**: reuse `getErrorMessage`/`extractHorizonResult`-style helpers from `lib/stellar-helpers.ts` for error parsing; if it can plausibly run concurrently with itself (a scheduler + a manual trigger, e.g. auto-send-groups/tiered-rewards), wrap the per-key submission in `withAccountLock` from `lib/stellar-submit.ts` — this only serializes *submission order* for one process, it is **not** a cross-process/serverless lock (see Tiered Rewards' `_runningConfigs` pattern below for how to add a same-process re-entrancy guard on top when double-execution itself — not just bad sequence numbers — is the risk).
+7. **If the module persists user data**: add a table to `lib/db.ts` **and** the matching table in `supabase-schema.sql` (do this in the same edit — a module has shipped before with a table missing from one of the two and it silently broke Vercel deploys), a route at `app/api/db/my-table/route.ts` following the dual-mode (`isSupabaseOnly()`) pattern in any existing route, and a hook via `createDbCache<T>()` (see DB-Backed Hooks below). Never use `localStorage` for anything that should survive across devices/sessions.
+8. **Before writing any new UI or utility**: check the Reusable Components & Utilities catalog below — most address display, CSV export, group-save, XLM/USD pricing, and stats-card needs are already covered by a shared component. Writing a second copy of any of these is the single most common finding in this project's module reviews.
+9. **Update this file**: add a row to the Module Inventory table and a short section for the module once it is signed off, following the terse style of the existing module sections (route, panel, lib files, one line per non-obvious behavior — not a tutorial).
 
 ## Module Inventory
 | Module | Status |
@@ -86,25 +97,26 @@
 | `bulk-asset-sales` | Working — recently updated with context-aware group buttons |
 | `asset-sales` (proceeds) | Working — recently updated with auto-infer distrib, context-aware group buttons |
 | `intermediary-tracer` | Mostly complete — see notes below |
-| `address-generator` | Working — Web Worker vanity address generator |
-| `bulk-payments` | Working — secret key field replaced by active wallet indicator when wallet connected |
-| `ghost-payments` | Working — secret key field replaced by active wallet indicator when wallet connected |
-| `asset-creator` | Working — 4-step wizard: accounts, asset config, preflight, execution; auto-saves to Asset Groups |
-| `asset-manager` | Working — shared asset input panel + Asset Flags tab + Holders tab (trustlines + sell offers combined) |
-| `account-funder` | Working — bulk keypair generator + createAccount funder; Direct/Sponsored/Close tabs; save to Asset Group |
-| `trustline-manager` | Working — Single tab (add/remove/drain) + Bulk tab (N assets × M accounts matrix); auto-delete toggle |
-| `soroban` | Working — SAC deploy wizard for wrapping existing classic assets; manual "Recheck" button wired to status check |
-| `dex-orderbook` | Working — bid/ask tables, stats cards, depth chart (recharts) |
-| `wallet-manager` | Working — folders + wallets + connect/disconnect; header switcher added |
-| `my-wallet` | Working — connected wallet overview: XLM/Available/Reserved/30d-net-flow cards, reserve breakdown popup, home domain (editable inline), thresholds+sequence, account flags (AUTH_REQUIRED etc), inflation dest, signers, claimable balances (claim), assets+trustlines (DEX/Send/Remove icons), open offers, payment history (in/out), recent txs, merge account (danger zone), quick actions — all sections collapsible via `Section` component |
-| `payments` | Working — Send (multi-leg, Max, remove-trustline + offer cancel), Path (strict-receive + strict-send), Claimable Balance, Fee Bump; ShortAddress on all destinations |
+| `address-generator` | Working — Web Worker vanity address generator; reviewed+fixed 2026-07-06 (Stop button didn't set the same staleness guard the internal search-complete path uses, could revert UI out of "stopped" after an already-queued worker message landed) |
+| `bulk-payments` | Working — secret key field replaced by active wallet indicator when wallet connected; reviewed+fixed 2026-07-06 (fatal-throw false-success, stale exclude-list, abort-on-unmount) |
+| `ghost-payments` | Working — secret key field replaced by active wallet indicator when wallet connected; reviewed+fixed 2026-07-06 (2 CRITICAL: no_trust mode's "no funds will move" guarantee was bypassable, underfunded overshoot only checked sender #1) |
+| `asset-creator` | Working — 4-step wizard: accounts, asset config, preflight, execution; auto-saves to Asset Groups; reviewed+fixed 2026-07-06 (CRITICAL: issuance step could double-mint full supply on retry, now idempotency-guarded) |
+| `asset-manager` | Working — shared asset input panel + Asset Flags tab + Holders tab (trustlines + sell offers combined) + Trades tab (place/batch/cancel DEX offers, real money — needs sign-off); reviewed+fixed 2026-07-06 (CRITICAL: AUTH_IMMUTABLE toggle had no confirmation dialog; CRITICAL: connected wallet's signer never checked against typed issuer, could silently mutate wrong account) |
+| `account-funder` | Working — bulk keypair generator + createAccount funder; Direct/Sponsored/Close tabs; save to Asset Group; reviewed+fixed 2026-07-06 (CRITICAL: atomic-tx rollback still showed op_success as "funded"; CRITICAL: Regenerate had no confirm, could permanently destroy keys for already-funded addresses) |
+| `trustline-manager` | Working — Single tab (add/remove/drain) + Bulk tab (N assets × M accounts matrix); auto-delete toggle; reviewed+fixed 2026-07-06 (CRITICAL: stale drain-destination after wallet switch; HIGH: fee-squaring up to 100x across 4 sites) |
+| `soroban` | Working — SAC deploy wizard for wrapping existing classic assets; manual "Recheck" button wired to status check; reviewed+fixed 2026-07-06 (HIGH: stale issuer + XLM code combo silently computed wrong non-native contract) |
+| `dex-orderbook` | Working — bid/ask tables, stats cards, depth chart (recharts); reviewed+fixed 2026-07-06 (XLM-sentinel bug, abort-race, deep-link query params, paste-to-parse) |
+| `wallet-manager` | Working — folders + wallets + connect/disconnect; header switcher added; reviewed+fixed 2026-07-06 (HIGH: failed folder-delete left wallets permanently purged from UI though intact in DB; HIGH: no cross-tab signal on wallet delete, background tab kept exposing stale secret key) |
+| `my-wallet` | Working — connected wallet overview: XLM/Available/Reserved/30d-net-flow cards, reserve breakdown popup, home domain (editable inline), thresholds+sequence, account flags (AUTH_REQUIRED etc), inflation dest, signers, claimable balances (claim), assets+trustlines (DEX/Send/Remove icons), open offers, payment history (in/out), recent txs, merge account (danger zone), quick actions — all sections collapsible via `Section` component; reviewed+fixed 2026-07-06 (CRITICAL: wallet switch mid-merge-flow did not reset stale destination/confirm state — could merge new wallet's balance to old wallet's typed destination) |
+| `payments` | Working — Send (multi-leg, Max, remove-trustline + offer cancel), Path (strict-receive + strict-send), Claimable Balance, Fee Bump; ShortAddress on all destinations; reviewed+fixed 2026-07-06 (Max button reserve/liabilities calc, buying-side offer cancellation, stale path selection) |
 | `address-book` | Working, signed off |
 | `saved-analyses` | Working, signed off — distribution addresses render via `<ShortAddress>` |
-| `settings` | Working — network/Horizon URL + theme config |
-| `transactions` | Working — transaction explorer/viewer |
-| `auto-send-groups` | Working — scheduled XLM distribution groups; see full section below; UI fully converted to shared `Button`/`Input`/`Select` (no raw HTML form elements, theme-safe in light mode) |
-| `tiered-rewards` | Working — tiered per-holder reward distribution; multi-asset tiers; scheduled or manual; batch/separate mode; JSON import; preview modal; run history; XLM sentinel handled case-insensitively throughout; `dbAction` rolls back optimistic cache + toasts on server rejection |
-| `wallet-balances` | Working — live XLM balance across all saved wallets; filter by folder or asset group; sort by balance; inline add wallet; copy/connect/investigate/send actions |
+| `settings` | Working — network/Horizon URL + theme config; reviewed+fixed 2026-07-06 (CRITICAL: page staged network selection in local state with no re-sync — could silently revert an in-app network switch made via the sidebar, app-wide blast radius) |
+| `transactions` | Working — transaction explorer/viewer; reviewed+fixed 2026-07-06 (CRITICAL: every DEX offer + claimable-balance op mislabeled its asset as XLM) |
+| `auto-send-groups` | Working — scheduled XLM distribution groups; see full section below; UI fully converted to shared `Button`/`Input`/`Select` (no raw HTML form elements, theme-safe in light mode); reviewed+fixed (2 CRITICAL cross-tenant auth bugs) |
+| `tiered-rewards` | Working — tiered per-holder reward distribution; multi-asset tiers; scheduled or manual; batch/separate mode; JSON import; preview modal; run history; XLM sentinel handled case-insensitively throughout; `dbAction` rolls back optimistic cache + toasts on server rejection; reviewed+fixed 2026-07-06 (2 CRITICAL: Supabase update wiped secret_key/schedule on every patch, no execution-lock risked full double-payment) |
+| `wallet-balances` | Working — live XLM balance across all saved wallets; filter by folder or asset group; sort by balance; inline add wallet; copy/connect/investigate/send actions; reviewed+fixed 2026-07-06 (hung balance fetch could permanently disable the page's only Refresh button) |
+| `tracer-v2` | Working, awaiting sign-off — 4 tabs: **Operator Fingerprint** (pure DB cross-group correlator, dampened prob-OR scoring + IDF noise suppression + issuer/distrib short-circuit), **Bulk Trace** (concurrent worker-pool origin trace reusing `traceAccountOrigin`, live stream + CSV), **Watchlist** (SQLite tables + routes + hooks + read-only 5-min cron poller for new `create_account` events; local-only, `isSupabaseOnly()` no-op guard; wired into `instrumentation.ts`), **Flow Graph** (pure `graph-builder` + hand-rolled force sim, no d3 dep; interactive SVG pan/zoom/drag + fingerprint cross-highlight). Route `app/(analysis)/tracer-v2`. Pure engines unit-tested (23 tests): `lib/tracer-v2/{fingerprint,bulk-trace,watcher,graph-builder,force-sim}.ts`. Imports intermediary-tracer exports ONLY — never edits it. `watcher.ts` inlines Horizon URLs (must NOT import `@/lib/settings` — that pulls a client hook into the server bundle). Spec+plan: `docs/superpowers/{specs,plans}/2026-07-06-tracer-v2*` |
 
 ## DB-Backed Hooks (SQLite)
 - All critical user data hooks use `createDbCache<T>()` from `lib/db-client.ts`.
@@ -173,7 +185,7 @@ Full `autoCreate` URL param spec:
 - Types + role constants: `lib/asset-groups/types.ts` (`GroupMemberRole`, `ROLE_LABELS`, `ROLE_COLORS`)
 - Hook: `hooks/use-asset-groups.ts` — uses DB cache pattern; delete uses custom fetch (not `dbDelete`) because body needs `type` discriminator
 - API: `/api/db/groups` — POST/PATCH/DELETE body must include `type: "group"` or `type: "member"`
-- Page: `app/(data)/groups/page.tsx` — handles `?autoCreate=1&name=...&assetCode=...&issuer=...&distrib=...&issuerHomeDomain=...&distribHomeDomain=...&network=...` to auto-create group on mount
+- Page: `app/(data)/groups/page.tsx` is a standard Suspense shell; all logic lives in `components/groups/GroupsPanel.tsx` — handles `?autoCreate=1&name=...&assetCode=...&issuer=...&distrib=...&issuerHomeDomain=...&distribHomeDomain=...&network=...` to auto-create group on mount; `?open=ID` syncs on same-tab nav, bypasses search filter, scrolls card into view (once per id)
 - "Save to Group" always opens in a **new tab** (`target="_blank"` or `window.open(..., "_blank")`) — never navigate away from source page
 - **Context-aware group buttons** — always check `useAssetGroups()` before rendering:
   - If group already exists for that asset (by `assetCode+issuer+network`): show green **"Open Group →"** linking to `/groups?open={group.id}`
@@ -273,7 +285,7 @@ Full `autoCreate` URL param spec:
 ## Asset Manager
 - Route: `app/(tools)/asset-manager/page.tsx`
 - Panel: `components/asset-manager/AssetManagerPanel.tsx`
-- Tabs: `FlagsTab.tsx`, `HoldersTab.tsx`
+- Tabs: `FlagsTab.tsx`, `HoldersTab.tsx`, `TradesTab.tsx` (699L — place/batch/cancel sell+buy offers for the distributor; submits real signed transactions, was previously undocumented here — needs explicit user sign-off like any other money-moving tab)
 - Lib: `lib/asset-manager/index.ts`
 - **Shared state**: `assetCode`, `issuer`, `secretKey` are owned by `AssetManagerPanel` and passed as props to all tabs — entered once, persisted while switching tabs, cleared by the X button (shown when `isReady`)
 - **`isReady`** = `assetCode.trim().length > 0 && StrKey.isValidEd25519PublicKey(issuer.trim())` — tabs only render when ready
@@ -352,10 +364,44 @@ Full `autoCreate` URL param spec:
 - `defaultOpen` prop: `true` for primary data (XLM, assets), `false` for secondary (offers, txs, quick actions, signers)
 - Claimable balances: can only be **claimed**, not deleted — recipients have no cancel action on Stellar protocol level
 
-## Shared Utilities
-- `lib/format.ts` — `formatXlm()`, `parseAddresses()`, `shortAddr()` (4+4 addr format)
-- `lib/db-client.ts` — `createDbCache<T>()`, `dbPost/dbPatch/dbDelete` (all log errors to console now, not silent swallow)
-- `lib/address-resolver.ts` — `resolveAddress()` pure function
+## Reusable Components & Utilities
+Check this list before writing a new address-display row, CSV export, save-to-group button, stats card, or fetch-retry wrapper — duplicating one of these is the single most common finding in this project's module reviews.
+
+### Shared UI Components (`components/shared/`)
+- `<ShortAddress address network />` (`components/shared/ShortAddress.tsx`) — the ONLY correct way to render any Stellar address. Subscribes to Address Book / Known Intermediaries / Known Creators / Asset Groups and renders the right badge automatically (see Address Resolution section above for priority order). Renders its own internal copy button — **never wrap it in a `<button>`/`<Button>`** (invalid nested-interactive-element HTML); if the containing row needs to be clickable, use `<div role="button" tabIndex={0} onClick/onKeyDown>` with `onClick={e => e.stopPropagation()}` on ShortAddress's wrapper instead.
+- `<AuthFlag flag label />` (`components/shared/AuthFlag.tsx`) — small badge for AUTH_REQUIRED/REVOCABLE/CLAWBACK/IMMUTABLE-style flags.
+- `<ChainDisplay />` + `<CreatorPeek />` + `traceChainStep()` + `fetchHomeDomain()` (`components/shared/ChainDisplay.tsx`) — the entire "who really created/funded this account" ancestry-tracing UI and logic, one hop per click. Used by Asset Lookup and Address Investigator; see the full contract in the "Real Creator / Ancestry Tracing" section above before touching this file.
+- Import all of the above from `@/components/shared` (barrel export) or the specific file — both work.
+
+### Proceeds/Destinations UI (`components/shared/proceeds/`)
+Built for the asset-sales family, now also used by Address Investigator's sender/recipient tables — generalize further before writing a bespoke destinations table.
+- `<ProceedsDestinationsTable destinations totalXlmProceeds network ... />` — the standard table for any "list of counterparty addresses with an XLM total and tx count" view. Optional props cover both the proceeds case (`showGroupAction`, `assetCode`/`issuer`) and the no-asset-context case (`onAddToGroup` callback instead — required whenever the caller has no `assetCode`/`issuer`, e.g. Address Investigator). Also: `showPercentColumn`, `percentColumnLabel`, `addressColumnLabel`, `showProgressBar`, `onDownloadCsv`, `onInvestigate`, `emptyMessage`.
+- `<ProceedsStatsCards ... />` — the row of summary stat cards (XLM proceeds, asset sold, outgoing, on-hand style cards).
+- `<ProceedsStatusBadge status />` + `ProceedsScanStatus` type — scan-in-progress/done/error badge.
+- `<SaveToGroupButton assetCode issuer network targetAddress />` — context-aware "Save to Group" / "Open Group →" / "✓ in group" button (see Asset Groups section above for the exact state logic). Supports separate `homeDomain`/`distribHomeDomain` props and a `size="sm"` variant.
+
+### `components/ui/` (shadcn kit)
+`Button`, `Input`, `Label`, `Select`, `Switch`, `Dialog`, `Card`, `Table`, `Tabs`, `Tooltip`, `Badge`, `WalletSelect`. No `Checkbox` exists yet — use `Switch` for any boolean toggle.
+
+### Lib Utilities
+- `lib/format.ts` — `formatXlm()`, `parseAddresses()`, `shortAddr()` (4+4 addr format — always import this, never hand-roll `slice(0,4)+"…"+slice(-4)`).
+- `lib/db-client.ts` — `createDbCache<T>()`, `dbPost/dbPatch/dbDelete` (throw on non-OK; always pair a write with `.catch(() => _cache.reload(ENDPOINT))` so a server rejection rolls back the optimistic update).
+- `lib/address-resolver.ts` — `resolveAddress()` pure function backing `ShortAddress`'s badge logic.
+- `lib/asset-pair.ts` — `parseAssetPair(raw)` / `parseAssetPairs(text)` — parses `CODE:ISSUER` pairs (and Lobstr trade URLs) out of pasted text/textareas. Used by asset-lookup/asset-sales/bulk-asset-sales/dex-orderbook; use this instead of writing another regex for the same shape.
+- `lib/trade-helpers.ts` — `resolveAssetToXlmTrade(raw, account, assetCode, issuer)` — case-insensitive DEX trade-direction resolution (sold vs received against XLM). Reuse this rather than re-deriving buy/sell direction from a raw trade record.
+- `lib/csv-export.ts` — `downloadCSV()` — proper quoting/escaping CSV export. Never hand-roll a comma-joined CSV string (this has been a real bug — unescaped commas/quotes corrupt rows).
+- `lib/horizon-fetch.ts` — `fetchJson()` with retry/backoff on 429/502/503/504 and abort-awareness. The standard fetch wrapper for any raw Horizon REST call not already covered by the Stellar SDK.
+- `lib/stellar-helpers.ts` — `getErrorMessage()` (extracts `result_codes` from a Horizon 400 into a readable `"tx: ... | ops: ..."` string).
+- `lib/stellar-submit.ts` — `withAccountLock(publicKey, fn)` / `isBadSeq(err)` — serializes transaction submission order per signing key within one process (prevents bad-sequence races between a scheduler and a manual trigger sharing a key). Not a cross-process lock — see the Creating-a-New-Module checklist above for when you need more than this.
+- `lib/notifications.ts` — `notifyIfHidden(title, body)` — fires a browser notification only when the tab is backgrounded; always branch on real success/failure counts when composing the message (a bug fixed this session: some callers reported "N sent" using the total recipient count regardless of how many actually failed).
+- `lib/navigation.ts` — sidebar `menuItems` structure (5 sections: Analysis, Payments, Asset Lifecycle, Wallets, My Data); add new modules here.
+
+### Hooks
+- `useHorizonServer(network?)` (`hooks/use-horizon-server.ts`) — memoized `Horizon.Server` instance + its URL, defaults to the global network setting; re-instantiates only when the resolved URL changes. Prefer this over `new Horizon.Server(...)` inline in a component.
+- `useXlmUsdPrice()` (`hooks/use-xlm-usd-price.ts`) — module-level singleton price cache (60s TTL, request-deduped across every caller). Call `ensure()` at the point you'd otherwise fire a raw CoinGecko fetch; read `price` for the current value.
+- `useAutoSaveSigningKey()` (`hooks/use-auto-save-signing-key.ts`) — `autoSave(publicKey)` files a manually-entered signing key into the "My Keys" asset group (role `other`) if it isn't already tracked anywhere, so one-off secret-key entry doesn't leave an untracked address.
+- `useBulkScanState<T>()` (`hooks/use-bulk-scan-state.ts`) — DB-backed persistence for a long-running scan's row state, with a debounced `save()` for frequent per-row updates and an un-debounced `saveImmediate()` for start/finish checkpoints; use this instead of `localStorage` for any "resume an interrupted scan" feature (this replaced bulk-asset-sales' original localStorage implementation).
+- Every module-data hook (`use-asset-groups`, `use-address-book`, `use-known-intermediaries`, `use-known-creators`, `use-wallets-v2`, `use-wallet-folders`, `use-auto-send-groups`, `use-tiered-reward-configs`, `use-saved-analyses`, `use-search-history`, ...) follows the `createDbCache<T>()` pattern from `lib/db-client.ts` — module-level cache, `useEffect` subscribe+load, optimistic writes with rollback. Copy the shape of the nearest existing hook rather than inventing a new persistence pattern.
 
 ## Auto-Send Groups
 - Route: `app/(tools)/auto-send-groups/page.tsx`
