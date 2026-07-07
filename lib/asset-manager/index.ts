@@ -346,24 +346,50 @@ export async function fetchSellOffers(
 export interface MyOffer {
   id: string;
   side: "sell" | "buy";
-  amount: string;   // for sell: asset amount; for buy: buyAmount (asset units being bought)
-  price: string;    // XLM per asset token
+  amount: string;   // ALWAYS asset units, normalized for both sides — see parseOffer
+  price: string;    // ALWAYS XLM per asset token, normalized for both sides — see parseOffer
   selling: string;  // what is being sold
   buying: string;   // what is being bought
   buyingIssuer?: string;
   lastModifiedLedger: number;
 }
 
+// Horizon's Offer resource always reports `amount` as the amount of the
+// SELLING asset and `price` as (buying units / selling units) — the
+// ledger's single canonical OfferEntry shape (see stellar/go xdr_generated.go
+// OfferEntry doc comment: "price = AmountB/AmountA" where A = selling,
+// B = buying) — regardless of whether the offer was originally submitted via
+// manage_sell_offer or manage_buy_offer.
+//
+// For our "sell" offers (selling=asset, buying=XLM): amount = asset units,
+// price = XLM per asset unit already — no conversion needed.
+//
+// For our "buy" offers (selling=XLM, buying=asset): the raw `amount` is
+// actually an XLM amount and the raw `price` is asset-per-XLM — both
+// inverted relative to what this app displays. We normalize here so every
+// downstream consumer (TradesTab's table, delete flow, etc.) can assume:
+// amount = asset units, price = XLM per asset unit, for BOTH sides.
+//
+// Sanity check: raw selling(XLM) amount=200, raw price(asset/XLM)=0.1
+//   -> assetAmount = 200 * 0.1 = 20 asset units
+//   -> xlmPerAsset = 1 / 0.1 = 10 XLM per asset
+//   -> cross-check: 20 assets * 10 XLM/asset = 200 XLM = original reserved amount. Consistent.
 function parseOffer(r: Record<string, unknown>, side: "sell" | "buy"): MyOffer {
   const selling = r.selling as Record<string, string>;
   const buying = r.buying as Record<string, string>;
   const sellingCode = selling.asset_type === "native" ? "XLM" : (selling.asset_code ?? "unknown");
   const buyingCode = buying.asset_type === "native" ? "XLM" : (buying.asset_code ?? "unknown");
+
+  const rawAmount = parseFloat(String(r.amount ?? "0"));
+  const rawPrice = parseFloat(String(r.price ?? "0"));
+  const assetAmount = side === "sell" ? rawAmount : rawAmount * rawPrice;
+  const xlmPerAsset = side === "sell" ? rawPrice : (rawPrice > 0 ? 1 / rawPrice : 0);
+
   return {
     id: String(r.id ?? ""),
     side,
-    amount: String(r.amount ?? "0"),
-    price: String(r.price ?? "0"),
+    amount: String(assetAmount),
+    price: String(xlmPerAsset),
     selling: sellingCode,
     buying: buyingCode,
     buyingIssuer: buying.asset_type !== "native" ? buying.asset_issuer : undefined,
@@ -553,6 +579,13 @@ export async function createBatchOffers(options: {
 // deleteOffer
 // Cancels an existing sell or buy offer by ID (sets amount to 0).
 // Returns TX hash.
+//
+// Note on `price`: callers pass MyOffer.price, which parseOffer() normalizes
+// to "XLM per asset unit" for both sides — NOT the raw ledger price for buy
+// offers (which is asset-per-XLM). This is safe here: when amount is set to
+// 0 the offer is deleted outright and the specific price value is never used
+// to compute a fill — it only needs to be a valid positive decimal to pass
+// XDR validation, which any normalized or raw price value satisfies.
 // ---------------------------------------------------------------------------
 
 export async function deleteOffer(

@@ -98,6 +98,11 @@ export function TradesTab({ assetCode, issuer }: Props) {
 
   async function handleBatch() {
     if (!effectiveSecretKey) return;
+    const n = Math.min(50, Math.max(1, parseInt(batchCount) || 1));
+    const confirmed = window.confirm(
+      `Place ${n} ${batchSide.toUpperCase()} offer(s) for ${assetCode}, ${batchAmount} ${assetCode} each, price ${batchPriceFrom}${batchMode === "ladder" ? ` → ${batchPriceTo}` : ""} XLM per ${assetCode}?`
+    );
+    if (!confirmed) return;
     batchAbortRef.current?.abort();
     batchAbortRef.current = new AbortController();
     setBatchResults([]);
@@ -110,7 +115,7 @@ export function TradesTab({ assetCode, issuer }: Props) {
       issuerAddress: issuer,
       side: batchSide,
       mode: batchMode,
-      count: Math.max(1, parseInt(batchCount) || 1),
+      count: n,
       amount: batchAmount,
       priceFrom: batchPriceFrom,
       priceTo: batchMode === "ladder" ? batchPriceTo : undefined,
@@ -138,7 +143,7 @@ export function TradesTab({ assetCode, issuer }: Props) {
 
   // Preview prices for ladder/repeat
   const previewPrices: number[] = (() => {
-    const n = Math.max(1, parseInt(batchCount) || 1);
+    const n = Math.min(50, Math.max(1, parseInt(batchCount) || 1));
     const from = parseFloat(batchPriceFrom) || 0;
     const to = batchMode === "ladder" ? (parseFloat(batchPriceTo) || from) : from;
     return Array.from({ length: Math.min(n, 5) }, (_, i) =>
@@ -163,6 +168,10 @@ export function TradesTab({ assetCode, issuer }: Props) {
 
   async function handleCreate() {
     if (!effectiveSecretKey || !amount || !price) return;
+    const confirmed = window.confirm(
+      `Place a SELL offer: ${parseFloat(amount).toLocaleString()} ${assetCode} for ${(parseFloat(amount) * parseFloat(price)).toLocaleString(undefined, { maximumFractionDigits: 7 })} XLM total (price ${price} XLM per ${assetCode})?`
+    );
+    if (!confirmed) return;
     setCreating(true);
     setCreateError(null);
     setCreateHash(null);
@@ -191,6 +200,10 @@ export function TradesTab({ assetCode, issuer }: Props) {
 
   async function handleDelete(offer: MyOffer) {
     if (!effectiveSecretKey) return;
+    const confirmed = window.confirm(
+      `Cancel offer #${offer.id} (${offer.side === "sell" ? "SELL" : "BUY"}, ${offer.amount} ${assetCode} @ ${offer.price} XLM)?`
+    );
+    if (!confirmed) return;
     setDeletingId(offer.id);
     try {
       const hash = await deleteOffer(
@@ -469,7 +482,7 @@ export function TradesTab({ assetCode, issuer }: Props) {
               <div>
                 <Label htmlFor="batch-amount">
                   Amount per Offer{" "}
-                  <span className="text-muted-foreground">({batchSide === "sell" ? assetCode : "XLM"})</span>
+                  <span className="text-muted-foreground">({assetCode})</span>
                 </Label>
                 <Input
                   id="batch-amount"
@@ -481,6 +494,11 @@ export function TradesTab({ assetCode, issuer }: Props) {
                   onChange={(e) => setBatchAmount(e.target.value)}
                   className="mt-1 font-mono"
                 />
+                {batchSide === "buy" && (
+                  <p className="text-xs text-muted-foreground mt-1">
+                    This is how many {assetCode} tokens you want to acquire — not an XLM budget.
+                  </p>
+                )}
               </div>
               <div>
                 <Label htmlFor="batch-price-from">
@@ -527,11 +545,31 @@ export function TradesTab({ assetCode, issuer }: Props) {
               </div>
             )}
 
+            {batchSide === "buy" && parseFloat(batchAmount) > 0 && parseFloat(batchPriceFrom) > 0 && (
+              <p className="text-xs text-muted-foreground">
+                Buying up to{" "}
+                <span className="font-medium text-foreground">
+                  {parseFloat(batchAmount).toLocaleString()} {assetCode}
+                </span>{" "}
+                per offer — up to{" "}
+                <span className="font-medium text-foreground">
+                  {(
+                    parseFloat(batchAmount) *
+                    (batchMode === "ladder"
+                      ? Math.max(parseFloat(batchPriceFrom) || 0, parseFloat(batchPriceTo) || 0)
+                      : parseFloat(batchPriceFrom))
+                  ).toLocaleString(undefined, { maximumFractionDigits: 7 })}{" "}
+                  XLM
+                </span>{" "}
+                real XLM committed per offer at the highest price in this batch.
+              </p>
+            )}
+
             <div className="flex gap-2">
               {!batchRunning ? (
                 <Button onClick={handleBatch} disabled={!canBatch || anyActionInFlight}>
                   <Layers className="mr-2 h-4 w-4" />
-                  Place {batchCount || "?"} Offers
+                  Place {Math.min(50, Math.max(1, parseInt(batchCount) || 1))} Offers
                 </Button>
               ) : (
                 <Button variant="outline" onClick={handleBatchStop}>
@@ -560,8 +598,16 @@ export function TradesTab({ assetCode, issuer }: Props) {
                       {r.price} XLM
                     </span>
                     <span className="font-mono text-muted-foreground w-24 shrink-0">
-                      {parseFloat(r.amount).toLocaleString()} {batchSide === "sell" ? assetCode : "XLM"}
+                      {parseFloat(r.amount).toLocaleString()} {assetCode}
                     </span>
+                    {!r.error && (
+                      <span className="font-mono text-muted-foreground w-28 shrink-0">
+                        {(parseFloat(r.amount) * parseFloat(r.price)).toLocaleString(undefined, {
+                          maximumFractionDigits: 7,
+                        })}{" "}
+                        XLM total
+                      </span>
+                    )}
                     {r.error ? (
                       <span className="text-destructive truncate" title={r.error}>{r.error}</span>
                     ) : explorerBase && r.hash ? (
