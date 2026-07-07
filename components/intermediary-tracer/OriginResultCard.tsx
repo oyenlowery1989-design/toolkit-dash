@@ -15,7 +15,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { ShortAddress } from "@/components/asset-lookup";
+import { ShortAddress } from "@/components/shared/ShortAddress";
 import { useAddressBook } from "@/hooks/use-address-book";
 import { useKnownCreators, resolveCreatorName } from "@/hooks/use-known-creators";
 import type { AccountOriginResult, FunderCandidate } from "@/lib/intermediary-tracer/types";
@@ -34,12 +34,12 @@ function timeAgo(iso: string): string {
   return `${Math.floor(h / 24)}d ago`;
 }
 
-function formatDelta(sec: number): string {
-  if (sec < 60) return `${Math.round(sec)}s before`;
-  return `${Math.floor(sec / 60)}m ${Math.round(sec % 60)}s before`;
+export function formatDelta(sec: number): string {
+  if (sec < 60) return `${Math.round(sec)}s`;
+  return `${Math.floor(sec / 60)}m ${Math.round(sec % 60)}s`;
 }
 
-function ConfidenceBar({ value }: { value: number }) {
+export function ConfidenceBar({ value }: { value: number }) {
   const color =
     value >= 80 ? "bg-green-500" : value >= 60 ? "bg-yellow-500" : "bg-red-400";
   return (
@@ -207,7 +207,7 @@ function CandidateRow({
   const defaultNotes =
     `Funded ${createdAccount.slice(0, 6)}… on ${new Date(createdAt).toLocaleDateString()}, ` +
     `${candidate.sentAmount.toFixed(7)} XLM → intermediary → ${startingBalance.toFixed(7)} XLM (create_account), ` +
-    `confidence ${candidate.confidence}%, Δ${formatDelta(candidate.timeDeltaSec)}`;
+    `confidence ${candidate.confidence}%, Δ${formatDelta(candidate.timeDeltaSec)} before`;
 
   return (
     <div className="rounded-md border border-border bg-muted/20 p-3 space-y-2">
@@ -229,7 +229,7 @@ function CandidateRow({
       <div className="flex items-center gap-4 flex-wrap">
         <ConfidenceBar value={candidate.confidence} />
         <span className="text-xs text-muted-foreground">
-          Δ{formatDelta(candidate.timeDeltaSec)}
+          Δ{formatDelta(candidate.timeDeltaSec)} before
         </span>
         <span className="text-xs text-muted-foreground">
           Δamount {candidate.amountDiffPct.toFixed(2)}%
@@ -304,6 +304,7 @@ interface OriginResultCardProps {
   intermediaryName?: string;
   clusterCount?: number;   // how many times this top funder appears across all results
   minConfidence: number;
+  windowSec?: number;   // actual time-window (in seconds) used for candidate matching; optional for backward compat
 }
 
 export function OriginResultCard({
@@ -312,6 +313,7 @@ export function OriginResultCard({
   intermediaryName,
   clusterCount,
   minConfidence,
+  windowSec,
 }: OriginResultCardProps) {
   const [expanded, setExpanded] = useState(true);
   const router = useRouter();
@@ -451,8 +453,9 @@ export function OriginResultCard({
           ) : (
             <div className="flex items-center gap-2 text-xs text-muted-foreground">
               <HelpCircle className="h-3.5 w-3.5 shrink-0" />
-              No matching payments found in the ±{Math.round(result.candidates.length)} min window
-              above the confidence threshold.
+              No matching payments found
+              {windowSec !== undefined && ` in the ±${Math.round(windowSec / 60)} min window`}
+              {" "}above the confidence threshold.
             </div>
           )}
         </div>

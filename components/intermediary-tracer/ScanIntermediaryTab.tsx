@@ -31,9 +31,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { ShortAddress } from "@/components/asset-lookup";
+import { ShortAddress } from "@/components/shared/ShortAddress";
 import { useSettings, resolveHorizonUrl } from "@/lib/settings";
 import { getErrorMessage } from "@/lib/stellar-helpers";
+import { downloadCSV } from "@/lib/csv-export";
 import { scanIntermediaryCreations } from "@/lib/intermediary-tracer/fetchers";
 import { detectClusters } from "@/lib/intermediary-tracer/matcher";
 import { useKnownIntermediaries } from "@/hooks/use-known-intermediaries";
@@ -43,6 +44,7 @@ import type { CreatorChild } from "@/lib/intermediary-tracer/types";
 import { useSavedSearches } from "@/hooks/use-saved-searches";
 import { useIntermediaryHistory, intermediaryHistoryGetSnapshot } from "@/hooks/use-intermediary-history";
 import { LogPanel } from "./LogPanel";
+import { ConfidenceBar } from "./OriginResultCard";
 import type { CreatedAccountEntry } from "@/lib/intermediary-tracer/fetchers";
 
 const WINDOW_OPTIONS = [
@@ -69,24 +71,20 @@ const FROM_DATE_OPTIONS = [
 ];
 
 function exportCsv(results: CreatedAccountEntry[], intermediary: string) {
-  const rows = [
-    "created_account,created_at,starting_balance_xlm,home_domain,probable_funder,confidence_pct",
-    ...results.map((r) => [
+  downloadCSV(
+    `created-by-${intermediary.slice(0, 6)}.csv`,
+    ["created_account", "created_at", "starting_balance_xlm", "home_domain", "probable_funder", "confidence_pct"],
+    results.map((r) => [
       r.account,
       r.createdAt,
       r.startingBalance.toFixed(7),
       r.homeDomain ?? "",
       r.topFunder?.address ?? "",
-      r.topFunder?.confidence ?? "",
-    ].join(",")),
-  ];
-  const blob = new Blob([rows.join("\n")], { type: "text/csv" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = `created-by-${intermediary.slice(0, 6)}.csv`;
-  a.click();
-  URL.revokeObjectURL(url);
+      r.topFunder?.confidence !== undefined && r.topFunder?.confidence !== null
+        ? String(r.topFunder.confidence)
+        : "",
+    ]),
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -116,6 +114,7 @@ export function ScanIntermediaryTab() {
   const [hasStarted, setHasStarted] = useState(false);
   const [savingCluster, setSavingCluster] = useState<string | null>(null); // funder addr being saved
   const [savedClusters, setSavedClusters] = useState<Set<string>>(new Set());
+  const [scannedAddress, setScannedAddress] = useState(""); // address locked in at scan start; used for export filename + hint comparison
 
   const addrValid = StrKey.isValidEd25519PublicKey(address.trim());
   const knownIntermediaryAddrs = new Set(knownEntries.map((e) => e.address));
@@ -142,6 +141,9 @@ export function ScanIntermediaryTab() {
     setResults([]);
     setLogs([]);
     setHasStarted(true);
+    setSavingCluster(null);
+    setSavedClusters(new Set());
+    setScannedAddress(addr);
 
     try {
       const horizonUrl = resolveHorizonUrl(settings);
@@ -235,24 +237,28 @@ export function ScanIntermediaryTab() {
           <div className="flex flex-wrap gap-2">
             {recentSearches.map((entry) => (
               <div key={entry.timestamp} className="flex items-center gap-1 rounded-md border border-border bg-muted/40 pl-2 pr-1 py-1 text-xs">
-                <button
-                  className="flex items-center gap-1.5 hover:text-foreground text-muted-foreground transition-colors"
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-auto px-1 py-0.5 gap-1.5 font-normal hover:bg-transparent hover:text-foreground text-muted-foreground transition-colors"
                   onClick={() => setAddress(entry.address)}
                 >
                   {entry.name && (
                     <span className="font-medium text-foreground">{entry.name}</span>
                   )}
-                  <span className="font-mono font-semibold text-foreground">
-                    {entry.address.slice(0, 4)}…{entry.address.slice(-4)}
-                  </span>
                   <span className="opacity-50">{entry.network}</span>
-                </button>
-                <button
-                  className="ml-1 text-muted-foreground hover:text-destructive transition-colors p-0.5 rounded"
+                </Button>
+                <ShortAddress address={entry.address} network={entry.network} />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-auto w-auto ml-1 px-0.5 py-0.5 rounded text-muted-foreground hover:text-destructive transition-colors"
                   onClick={() => removeRecent(entry.timestamp)}
                 >
                   <X className="h-3 w-3" />
-                </button>
+                </Button>
               </div>
             ))}
           </div>
@@ -351,7 +357,7 @@ export function ScanIntermediaryTab() {
             </Button>
           )}
           {results.length > 0 && !running && (
-            <Button variant="outline" onClick={() => exportCsv(results, address.trim())}>
+            <Button variant="outline" onClick={() => exportCsv(results, scannedAddress)}>
               <Download className="mr-2 h-4 w-4" />
               Export CSV
             </Button>
@@ -413,7 +419,7 @@ export function ScanIntermediaryTab() {
                       {r.topFunder ? (
                         <div className="space-y-0.5">
                           <ShortAddress address={r.topFunder.address} network={settings.network as "public" | "testnet"} />
-                          {(knownIntermediaryAddrs.has(r.topFunder.address) || knownCreatorAddrs.has(r.topFunder.address)) && r.topFunder.address !== address.trim() && (
+                          {(knownIntermediaryAddrs.has(r.topFunder.address) || knownCreatorAddrs.has(r.topFunder.address)) && r.topFunder.address !== scannedAddress && (
                             <span
                               className="inline-flex items-center gap-1 text-[10px] text-amber-500"
                               title="This funder is itself a known intermediary or creator — this is not the end-user. Scan this account to find the real origin."
@@ -432,13 +438,7 @@ export function ScanIntermediaryTab() {
                     </td>
                     <td className="px-3 py-2 text-right tabular-nums">
                       {r.topFunder ? (
-                        <span className={
-                          r.topFunder.confidence >= 80 ? "text-green-500 font-semibold" :
-                          r.topFunder.confidence >= 60 ? "text-yellow-500 font-semibold" :
-                          "text-red-400"
-                        }>
-                          {r.topFunder.confidence}%
-                        </span>
+                        <ConfidenceBar value={r.topFunder.confidence} />
                       ) : null}
                     </td>
                     <td className="px-3 py-2">
@@ -492,13 +492,15 @@ export function ScanIntermediaryTab() {
                     {existingCount > 0 && !alreadySaved && (
                       <span className="text-muted-foreground/60">({existingCount} already saved)</span>
                     )}
-                    <button
+                    <Button
                       type="button"
+                      variant="ghost"
+                      size="sm"
                       disabled={isSaving}
                       onClick={() => handleSaveCluster(addr, childAddrs)}
-                      className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 font-medium transition-colors ${
+                      className={`h-auto inline-flex items-center gap-1 rounded-full px-2 py-0.5 font-medium transition-colors ${
                         alreadySaved
-                          ? "bg-green-500/10 text-green-500 border border-green-500/30"
+                          ? "bg-green-500/10 text-green-500 border border-green-500/30 hover:bg-green-500/10"
                           : "bg-primary/10 text-primary border border-primary/30 hover:bg-primary/20"
                       }`}
                     >
@@ -509,7 +511,7 @@ export function ScanIntermediaryTab() {
                       ) : (
                         `+ Save ${childAddrs.length} accounts`
                       )}
-                    </button>
+                    </Button>
                   </div>
                 );
               })}

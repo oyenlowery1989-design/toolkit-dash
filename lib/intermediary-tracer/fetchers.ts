@@ -5,32 +5,7 @@ import type {
 } from "./types";
 import { scoreCandidate } from "./matcher";
 import { shortAddr } from "@/lib/format";
-
-// ---------------------------------------------------------------------------
-// HTTP helper with retry / backoff (mirrors proceeds-investigator pattern)
-// ---------------------------------------------------------------------------
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function fetchJson(url: string, signal: AbortSignal): Promise<unknown> {
-  const MAX_RETRIES = 3;
-  let delay = 2000;
-  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-    const res = await fetch(url, { signal });
-    if (res.status === 429 || res.status === 503) {
-      if (attempt === MAX_RETRIES)
-        throw new Error(`Rate limited (${res.status})`);
-      const retryAfter = parseInt(res.headers.get("retry-after") ?? "0") * 1000;
-      await sleep(retryAfter > 0 ? retryAfter : delay);
-      delay = Math.min(delay * 2, 30_000);
-      continue;
-    }
-    if (!res.ok) throw new Error(`Horizon ${res.status}: ${url}`);
-    return res.json();
-  }
-}
+import { fetchJson } from "@/lib/horizon-fetch";
 
 type HorizonRecord = Record<string, unknown>;
 type HorizonPage = { _embedded?: { records?: HorizonRecord[] } };

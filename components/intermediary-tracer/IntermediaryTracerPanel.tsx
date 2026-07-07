@@ -1,6 +1,6 @@
 "use client";
 
-import { GitFork, Search, ScanSearch, ListChecks, Users, GitBranch, Network } from "lucide-react";
+import { Search, ScanSearch, ListChecks, Users, GitBranch, Network } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { TraceAccountTab } from "./TraceAccountTab";
 import { ScanIntermediaryTab } from "./ScanIntermediaryTab";
@@ -44,19 +44,6 @@ function InfoBanner({
 export function IntermediaryTracerPanel() {
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold tracking-tight flex items-center gap-3">
-          <GitFork className="h-7 w-7" />
-          Intermediary Tracer
-        </h1>
-        <p className="text-muted-foreground mt-2">
-          Uncover the real controllers behind Stellar accounts created through exchange
-          intermediaries (ChangeNow, SimpleSwap, etc.) by correlating payments with{" "}
-          <code className="text-xs">create_account</code> operations. Build a registry
-          of known actors and map their full account ancestry.
-        </p>
-      </div>
-
       <Tabs defaultValue="trace">
         <TabsList className="flex-wrap h-auto gap-y-1">
           <TabsTrigger value="trace">Who Created This Account?</TabsTrigger>

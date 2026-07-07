@@ -27,7 +27,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { ShortAddress } from "@/components/asset-lookup";
+import { ShortAddress } from "@/components/shared/ShortAddress";
 import { useSettings, resolveHorizonUrl } from "@/lib/settings";
 import { getErrorMessage } from "@/lib/stellar-helpers";
 import { findCreatorAccounts } from "@/lib/intermediary-tracer/fetchers";
@@ -37,6 +37,8 @@ import { useCreatorChildren } from "@/hooks/use-creator-children";
 import type { CreatorChild, CreatorAccountResult } from "@/lib/intermediary-tracer/types";
 import { useRouter } from "next/navigation";
 import { LogPanel } from "./LogPanel";
+import { formatDelta } from "./OriginResultCard";
+import { downloadCSV } from "@/lib/csv-export";
 
 const WINDOW_OPTIONS = [
   { label: "2 minutes", value: "120" },
@@ -62,27 +64,19 @@ const FROM_DATE_OPTIONS = [
 ];
 
 function exportCsv(results: CreatorAccountResult[], creatorAddr: string, intermediaryAddr: string) {
-  const rows = [
-    "created_account,created_at,starting_balance,sent_amount,time_delta_sec,amount_diff_pct,confidence",
-    ...results.map((r) =>
-      [
-        r.createdAccount,
-        r.createdAt,
-        r.startingBalance.toFixed(7),
-        r.sentAmount.toFixed(7),
-        r.timeDeltaSec.toFixed(1),
-        r.amountDiffPct.toFixed(2),
-        r.confidence,
-      ].join(",")
-    ),
-  ];
-  const blob = new Blob([rows.join("\n")], { type: "text/csv" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = `creator-${creatorAddr.slice(0, 6)}-via-${intermediaryAddr.slice(0, 6)}.csv`;
-  a.click();
-  URL.revokeObjectURL(url);
+  downloadCSV(
+    `creator-${creatorAddr.slice(0, 6)}-via-${intermediaryAddr.slice(0, 6)}.csv`,
+    ["created_account", "created_at", "starting_balance", "sent_amount", "time_delta_sec", "amount_diff_pct", "confidence"],
+    results.map((r) => [
+      r.createdAccount,
+      r.createdAt,
+      r.startingBalance.toFixed(7),
+      r.sentAmount.toFixed(7),
+      r.timeDeltaSec.toFixed(1),
+      r.amountDiffPct.toFixed(2),
+      String(r.confidence),
+    ]),
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -122,9 +116,7 @@ function ResultRow({
         </span>
       </div>
       <div className="flex items-center gap-4 text-xs text-muted-foreground flex-wrap">
-        <span>Sent {result.sentAmount.toFixed(2)} XLM · Δ{result.timeDeltaSec < 60
-          ? `${Math.round(result.timeDeltaSec)}s`
-          : `${Math.floor(result.timeDeltaSec / 60)}m ${Math.round(result.timeDeltaSec % 60)}s`} after payment</span>
+        <span>Sent {result.sentAmount.toFixed(2)} XLM · Δ{formatDelta(result.timeDeltaSec)}</span>
         <span>Amount diff {result.amountDiffPct.toFixed(2)}%</span>
       </div>
       <Button
@@ -194,6 +186,7 @@ export function TraceCreatorTab() {
     setResults([]);
     setLogs([]);
     setHasStarted(true);
+    setSaveMsg(null);
 
     try {
       const horizonUrl = resolveHorizonUrl(settings);

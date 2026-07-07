@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { ChevronDown, ChevronRight, Terminal } from "lucide-react";
+import { Button } from "@/components/ui/button";
 
 interface LogPanelProps {
   logs: string[];
@@ -28,8 +29,11 @@ export function LogPanel({ logs, running = false }: LogPanelProps) {
 
   return (
     <div className="rounded-md border border-border overflow-hidden">
-      <button
-        className="w-full flex items-center gap-2 px-3 py-2 bg-muted/40 hover:bg-muted/60 transition-colors text-xs font-medium text-muted-foreground"
+      <Button
+        type="button"
+        variant="ghost"
+        size="sm"
+        className="w-full h-auto justify-start rounded-none flex items-center gap-2 px-3 py-2 bg-muted/40 hover:bg-muted/60 transition-colors text-xs font-medium text-muted-foreground"
         onClick={() => setOpen((v) => !v)}
       >
         <Terminal className="h-3.5 w-3.5" />
@@ -40,7 +44,7 @@ export function LogPanel({ logs, running = false }: LogPanelProps) {
         ) : (
           <ChevronRight className="h-3.5 w-3.5 ml-auto" />
         )}
-      </button>
+      </Button>
       {open && (
         <div
           ref={scrollRef}

@@ -1,20 +1,17 @@
 "use client";
 
-import { useCallback, useMemo, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
-import { ChevronRight, ExternalLink, Globe, Loader2, Trash2, X } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Check, ChevronRight, Copy, ExternalLink, Globe, Loader2, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { ShortAddress } from "@/components/asset-lookup";
+import { ShortAddress } from "@/components/shared/ShortAddress";
 import { useKnownCreators } from "@/hooks/use-known-creators";
 import { useCreatorChildren } from "@/hooks/use-creator-children";
 import { useSettings, resolveHorizonUrl } from "@/lib/settings";
-import { shortAddr } from "@/lib/format";
 import type { CreatorChild } from "@/lib/intermediary-tracer/types";
 
 export function CreatorTreeTab() {
-  const router = useRouter();
   const { entries: creators, upsert: upsertCreator } = useKnownCreators();
   const { forCreator, saveChildren, removeChild, removeAllForCreator } = useCreatorChildren();
   const { settings } = useSettings();
@@ -27,7 +24,25 @@ export function CreatorTreeTab() {
   const [parentInputs, setParentInputs] = useState<Record<string, string>>({});
   const [editingParent, setEditingParent] = useState<Set<string>>(new Set());
   const [confirmClear, setConfirmClear] = useState<string | null>(null);
+  const [copiedAddr, setCopiedAddr] = useState<string | null>(null);
   const abortRefs = useRef<Map<string, AbortController>>(new Map());
+
+  // Abort any in-flight enrichment requests when this tab unmounts
+  useEffect(() => {
+    return () => {
+      abortRefs.current.forEach((ac) => ac.abort());
+    };
+  }, []);
+
+  const handleCopyAddress = useCallback((addr: string) => {
+    navigator.clipboard.writeText(addr).then(
+      () => {
+        setCopiedAddr(addr);
+        setTimeout(() => setCopiedAddr((prev) => (prev === addr ? null : prev)), 1500);
+      },
+      () => { /* clipboard unavailable */ },
+    );
+  }, []);
 
   // Sort creators by child count descending
   const sortedCreators = useMemo(() => {
@@ -195,9 +210,17 @@ export function CreatorTreeTab() {
             className={`overflow-hidden ${hasZero ? "opacity-50" : ""}`}
           >
             {/* Header */}
-            <button
-              className="w-full flex items-center gap-3 p-4 text-left hover:bg-muted/50 transition-colors"
+            <div
+              role="button"
+              tabIndex={0}
+              className="w-full flex items-center gap-3 p-4 text-left hover:bg-muted/50 transition-colors cursor-pointer"
               onClick={() => toggleExpand(creator.address)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  toggleExpand(creator.address);
+                }
+              }}
             >
               <ChevronRight
                 className={`h-4 w-4 shrink-0 transition-transform ${isExpanded ? "rotate-90" : ""}`}
@@ -224,11 +247,11 @@ export function CreatorTreeTab() {
                     <span className="text-xs text-muted-foreground">No children saved</span>
                   )}
                 </div>
-                <div className="text-xs text-muted-foreground mt-0.5">
-                  <ShortAddress address={creator.address} network={network === "futurenet" ? "testnet" : network as "public" | "testnet"} />
+                <div className="text-xs text-muted-foreground mt-0.5" onClick={(e) => e.stopPropagation()}>
+                  <ShortAddress address={creator.address} network={network as "public" | "testnet"} />
                 </div>
               </div>
-            </button>
+            </div>
 
             {/* Expanded content */}
             {isExpanded && (
@@ -240,7 +263,7 @@ export function CreatorTreeTab() {
                       <span className="text-muted-foreground">Parent:</span>
                       <ShortAddress
                         address={creator.parentAddress}
-                        network={network === "futurenet" ? "testnet" : network as "public" | "testnet"}
+                        network={network as "public" | "testnet"}
                       />
                     </div>
                   ) : editingParent.has(creator.address) ? (
@@ -277,14 +300,16 @@ export function CreatorTreeTab() {
                       </Button>
                     </div>
                   ) : (
-                    <button
-                      className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-auto p-0 text-xs text-muted-foreground hover:text-foreground hover:bg-transparent transition-colors"
                       onClick={() =>
                         setEditingParent((prev) => new Set(prev).add(creator.address))
                       }
                     >
                       + Set parent
-                    </button>
+                    </Button>
                   )}
                 </div>
 
@@ -312,11 +337,19 @@ export function CreatorTreeTab() {
                     size="sm"
                     variant="outline"
                     className="h-7 text-xs"
-                    onClick={() =>
-                      router.push("/intermediary-tracer?scanCreator=" + creator.address)
-                    }
+                    onClick={() => handleCopyAddress(creator.address)}
                   >
-                    Scan for more
+                    {copiedAddr === creator.address ? (
+                      <>
+                        <Check className="h-3 w-3 mr-1 text-green-500" />
+                        Copied!
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="h-3 w-3 mr-1" />
+                        Copy address
+                      </>
+                    )}
                   </Button>
                   {childCount > 0 && (
                     confirmClear === creator.address ? (
@@ -457,7 +490,7 @@ function ChildRow({
     }
   }, [child, horizonUrl, onEnrich]);
 
-  const shortNetwork = network === "futurenet" ? "testnet" : (network as "public" | "testnet");
+  const shortNetwork = network as "public" | "testnet";
 
   return (
     <tr className="border-b last:border-0 hover:bg-muted/30">
@@ -471,7 +504,11 @@ function ChildRow({
       </td>
       {/* Via */}
       <td className="py-2 pr-3 text-xs font-mono text-muted-foreground">
-        {child.viaIntermediary ? shortAddr(child.viaIntermediary) : "\u2014"}
+        {child.viaIntermediary ? (
+          <ShortAddress address={child.viaIntermediary} network={shortNetwork} />
+        ) : (
+          "\u2014"
+        )}
       </td>
       {/* Confidence */}
       <td className="py-2 pr-3 text-xs">
@@ -511,13 +548,15 @@ function ChildRow({
       {/* Issued */}
       <td className="py-2 pr-3">
         {child.issuedAssets === undefined ? (
-          <button
-            className="text-xs text-muted-foreground hover:text-foreground border border-dashed border-muted-foreground/30 rounded px-1.5 py-0.5"
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-auto text-xs text-muted-foreground hover:text-foreground hover:bg-transparent border border-dashed border-muted-foreground/30 rounded px-1.5 py-0.5"
             onClick={enrichSingle}
             disabled={enriching}
           >
             {enriching ? <Loader2 className="h-3 w-3 animate-spin" /> : "?"}
-          </button>
+          </Button>
         ) : child.issuedAssets.length === 0 ? (
           <span className="text-xs text-muted-foreground">{"\u2014"}</span>
         ) : (
@@ -541,13 +580,15 @@ function ChildRow({
       {/* Distrib */}
       <td className="py-2 pr-3">
         {child.distributedAssets === undefined ? (
-          <button
-            className="text-xs text-muted-foreground hover:text-foreground border border-dashed border-muted-foreground/30 rounded px-1.5 py-0.5"
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-auto text-xs text-muted-foreground hover:text-foreground hover:bg-transparent border border-dashed border-muted-foreground/30 rounded px-1.5 py-0.5"
             onClick={enrichSingle}
             disabled={enriching}
           >
             {enriching ? <Loader2 className="h-3 w-3 animate-spin" /> : "?"}
-          </button>
+          </Button>
         ) : child.distributedAssets.length === 0 ? (
           <span className="text-xs text-muted-foreground">{"\u2014"}</span>
         ) : (

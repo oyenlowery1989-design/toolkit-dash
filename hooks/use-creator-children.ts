@@ -2,10 +2,29 @@
 
 import { useCallback, useEffect, useState } from "react";
 import type { CreatorChild } from "@/lib/intermediary-tracer/types";
-import { createDbCache, authHeaders, debounce } from "@/lib/db-client";
+import { createDbCache, dbPost, authHeaders, waitForAuth, debounce } from "@/lib/db-client";
 
 const ENDPOINT = "/api/db/creator-children";
 const _cache = createDbCache<CreatorChild>();
+
+// This route's DELETE handler expects { id } or { creatorAddress, network } —
+// not the generic { key } shape used by lib/db-client's dbDelete — so this
+// local wrapper mirrors dbDelete's throw-on-non-OK behavior while preserving
+// the endpoint's existing payload shape (same convention as
+// hooks/use-auto-send-groups.ts's local dbDelete).
+function dbDeleteChild(body: { id: string } | { creatorAddress: string; network: string }): Promise<void> {
+  return waitForAuth()
+    .then(() =>
+      fetch(ENDPOINT, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify(body),
+      }),
+    )
+    .then((res) => {
+      if (!res.ok) throw new Error(`DELETE ${ENDPOINT} failed: ${res.status}`);
+    });
+}
 
 export function useCreatorChildren() {
   const [, rerender] = useState(0);
@@ -43,11 +62,7 @@ export function useCreatorChildren() {
         _cache.set([...genuinelyNew, ...current]);
       }
       // Persist all (server deduplicates via ON CONFLICT DO UPDATE)
-      await fetch(ENDPOINT, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...authHeaders() },
-        body: JSON.stringify(children),
-      }).catch((e) => console.error("[db] POST creator-children error:", e));
+      await dbPost(ENDPOINT, children).catch(() => _cache.reload(ENDPOINT));
       return { added: genuinelyNew.length };
     },
     [],
@@ -56,21 +71,13 @@ export function useCreatorChildren() {
   /** Remove a single child by id */
   const removeChild = useCallback((id: string) => {
     _cache.set(_cache.get().filter((c) => c.id !== id));
-    fetch(ENDPOINT, {
-      method: "DELETE",
-      headers: { "Content-Type": "application/json", ...authHeaders() },
-      body: JSON.stringify({ id }),
-    }).catch((e) => console.error("[db] DELETE creator-children error:", e));
+    dbDeleteChild({ id }).catch(() => _cache.reload(ENDPOINT));
   }, []);
 
   /** Remove all children for a creator */
   const removeAllForCreator = useCallback((creatorAddress: string, network: string) => {
     _cache.set(_cache.get().filter((c) => !(c.creatorAddress === creatorAddress && c.network === network)));
-    fetch(ENDPOINT, {
-      method: "DELETE",
-      headers: { "Content-Type": "application/json", ...authHeaders() },
-      body: JSON.stringify({ creatorAddress, network }),
-    }).catch((e) => console.error("[db] DELETE creator-children error:", e));
+    dbDeleteChild({ creatorAddress, network }).catch(() => _cache.reload(ENDPOINT));
   }, []);
 
   return { all, forCreator, saveChildren, removeChild, removeAllForCreator };
