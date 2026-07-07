@@ -28,11 +28,9 @@ import {
   Clock,
   Download,
   ExternalLink,
-  Layers,
   Loader2,
   Save,
   Search,
-  UserSearch,
   X,
 } from "lucide-react";
 import {
@@ -41,7 +39,6 @@ import {
   type Network,
 } from "@/lib/settings";
 import { getErrorMessage } from "@/lib/stellar-helpers";
-import { ShortAddress } from "@/components/asset-lookup";
 import { downloadCSV } from "@/lib/csv-export";
 import { fetchAssetXlmProceeds } from "@/lib/proceeds-investigator/fetchers";
 import type {
@@ -58,9 +55,11 @@ import { inferDistribLite } from "@/lib/asset-lookup/fetchers";
 import { useSavedSearches } from "@/hooks/use-saved-searches";
 import { useSavedAnalyses } from "@/hooks/use-saved-analyses";
 import { notifyIfHidden, requestNotificationPermission } from "@/lib/notifications";
-import { useAssetGroups } from "@/hooks/use-asset-groups";
-
-const parseManualAddresses = parseAddresses;
+import { ProceedsStatsCards } from "@/components/shared/proceeds/ProceedsStatsCards";
+import { ProceedsDestinationsTable } from "@/components/shared/proceeds/ProceedsDestinationsTable";
+import { SaveToGroupButton } from "@/components/shared/proceeds/SaveToGroupButton";
+import { parseAssetPair } from "@/lib/asset-pair";
+import { useXlmUsdPrice } from "@/hooks/use-xlm-usd-price";
 
 function exportOutgoingCsv(
   filename: string,
@@ -106,7 +105,6 @@ export function AssetXlmProceedsTab() {
   } = useProceedsHistory();
   const { presets, savePreset, removePreset } = useProceedsPresets();
   const { settings, updateSettings } = useSettings();
-  const { groups } = useAssetGroups();
   const { upsert: upsertSearch } = useSavedSearches();
   const { saveAnalysis } = useSavedAnalyses();
   const [savedId, setSavedId] = useState<string | null>(null);
@@ -124,7 +122,7 @@ export function AssetXlmProceedsTab() {
   const [progressText, setProgressText] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<AssetProceedsResult | null>(null);
-  const [xlmUsdPrice, setXlmUsdPrice] = useState<number | null>(null);
+  const { price: xlmUsdPrice, ensure: ensureXlmUsdPrice } = useXlmUsdPrice();
   const [selectedPresetId, setSelectedPresetId] = useState<string>("none");
   const [inferring, setInferring] = useState(false);
   const [inferError, setInferError] = useState<string | null>(null);
@@ -145,13 +143,10 @@ export function AssetXlmProceedsTab() {
   }, []);
 
   const tryParseAssetPair = (raw: string): boolean => {
-    const match = raw.match(/([A-Za-z0-9]{1,12}):([A-Z2-7]{56})/);
-    if (!match) return false;
-    const code = match[1];
-    const addr = match[2];
-    if (!StrKey.isValidEd25519PublicKey(addr)) return false;
-    setAssetCode(code);
-    setIssuer(addr);
+    const pair = parseAssetPair(raw);
+    if (!pair) return false;
+    setAssetCode(pair.assetCode);
+    setIssuer(pair.issuer);
     return true;
   };
 
@@ -170,7 +165,7 @@ export function AssetXlmProceedsTab() {
     if (!StrKey.isValidEd25519PublicKey(issuer.trim())) {
       return "Issuer is not a valid Stellar public key.";
     }
-    const accounts = parseManualAddresses(accountsText);
+    const accounts = parseAddresses(accountsText);
     if (accounts.length === 0) {
       return "Add at least one account address.";
     }
@@ -227,7 +222,7 @@ export function AssetXlmProceedsTab() {
     }
 
     // Resolve accounts — auto-infer distrib if the field is empty
-    let resolvedAccounts = parseManualAddresses(accountsText);
+    let resolvedAccounts = parseAddresses(accountsText);
     if (resolvedAccounts.length === 0) {
       inferAbortRef.current?.abort();
       inferAbortRef.current = new AbortController();
@@ -319,18 +314,7 @@ export function AssetXlmProceedsTab() {
         totalAssetSold: summary.totalAssetSold,
       });
 
-      fetch(
-        "https://api.coingecko.com/api/v3/simple/price?ids=stellar&vs_currencies=usd",
-      )
-        .then((res) => res.json())
-        .then((data) => {
-          if (controller.signal.aborted) return;
-          setXlmUsdPrice(data?.stellar?.usd ?? null);
-        })
-        .catch(() => {
-          if (controller.signal.aborted) return;
-          setXlmUsdPrice(null);
-        });
+      ensureXlmUsdPrice();
 
       setProgressText("Completed.");
       notifyIfHidden(
@@ -377,7 +361,7 @@ export function AssetXlmProceedsTab() {
       setError(validationError);
       return;
     }
-    const addresses = parseManualAddresses(accountsText);
+    const addresses = parseAddresses(accountsText);
     const distributionAddress = addresses[0];
     savePreset({
       assetCode: assetCode.trim(),
@@ -648,46 +632,11 @@ export function AssetXlmProceedsTab() {
 
       {result && (
         <>
-          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-            <Card>
-              <CardHeader>
-                <CardDescription>Total XLM Proceeds (All-Time)</CardDescription>
-                <CardTitle>{formatXlm(result.totalXlmProceeds)} XLM</CardTitle>
-                {xlmUsdPrice !== null && (
-                  <CardDescription>
-                    ≈ $
-                    {(result.totalXlmProceeds * xlmUsdPrice).toLocaleString(
-                      undefined,
-                      { maximumFractionDigits: 2 },
-                    )}
-                  </CardDescription>
-                )}
-              </CardHeader>
-            </Card>
-            <Card>
-              <CardHeader>
-                <CardDescription>Total Outgoing XLM (All-Time)</CardDescription>
-                <CardTitle>{formatXlm(result.totalOutgoingXlm)} XLM</CardTitle>
-              </CardHeader>
-            </Card>
-            <Card>
-              <CardHeader>
-                <CardDescription>Estimated On-Hand</CardDescription>
-                <CardTitle>
-                  {formatXlm(result.estimatedOnHandXlm)} XLM
-                </CardTitle>
-                {xlmUsdPrice !== null && (
-                  <CardDescription>
-                    ≈ $
-                    {(result.estimatedOnHandXlm * xlmUsdPrice).toLocaleString(
-                      undefined,
-                      { maximumFractionDigits: 2 },
-                    )}
-                  </CardDescription>
-                )}
-              </CardHeader>
-            </Card>
-          </div>
+          <ProceedsStatsCards
+            result={result}
+            assetCode={result.assetCode}
+            xlmUsdPrice={xlmUsdPrice}
+          />
 
           <Card>
             <CardHeader>
@@ -737,167 +686,34 @@ export function AssetXlmProceedsTab() {
                     Save Analysis
                   </Button>
                 )}
-                {result.accounts[0] && (() => {
-                  const existingGroup = groups.find(
-                    (g) =>
-                      g.assetCode?.toUpperCase() === result.assetCode.toUpperCase() &&
-                      g.issuer === result.issuer &&
-                      g.network === settings.network,
-                  );
-                  return existingGroup ? (
-                    <a
-                      href={`/groups?open=${existingGroup.id}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1.5 rounded border border-green-400/40 bg-green-400/10 px-3 py-1.5 text-xs font-medium text-green-400 hover:bg-green-400/20 transition-colors"
-                    >
-                      <Layers className="h-3.5 w-3.5" />
-                      Open Group
-                    </a>
-                  ) : (
-                    <button
-                      onClick={() => {
-                        const p = new URLSearchParams({
-                          autoCreate: "1",
-                          name: `${result.assetCode} Investigation`,
-                          assetCode: result.assetCode,
-                          issuer: result.issuer,
-                          distrib: result.accounts[0],
-                          network: settings.network,
-                        });
-                        window.open(`/groups?${p.toString()}`, "_blank");
-                      }}
-                      className="inline-flex items-center gap-1.5 rounded border border-purple-400/40 bg-purple-400/10 px-3 py-1.5 text-xs font-medium text-purple-400 hover:bg-purple-400/20 transition-colors"
-                    >
-                      <Layers className="h-3.5 w-3.5" />
-                      Save to Group
-                    </button>
-                  );
-                })()}
+                {result.accounts[0] && (
+                  <SaveToGroupButton
+                    assetCode={result.assetCode}
+                    issuer={result.issuer}
+                    network={settings.network}
+                    distribAddress={result.accounts[0]}
+                  />
+                )}
               </div>
 
-              <div className="overflow-x-auto border rounded-md">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b bg-muted/40">
-                      <th className="text-left px-3 py-2">Destination</th>
-                      <th className="text-right px-3 py-2">Amount XLM</th>
-                      <th className="text-right px-3 py-2">% of Sold XLM</th>
-                      <th className="text-right px-3 py-2">Count</th>
-                      <th className="text-right px-3 py-2">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {result.topDestinations.map((row) => (
-                      <tr key={row.address} className="border-b last:border-0">
-                        <td className="px-3 py-2 text-xs">
-                          <ShortAddress
-                            address={row.address}
-                            network={settings.network}
-                          />
-                        </td>
-                        <td className="px-3 py-2 text-right tabular-nums">
-                          {formatXlm(row.totalXlm)}
-                        </td>
-                        <td className="px-3 py-2 text-right tabular-nums">
-                          {result.totalXlmProceeds > 0
-                            ? (
-                                (row.totalXlm / result.totalXlmProceeds) *
-                                100
-                              ).toFixed(2)
-                            : "0.00"}
-                          %
-                        </td>
-                        <td className="px-3 py-2 text-right tabular-nums">
-                          {row.count}
-                        </td>
-                        <td className="px-3 py-2 text-right">
-                          <div className="flex items-center justify-end gap-1">
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() =>
-                                exportOutgoingCsv(
-                                  `outgoing-${row.address.slice(0, 8)}.csv`,
-                                  result.outgoingLedger.filter(
-                                    (entry) => entry.to === row.address,
-                                  ),
-                                )
-                              }
-                            >
-                              <Download className="h-3.5 w-3.5" />
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              title="Investigate in Address Investigator"
-                              onClick={() =>
-                                router.push(
-                                  `/address-investigator?address=${row.address}`,
-                                )
-                              }
-                            >
-                              <UserSearch className="h-3.5 w-3.5" />
-                            </Button>
-                            {(() => {
-                              const assetGroup = groups.find(
-                                (g) =>
-                                  g.assetCode?.toUpperCase() === result.assetCode.toUpperCase() &&
-                                  g.issuer === result.issuer &&
-                                  g.network === settings.network,
-                              );
-                              const inGroup = assetGroup?.members.find((m) => m.address === row.address);
-                              return inGroup ? (
-                                <a
-                                  href={`/groups?open=${assetGroup!.id}`}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  title="Already in group"
-                                >
-                                  <Button variant="ghost" size="sm" asChild>
-                                    <span><Layers className="h-3.5 w-3.5 text-green-400/70" /></span>
-                                  </Button>
-                                </a>
-                              ) : (
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  title="Add to group as Bank"
-                                  onClick={() => {
-                                    const p = new URLSearchParams({
-                                      autoCreate: "1",
-                                      name: `${result.assetCode} Investigation`,
-                                      assetCode: result.assetCode,
-                                      issuer: result.issuer,
-                                      distrib: result.accounts[0] ?? "",
-                                      network: settings.network,
-                                      addAddress: row.address,
-                                      addRole: "bank",
-                                    });
-                                    window.open(`/groups?${p.toString()}`, "_blank");
-                                  }}
-                                >
-                                  <Layers className="h-3.5 w-3.5 text-purple-400/70" />
-                                </Button>
-                              );
-                            })()}
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                    {result.topDestinations.length === 0 && (
-                      <tr>
-                        <td
-                          className="px-3 py-4 text-sm text-muted-foreground"
-                          colSpan={5}
-                        >
-                          No destination outflows found.
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
+              <ProceedsDestinationsTable
+                destinations={result.topDestinations}
+                totalXlmProceeds={result.totalXlmProceeds}
+                network={settings.network}
+                assetCode={result.assetCode}
+                issuer={result.issuer}
+                showProgressBar
+                onDownloadCsv={(address) =>
+                  exportOutgoingCsv(
+                    `outgoing-${address.slice(0, 8)}.csv`,
+                    result.outgoingLedger.filter((entry) => entry.to === address),
+                  )
+                }
+                onInvestigate={(address) =>
+                  router.push(`/address-investigator?address=${address}`)
+                }
+                showGroupAction
+              />
             </CardContent>
           </Card>
 
