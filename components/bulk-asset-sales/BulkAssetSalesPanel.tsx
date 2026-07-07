@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { StrKey } from "stellar-sdk";
 import {
   Card,
   CardContent,
@@ -15,32 +14,38 @@ import { Label } from "@/components/ui/label";
 import {
   AlertTriangle,
   BookmarkCheck,
-  CheckCircle2,
   ChevronDown,
   ChevronRight,
-  Layers,
   Loader2,
   RefreshCw,
   Save,
   Search,
   TrendingDown,
   X,
-  XCircle,
 } from "lucide-react";
 import { useSettings, resolveHorizonUrl } from "@/lib/settings";
 import { getErrorMessage } from "@/lib/stellar-helpers";
-import { ShortAddress } from "@/components/asset-lookup";
+import { ShortAddress } from "@/components/shared/ShortAddress";
 import { inferDistribLite } from "@/lib/asset-lookup/fetchers";
 import { fetchAssetXlmProceeds } from "@/lib/proceeds-investigator/fetchers";
 import { formatXlm } from "@/lib/format";
 import { useSavedSearches } from "@/hooks/use-saved-searches";
 import { useSavedAnalyses } from "@/hooks/use-saved-analyses";
+import { useBulkScanState } from "@/hooks/use-bulk-scan-state";
+import { parseAssetPairs } from "@/lib/asset-pair";
+import { useXlmUsdPrice } from "@/hooks/use-xlm-usd-price";
+import { fetchHomeDomain } from "@/components/shared/ChainDisplay";
 import {
   notifyIfHidden,
   requestNotificationPermission,
 } from "@/lib/notifications";
 import type { AssetProceedsResult } from "@/lib/proceeds-investigator/types";
-import { useAssetGroups } from "@/hooks/use-asset-groups";
+import {
+  ProceedsStatsCards,
+  ProceedsDestinationsTable,
+  SaveToGroupButton,
+  ProceedsStatusBadge,
+} from "@/components/shared/proceeds";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -58,62 +63,6 @@ interface AssetRow {
   inferReason?: string;
   result?: AssetProceedsResult;
   expanded: boolean;
-}
-
-// ---------------------------------------------------------------------------
-// localStorage persistence
-// ---------------------------------------------------------------------------
-
-const ROWS_STORAGE_KEY = "stellar-toolkit-bulk-asset-rows";
-
-function loadPersistedRows(): AssetRow[] {
-  if (typeof window === "undefined") return [];
-  try {
-    const raw = localStorage.getItem(ROWS_STORAGE_KEY);
-    return raw ? (JSON.parse(raw) as AssetRow[]) : [];
-  } catch {
-    return [];
-  }
-}
-
-function persistRows(rows: AssetRow[]) {
-  try {
-    localStorage.setItem(ROWS_STORAGE_KEY, JSON.stringify(rows));
-  } catch {}
-}
-
-function clearPersistedRows() {
-  try {
-    localStorage.removeItem(ROWS_STORAGE_KEY);
-  } catch {}
-}
-
-function getInitialRowsState(): { rows: AssetRow[]; interrupted: boolean } {
-  const persisted = loadPersistedRows();
-  if (persisted.length === 0) {
-    return { rows: [], interrupted: false };
-  }
-
-  const interrupted = persisted.some(
-    (r) =>
-      r.status === "pending" ||
-      r.status === "inferring" ||
-      r.status === "scanning",
-  );
-
-  const rows = persisted.map((r) =>
-    r.status === "pending" ||
-    r.status === "inferring" ||
-    r.status === "scanning"
-      ? {
-          ...r,
-          status: "error" as AssetRowStatus,
-          error: "Scan was interrupted (page refresh).",
-        }
-      : r,
-  );
-
-  return { rows, interrupted };
 }
 
 // ---------------------------------------------------------------------------
@@ -141,182 +90,9 @@ async function runConcurrent<T>(
   );
 }
 
-async function fetchXlmUsd(signal: AbortSignal): Promise<number | null> {
-  try {
-    const res = await fetch(
-      "https://api.coingecko.com/api/v3/simple/price?ids=stellar&vs_currencies=usd",
-      { signal },
-    );
-    if (!res.ok) return null;
-    const data = await res.json();
-    return (data as { stellar?: { usd?: number } })?.stellar?.usd ?? null;
-  } catch {
-    return null;
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-function parseAssetPairs(
-  text: string,
-): { assetCode: string; issuer: string }[] {
-  const seen = new Set<string>();
-  const results: { assetCode: string; issuer: string }[] = [];
-  for (const line of text.split(/\r?\n/)) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-    const match = trimmed.match(/([A-Za-z0-9]{1,12}):([A-Z2-7]{56})/);
-    if (!match) continue;
-    const assetCode = match[1]; // preserve original case — Stellar asset codes are case-sensitive on-chain
-    const issuer = match[2];
-    if (!StrKey.isValidEd25519PublicKey(issuer)) continue;
-    const key = `${assetCode}:${issuer}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    results.push({ assetCode, issuer });
-  }
-  return results;
-}
-
 // ---------------------------------------------------------------------------
 // Sub-components
 // ---------------------------------------------------------------------------
-
-function StatusBadge({ status }: { status: AssetRowStatus }) {
-  if (status === "pending")
-    return <span className="text-xs text-muted-foreground">Pending</span>;
-  if (status === "inferring")
-    return (
-      <span className="flex items-center gap-1 text-xs text-muted-foreground">
-        <Loader2 className="h-3 w-3 animate-spin" /> Inferring distrib…
-      </span>
-    );
-  if (status === "scanning")
-    return (
-      <span className="flex items-center gap-1 text-xs text-muted-foreground">
-        <Loader2 className="h-3 w-3 animate-spin" /> Scanning trades…
-      </span>
-    );
-  if (status === "done")
-    return (
-      <span className="flex items-center gap-1 text-xs text-green-600 dark:text-green-400">
-        <CheckCircle2 className="h-3 w-3" /> Done
-      </span>
-    );
-  return (
-    <span className="flex items-center gap-1 text-xs text-destructive">
-      <XCircle className="h-3 w-3" /> Error
-    </span>
-  );
-}
-
-function DestinationsTable({
-  result,
-  network,
-}: {
-  result: AssetProceedsResult;
-  network: string;
-}) {
-  const { groups } = useAssetGroups();
-  const assetGroup = groups.find(
-    (g) =>
-      g.assetCode?.toUpperCase() === result.assetCode.toUpperCase() &&
-      g.issuer === result.issuer &&
-      g.network === network,
-  );
-  const total = result.totalXlmProceeds;
-  return (
-    <div className="overflow-x-auto mt-4">
-      <table className="w-full text-xs">
-        <thead>
-          <tr className="border-b border-border text-muted-foreground">
-            <th className="pb-2 text-left font-medium">Destination</th>
-            <th className="pb-2 text-right font-medium">XLM Received</th>
-            <th className="pb-2 text-right font-medium">% of Proceeds</th>
-            <th className="pb-2 text-right font-medium">Tx Count</th>
-            <th className="pb-2 text-right font-medium">Group</th>
-          </tr>
-        </thead>
-        <tbody>
-          {result.topDestinations.map((d) => {
-            const pct = total > 0 ? (d.totalXlm / total) * 100 : 0;
-            return (
-              <tr key={d.address} className="border-b border-border/50">
-                <td className="py-2">
-                  <ShortAddress
-                    address={d.address}
-                    network={network as "public" | "testnet"}
-                  />
-                </td>
-                <td className="py-2 text-right tabular-nums font-mono">
-                  {formatXlm(d.totalXlm)}
-                </td>
-                <td className="py-2 text-right">
-                  <div className="flex items-center justify-end gap-2">
-                    <div className="w-20 h-1.5 rounded-full bg-muted overflow-hidden">
-                      <div
-                        className="h-full rounded-full bg-primary"
-                        style={{ width: `${Math.min(pct, 100)}%` }}
-                      />
-                    </div>
-                    <span className="tabular-nums w-12 text-right">
-                      {pct.toFixed(1)}%
-                    </span>
-                  </div>
-                </td>
-                <td className="py-2 text-right tabular-nums">{d.count}</td>
-                <td className="py-2 text-right">
-                  {assetGroup?.members.find((m) => m.address === d.address) ? (
-                    <a
-                      href={`/groups?open=${assetGroup.id}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1 rounded border border-green-400/40 bg-green-400/10 px-2 py-0.5 text-[10px] font-medium text-green-400 hover:bg-green-400/20 transition-colors"
-                    >
-                      ✓ in group
-                    </a>
-                  ) : (
-                    <button
-                      title="Add to group as Bank"
-                      onClick={() => {
-                        const p = new URLSearchParams({
-                          autoCreate: "1",
-                          name: `${result.assetCode} Investigation`,
-                          assetCode: result.assetCode,
-                          issuer: result.issuer,
-                          distrib: result.accounts[0] ?? "",
-                          network,
-                          addAddress: d.address,
-                          addRole: "bank",
-                        });
-                        window.open(`/groups?${p.toString()}`, "_blank");
-                      }}
-                      className="inline-flex items-center gap-1 rounded border border-purple-400/40 bg-purple-400/10 px-2 py-0.5 text-[10px] font-medium text-purple-400 hover:bg-purple-400/20 transition-colors"
-                    >
-                      + Bank
-                    </button>
-                  )}
-                </td>
-              </tr>
-            );
-          })}
-          {result.topDestinations.length === 0 && (
-            <tr>
-              <td
-                colSpan={5}
-                className="py-4 text-center text-muted-foreground"
-              >
-                No outgoing XLM transfers found.
-              </td>
-            </tr>
-          )}
-        </tbody>
-      </table>
-    </div>
-  );
-}
 
 // ---------------------------------------------------------------------------
 // Main Panel
@@ -324,7 +100,6 @@ function DestinationsTable({
 
 export function BulkAssetSalesPanel() {
   const { settings } = useSettings();
-  const { groups } = useAssetGroups();
   const { upsert: upsertSearch } = useSavedSearches();
   const { saveAnalysis } = useSavedAnalyses();
   const [assetsText, setAssetsText] = useState("");
@@ -333,8 +108,9 @@ export function BulkAssetSalesPanel() {
   const [parseError, setParseError] = useState<string | null>(null);
   const [interrupted, setInterrupted] = useState(false);
   const [allSaved, setAllSaved] = useState(false);
-  const [xlmUsdPrice, setXlmUsdPrice] = useState<number | null>(null);
+  const { price: xlmUsdPrice, ensure: ensureXlmUsdPrice } = useXlmUsdPrice();
   const abortRef = useRef<AbortController | null>(null);
+  const bulkScanState = useBulkScanState<AssetRow>();
 
   useEffect(() => {
     requestNotificationPermission();
@@ -342,17 +118,39 @@ export function BulkAssetSalesPanel() {
 
   // SSR output must be empty state; apply any persisted rows after mount.
   useEffect(() => {
-    const persisted = getInitialRowsState();
-    if (persisted.rows.length || persisted.interrupted) {
-      setRows(persisted.rows);
-      setInterrupted(persisted.interrupted);
-    }
+    let cancelled = false;
+    bulkScanState.load().then((persisted) => {
+      if (cancelled || !persisted || persisted.rows.length === 0) return;
+      const wasInterrupted = persisted.rows.some(
+        (r) =>
+          r.status === "pending" ||
+          r.status === "inferring" ||
+          r.status === "scanning",
+      );
+      const rows = persisted.rows.map((r) =>
+        r.status === "pending" ||
+        r.status === "inferring" ||
+        r.status === "scanning"
+          ? {
+              ...r,
+              status: "error" as AssetRowStatus,
+              error: "Scan was interrupted (page refresh).",
+            }
+          : r,
+      );
+      setRows(rows);
+      setInterrupted(wasInterrupted);
+    });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const updateRow = (index: number, patch: Partial<AssetRow>) => {
     setRows((prev) => {
       const next = prev.map((r, i) => (i === index ? { ...r, ...patch } : r));
-      persistRows(next);
+      bulkScanState.save(next);
       return next;
     });
   };
@@ -376,15 +174,13 @@ export function BulkAssetSalesPanel() {
       expanded: false,
     }));
     setRows(initial);
-    persistRows(initial);
+    bulkScanState.saveImmediate(initial, false);
     setRunning(true);
 
     const horizonUrl = resolveHorizonUrl(settings);
 
     // Fetch XLM/USD price in parallel with first batch
-    fetchXlmUsd(signal).then((price) => {
-      if (price !== null) setXlmUsdPrice(price);
-    });
+    ensureXlmUsdPrice();
 
     await runConcurrent(
       pairs,
@@ -416,19 +212,8 @@ export function BulkAssetSalesPanel() {
           inferReason = candidates[0].reason;
 
           // Fetch issuer home_domain in background (best-effort)
-          try {
-            const acctRes = await fetch(
-              `${horizonUrl}/accounts/${encodeURIComponent(issuer)}`,
-              { signal },
-            );
-            if (!signal.aborted && acctRes.ok) {
-              const acctData = await acctRes.json();
-              const hd = (acctData as { home_domain?: string }).home_domain;
-              if (hd) updateRow(i, { homeDomain: hd });
-            }
-          } catch {
-            // non-fatal
-          }
+          const hd = await fetchHomeDomain(horizonUrl, issuer, signal);
+          if (!signal.aborted && hd) updateRow(i, { homeDomain: hd });
         } catch (e) {
           if (signal.aborted) return;
           updateRow(i, { status: "error", error: getErrorMessage(e) });
@@ -474,6 +259,10 @@ export function BulkAssetSalesPanel() {
     );
 
     setRunning(false);
+    setRows((currentRows) => {
+      bulkScanState.saveImmediate(currentRows, false);
+      return currentRows;
+    });
     notifyIfHidden(
       "Bulk Asset Sales complete",
       `Scan finished for ${pairs.length} assets.`,
@@ -491,7 +280,7 @@ export function BulkAssetSalesPanel() {
     setRows([]);
     setInterrupted(false);
     setAllSaved(false);
-    clearPersistedRows();
+    bulkScanState.clear();
   };
 
   const handleSaveAll = () => {
@@ -760,48 +549,17 @@ export function BulkAssetSalesPanel() {
 
                 {/* Status + Save to Group */}
                 <div className="shrink-0 flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
-                  <StatusBadge status={row.status} />
-                  {row.distribAddress && (() => {
-                    const existingGroup = groups.find(
-                      (g) =>
-                        g.assetCode?.toUpperCase() === row.assetCode.toUpperCase() &&
-                        g.issuer === row.issuer &&
-                        g.network === settings.network,
-                    );
-                    return existingGroup ? (
-                      <a
-                        href={`/groups?open=${existingGroup.id}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1 rounded border border-green-400/40 bg-green-400/10 px-2 py-0.5 text-[10px] font-medium text-green-400 hover:bg-green-400/20 transition-colors whitespace-nowrap"
-                      >
-                        <Layers className="h-3 w-3" />
-                        Open Group
-                      </a>
-                    ) : (
-                      <a
-                        href={(() => {
-                          const p = new URLSearchParams({
-                            autoCreate: "1",
-                            name: `${row.assetCode} Investigation`,
-                            assetCode: row.assetCode,
-                            issuer: row.issuer,
-                            distrib: row.distribAddress!,
-                            network: settings.network,
-                          });
-                          if (row.homeDomain) p.set("issuerHomeDomain", row.homeDomain);
-                          return `/groups?${p.toString()}`;
-                        })()}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        title="Save issuer + distrib to an Asset Group"
-                        className="inline-flex items-center gap-1 rounded border border-purple-400/40 bg-purple-400/10 px-2 py-0.5 text-[10px] font-medium text-purple-400 hover:bg-purple-400/20 transition-colors whitespace-nowrap"
-                      >
-                        <Layers className="h-3 w-3" />
-                        Save to Group
-                      </a>
-                    );
-                  })()}
+                  <ProceedsStatusBadge status={row.status} />
+                  {row.distribAddress && (
+                    <SaveToGroupButton
+                      assetCode={row.assetCode}
+                      issuer={row.issuer}
+                      network={settings.network}
+                      distribAddress={row.distribAddress}
+                      homeDomain={row.homeDomain}
+                      size="sm"
+                    />
+                  )}
                 </div>
               </div>
 
@@ -830,50 +588,11 @@ export function BulkAssetSalesPanel() {
               {/* Expanded detail */}
               {row.expanded && row.result && (
                 <div className="border-t border-border px-4 pb-4">
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-4">
-                    <div>
-                      <p className="text-xs text-muted-foreground">
-                        XLM Proceeds
-                      </p>
-                      <p className="font-mono font-semibold">
-                        {formatXlm(row.result.totalXlmProceeds)} XLM
-                      </p>
-                      {xlmUsdPrice !== null && (
-                        <p className="text-xs text-muted-foreground">
-                          ≈ $
-                          {(
-                            row.result.totalXlmProceeds * xlmUsdPrice
-                          ).toLocaleString(undefined, {
-                            maximumFractionDigits: 0,
-                          })}
-                        </p>
-                      )}
-                    </div>
-                    <div>
-                      <p className="text-xs text-muted-foreground">
-                        Asset Sold
-                      </p>
-                      <p className="font-mono font-semibold">
-                        {formatXlm(row.result.totalAssetSold)} {row.assetCode}
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-xs text-muted-foreground">
-                        Outgoing XLM
-                      </p>
-                      <p className="font-mono font-semibold">
-                        {formatXlm(row.result.totalOutgoingXlm)} XLM
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-xs text-muted-foreground">
-                        Est. On Hand
-                      </p>
-                      <p className="font-mono font-semibold">
-                        {formatXlm(row.result.estimatedOnHandXlm)} XLM
-                      </p>
-                    </div>
-                  </div>
+                  <ProceedsStatsCards
+                    result={row.result}
+                    assetCode={row.assetCode}
+                    xlmUsdPrice={xlmUsdPrice}
+                  />
 
                   {row.inferReason && (
                     <p className="text-xs text-muted-foreground mt-3">
@@ -887,9 +606,14 @@ export function BulkAssetSalesPanel() {
                   <h4 className="text-sm font-semibold mt-4 mb-1">
                     Top Destinations
                   </h4>
-                  <DestinationsTable
-                    result={row.result}
+                  <ProceedsDestinationsTable
+                    destinations={row.result.topDestinations}
+                    totalXlmProceeds={row.result.totalXlmProceeds}
                     network={settings.network}
+                    assetCode={row.result.assetCode}
+                    issuer={row.result.issuer}
+                    showProgressBar
+                    showGroupAction
                   />
                 </div>
               )}
