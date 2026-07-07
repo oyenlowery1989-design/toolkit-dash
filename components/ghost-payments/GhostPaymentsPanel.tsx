@@ -45,7 +45,7 @@ import {
 } from "lucide-react";
 import { useSettings, resolveNetworkPassphrase, type Network } from "@/lib/settings";
 import { getErrorMessage } from "@/lib/stellar-helpers";
-import { ShortAddress } from "@/components/asset-lookup";
+import { ShortAddress } from "@/components/shared/ShortAddress";
 import { downloadCSV } from "@/lib/csv-export";
 import { fetchAllHolders } from "@/lib/asset-lookup/fetchers";
 import { estimateCost } from "@/lib/bulk-payments/builder";
@@ -309,6 +309,10 @@ export function GhostPaymentsPanel() {
     if (ghostMode === "underfunded") {
       setAssetType("xlm");
       setUnderfundedAmount(null);
+      // Underfunded mode only supports a single sender — the overshoot
+      // amount is computed from one account's balance at preview time and
+      // must not be reused across multiple, differently-funded senders.
+      setSenderMode("single");
     } else if (ghostMode === "trustline_touch") {
       // Clear auto-filled GHOST asset; user supplies asset for trustline touch
       setCustomAssetCode("");
@@ -329,9 +333,19 @@ export function GhostPaymentsPanel() {
   }, [ghostMode]);
 
   const abortRef = useRef<AbortController | null>(null);
+  const submittingRef = useRef(false);
   const { settings } = useSettings();
   const network = settings.network;
   const { server: horizonServer, url: horizonUrl } = useHorizonServer(network);
+
+  // Abort any in-flight holder fetch if the user switches away from the
+  // Asset Holders tab before it resolves — prevents a stale fetch response
+  // from silently overwriting recipients set from a different source tab.
+  useEffect(() => {
+    if (sourceTab !== "assets") {
+      abortRef.current?.abort();
+    }
+  }, [sourceTab]);
 
   const { groups } = useAssetGroups();
 
@@ -393,7 +407,7 @@ export function GhostPaymentsPanel() {
 
   const paymentAsset = getPaymentAsset();
   const isNative = paymentAsset.isNative();
-  const memoBytes = byteLength(memo);
+  const memoBytes = byteLength(memo.trim());
   const parsedAmount = parseFloat(amount) || 0;
   const costPerRound = estimateCost(
     recipients.length,
@@ -434,6 +448,9 @@ export function GhostPaymentsPanel() {
       const keys = parseMultipleKeys();
       if (keys.length < 2) return "Enter at least 2 secret keys for multi-sender mode.";
     }
+    if (ghostMode === "underfunded" && senderMode !== "single") {
+      return "Underfunded mode only supports a single sender — the overshoot amount is computed from one account's balance and cannot safely be reused across multiple senders.";
+    }
     if (ghostMode === "trustline_touch") {
       const code = customAssetCode.trim();
       const issuer = customAssetIssuer.trim();
@@ -451,6 +468,16 @@ export function GhostPaymentsPanel() {
       if (!StrKey.isValidEd25519PublicKey(issuer))
         return "Custom asset issuer is not a valid address.";
     }
+    // Defense in depth: Ghost Asset mode's entire safety guarantee depends on
+    // sending a custom asset with no trust line anywhere. Refuse to proceed
+    // if the resolved asset is native XLM or isn't the auto-generated GHOST
+    // asset, regardless of how assetType/customAssetCode ended up that way.
+    if (ghostMode === "no_trust") {
+      const resolved = getPaymentAsset();
+      if (resolved.isNative() || resolved.getCode() !== "GHOST") {
+        return "Ghost Asset mode requires the auto-generated GHOST asset (no trust line) — native XLM cannot be used here.";
+      }
+    }
     return null;
   }
 
@@ -467,14 +494,34 @@ export function GhostPaymentsPanel() {
     }
   }
 
+  // Unlike getSenderPublicKey() (which only ever resolves the FIRST sender
+  // key in multi-sender modes), this resolves every valid sender key — used
+  // for excluding senders' own addresses from the recipient list so sender
+  // #2/#3/etc. are excluded too, not just sender #1.
+  function getAllSenderPublicKeys(): string[] {
+    if (senderMode !== "single") {
+      const keys = parseMultipleKeys();
+      const pubs: string[] = [];
+      for (const key of keys) {
+        try {
+          pubs.push(Keypair.fromSecret(key).publicKey());
+        } catch {
+          // skip invalid key
+        }
+      }
+      return pubs;
+    }
+    const pub = getSenderPublicKey();
+    return pub ? [pub] : [];
+  }
+
   function buildManualRecipients(): string | null {
     const addresses = parseValidAddresses(manualText);
     if (addresses.length === 0) return "Add at least one recipient address.";
     const invalid = addresses.find((a) => !StrKey.isValidEd25519PublicKey(a));
     if (invalid) return `Invalid address: ${invalid}`;
-    const senderPub = getSenderPublicKey();
     const excludeSet = getExcludeSet();
-    if (senderPub) excludeSet.add(senderPub);
+    getAllSenderPublicKeys().forEach((pub) => excludeSet.add(pub));
     const filtered = addresses.filter((a) => !excludeSet.has(a));
     setRecipients(filtered);
     return null;
@@ -511,7 +558,7 @@ export function GhostPaymentsPanel() {
     setAssetSources([...sources]);
 
     const allAddresses = new Set<string>();
-    const senderPub = getSenderPublicKey();
+    const senderPubs = getAllSenderPublicKeys();
 
     for (let i = 0; i < pairs.length; i++) {
       if (signal.aborted) break;
@@ -533,7 +580,7 @@ export function GhostPaymentsPanel() {
             ),
         );
         const excludeSet = getExcludeSet();
-        if (senderPub) excludeSet.add(senderPub);
+        senderPubs.forEach((pub) => excludeSet.add(pub));
         const valid = holders.filter(
           (h) =>
             parseFloat(h.balance) >= Math.max(minBalance, 0.0000001) &&
@@ -602,9 +649,8 @@ export function GhostPaymentsPanel() {
         setError("Select a group with at least one member.");
         return;
       }
-      const senderPub = getSenderPublicKey();
       const excludeSet = getExcludeSet();
-      if (senderPub) excludeSet.add(senderPub);
+      getAllSenderPublicKeys().forEach((pub) => excludeSet.add(pub));
       const addrs = grp.members
         .map((m) => m.address)
         .filter((a) => !excludeSet.has(a));
@@ -714,135 +760,154 @@ export function GhostPaymentsPanel() {
   }
 
   async function handleSend() {
-    if (ghostMode === "trustline_touch") {
-      return handleTrustlineTouch();
-    }
-
-    abortRef.current?.abort();
-    abortRef.current = new AbortController();
-
-    setPhase("sending");
-    setError(null);
-    setCurrentRound(1);
-
-    // For underfunded mode, override amount + asset
-    const sendAmount =
-      ghostMode === "underfunded" && underfundedAmount
-        ? underfundedAmount
-        : amount.trim();
-    const sendAsset =
-      ghostMode === "underfunded" ? Asset.native() : getPaymentAsset();
-
-    const senderKeys =
-      senderMode === "single"
-        ? [effectiveSecretKey.trim()]
-        : parseMultipleKeys();
-
-    // Build a flat list of { key, recipients } runs to execute sequentially.
-    // Each run maps to a separate block of BatchResults displayed to the user.
-    type SendRun = { key: string; recips: string[]; label: string };
-    const runs: SendRun[] = [];
-
-    if (senderMode === "single") {
-      for (let r = 1; r <= repeatTimes; r++) {
-        runs.push({ key: senderKeys[0], recips: recipients, label: repeatTimes > 1 ? `Round ${r}` : "Send" });
-      }
-    } else if (senderMode === "round-robin") {
-      // Split recipients evenly across senders
-      const chunkSize = Math.ceil(recipients.length / senderKeys.length);
-      for (let r = 1; r <= repeatTimes; r++) {
-        senderKeys.forEach((key, ki) => {
-          const slice = recipients.slice(ki * chunkSize, (ki + 1) * chunkSize);
-          if (slice.length > 0)
-            runs.push({ key, recips: slice, label: `Round ${r} · Sender ${ki + 1}` });
-        });
-      }
-    } else if (senderMode === "all-to-all") {
-      // Every sender sends to ALL recipients
-      for (let r = 1; r <= repeatTimes; r++) {
-        senderKeys.forEach((key, ki) => {
-          runs.push({ key, recips: recipients, label: `Round ${r} · Sender ${ki + 1}` });
-        });
-      }
-    } else if (senderMode === "rotate") {
-      // Each repeat round uses the next key in the list (cycles)
-      for (let r = 1; r <= repeatTimes; r++) {
-        const key = senderKeys[(r - 1) % senderKeys.length];
-        runs.push({ key, recips: recipients, label: `Round ${r} (key ${((r - 1) % senderKeys.length) + 1})` });
-      }
-    }
-
-    // Initialise all batch result rows up front (one block per run)
-    const allBatches: BatchResult[] = [];
-    let offset = 0;
-    const runOffsets: number[] = [];
-    for (const run of runs) {
-      runOffsets.push(offset);
-      for (let i = 0; i < run.recips.length; i += batchSize) {
-        allBatches.push({ batchIndex: offset + Math.floor(i / batchSize), count: Math.min(batchSize, run.recips.length - i), status: "pending" });
-      }
-      offset += Math.ceil(run.recips.length / batchSize);
-    }
-    setBatchResults(allBatches);
-
+    // Synchronous re-entrancy guard — set BEFORE any async work so a fast
+    // double-click (or double-invocation) can't submit the same batch twice.
+    if (submittingRef.current) return;
+    submittingRef.current = true;
     try {
-      for (let ri = 0; ri < runs.length; ri++) {
-        if (abortRef.current.signal.aborted) break;
-        const run = runs[ri];
-        setCurrentRound(ri + 1);
-        await runBulkPayments({
-          horizonUrl,
-          network,
-          secretKey: run.key,
-          recipients: run.recips,
-          memo: memo.trim(),
-          batchSize,
-          feeMultiplier,
-          amount: sendAmount,
-          asset: sendAsset,
-          ghost: true,
-          signal: abortRef.current.signal,
-          onBatchUpdate: (result) => {
-            setBatchResults((prev) => {
-              const next = [...prev];
-              next[runOffsets[ri] + result.batchIndex] = {
-                ...result,
-                batchIndex: runOffsets[ri] + result.batchIndex,
-              };
-              return next;
-            });
-          },
-        });
+      if (ghostMode === "trustline_touch") {
+        await handleTrustlineTouch();
+        return;
       }
-    } catch (err) {
-      if (!abortRef.current.signal.aborted) {
-        setError(getErrorMessage(err));
-      }
-    }
 
-    // Auto-save manual signing key if not already in a group
-    if (!activeWallet && senderMode === "single") {
+      // Underfunded mode's safety guarantee depends entirely on sending an
+      // amount that is known to exceed the sender's balance. If that amount
+      // hasn't finished computing yet (or failed to compute), refuse to
+      // send rather than falling back to amount/default values that could
+      // actually succeed as a real payment.
+      if (ghostMode === "underfunded" && !underfundedAmount) {
+        setError("Balance check has not finished yet — please wait before sending.");
+        return;
+      }
+
+      abortRef.current?.abort();
+      abortRef.current = new AbortController();
+
+      setPhase("sending");
+      setError(null);
+      setCurrentRound(1);
+
+      // For underfunded mode, override amount + asset
+      const sendAmount =
+        ghostMode === "underfunded" && underfundedAmount
+          ? underfundedAmount
+          : amount.trim();
+      const sendAsset =
+        ghostMode === "underfunded" ? Asset.native() : getPaymentAsset();
+
+      const senderKeys =
+        senderMode === "single"
+          ? [effectiveSecretKey.trim()]
+          : parseMultipleKeys();
+
+      // Build a flat list of { key, recipients } runs to execute sequentially.
+      // Each run maps to a separate block of BatchResults displayed to the user.
+      type SendRun = { key: string; recips: string[]; label: string };
+      const runs: SendRun[] = [];
+
+      if (senderMode === "single") {
+        for (let r = 1; r <= repeatTimes; r++) {
+          runs.push({ key: senderKeys[0], recips: recipients, label: repeatTimes > 1 ? `Round ${r}` : "Send" });
+        }
+      } else if (senderMode === "round-robin") {
+        // Split recipients evenly across senders
+        const chunkSize = Math.ceil(recipients.length / senderKeys.length);
+        for (let r = 1; r <= repeatTimes; r++) {
+          senderKeys.forEach((key, ki) => {
+            const slice = recipients.slice(ki * chunkSize, (ki + 1) * chunkSize);
+            if (slice.length > 0)
+              runs.push({ key, recips: slice, label: `Round ${r} · Sender ${ki + 1}` });
+          });
+        }
+      } else if (senderMode === "all-to-all") {
+        // Every sender sends to ALL recipients
+        for (let r = 1; r <= repeatTimes; r++) {
+          senderKeys.forEach((key, ki) => {
+            runs.push({ key, recips: recipients, label: `Round ${r} · Sender ${ki + 1}` });
+          });
+        }
+      } else if (senderMode === "rotate") {
+        // Each repeat round uses the next key in the list (cycles)
+        for (let r = 1; r <= repeatTimes; r++) {
+          const key = senderKeys[(r - 1) % senderKeys.length];
+          runs.push({ key, recips: recipients, label: `Round ${r} (key ${((r - 1) % senderKeys.length) + 1})` });
+        }
+      }
+
+      // Initialise all batch result rows up front (one block per run)
+      const allBatches: BatchResult[] = [];
+      let offset = 0;
+      const runOffsets: number[] = [];
+      for (const run of runs) {
+        runOffsets.push(offset);
+        for (let i = 0; i < run.recips.length; i += batchSize) {
+          allBatches.push({ batchIndex: offset + Math.floor(i / batchSize), count: Math.min(batchSize, run.recips.length - i), status: "pending" });
+        }
+        offset += Math.ceil(run.recips.length / batchSize);
+      }
+      setBatchResults(allBatches);
+
       try {
-        const { Keypair } = await import("stellar-sdk");
-        const pub = Keypair.fromSecret(effectiveSecretKey.trim()).publicKey();
-        autoSaveSigningKey(pub);
-      } catch { /* invalid key — skip */ }
-    }
-
-    setPhase("done");
-
-    // Toast + browser notification
-    setBatchResults((prev) => {
-      const failedCount = prev.filter((r) => r.status === "failed").reduce((s, r) => s + r.count, 0);
-      const successCount = prev.filter((r) => r.status === "success").reduce((s, r) => s + r.count, 0);
-      if (failedCount > 0) {
-        toast.error(`Batch failed \u2014 ${failedCount} payments failed`);
-      } else {
-        toast.success("Batch sent successfully");
+        for (let ri = 0; ri < runs.length; ri++) {
+          if (abortRef.current.signal.aborted) break;
+          const run = runs[ri];
+          setCurrentRound(ri + 1);
+          await runBulkPayments({
+            horizonUrl,
+            network,
+            secretKey: run.key,
+            recipients: run.recips,
+            memo: memo.trim(),
+            batchSize,
+            feeMultiplier,
+            amount: sendAmount,
+            asset: sendAsset,
+            ghost: true,
+            signal: abortRef.current.signal,
+            onBatchUpdate: (result) => {
+              setBatchResults((prev) => {
+                const next = [...prev];
+                next[runOffsets[ri] + result.batchIndex] = {
+                  ...result,
+                  batchIndex: runOffsets[ri] + result.batchIndex,
+                };
+                return next;
+              });
+            },
+          });
+        }
+      } catch (err) {
+        if (!abortRef.current.signal.aborted) {
+          setError(getErrorMessage(err));
+        }
       }
-      notifyIfHidden("Ghost Payments Complete", `${successCount} payments sent`);
-      return prev;
-    });
+
+      // Auto-save manual signing key if not already in a group
+      if (!activeWallet && senderMode === "single") {
+        try {
+          const { Keypair } = await import("stellar-sdk");
+          const pub = Keypair.fromSecret(effectiveSecretKey.trim()).publicKey();
+          autoSaveSigningKey(pub);
+        } catch { /* invalid key — skip */ }
+      }
+
+      setPhase("done");
+
+      // Toast + browser notification
+      setBatchResults((prev) => {
+        const failedCount = prev.filter((r) => r.status === "failed").reduce((s, r) => s + r.count, 0);
+        const successCount = prev.filter((r) => r.status === "success").reduce((s, r) => s + r.count, 0);
+        if (failedCount > 0) {
+          toast.error(`Batch failed \u2014 ${failedCount} payments failed`);
+        } else {
+          toast.success("Batch sent successfully");
+        }
+        notifyIfHidden("Ghost Payments Complete", `${successCount} payments sent`);
+        return prev;
+      });
+    } finally {
+      submittingRef.current = false;
+    }
   }
 
   function handleAbort() {
@@ -859,6 +924,7 @@ export function GhostPaymentsPanel() {
     setBalanceXlm(null);
     setError(null);
     setCurrentRound(0);
+    setUnderfundedAmount(null);
   }
 
   // ---------------------------------------------------------------------------
@@ -964,8 +1030,9 @@ export function GhostPaymentsPanel() {
               <p className="text-xs text-muted-foreground">{ghostMode === "trustline_touch" ? "Trustline" : "Payment"}</p>
               {ghostMode === "trustline_touch" ? (
                 <div className="space-y-1">
-                  <p className="font-mono font-semibold">
-                    {customAssetCode.trim()} ({customAssetIssuer.trim().slice(0, 4)}…{customAssetIssuer.trim().slice(-4)})
+                  <p className="font-mono font-semibold flex items-center gap-1 flex-wrap">
+                    {customAssetCode.trim()}
+                    <ShortAddress address={customAssetIssuer.trim()} network={network} />
                   </p>
                   <p className="text-xs text-blue-500">
                     change_trust to MAX_LIMIT — no balance change
@@ -981,11 +1048,16 @@ export function GhostPaymentsPanel() {
                   </p>
                 </div>
               ) : (
-                <p className="font-mono font-semibold">
+                <p className="font-mono font-semibold flex items-center gap-1 flex-wrap">
                   {amount}{" "}
-                  {isNative
-                    ? "XLM"
-                    : `${customAssetCode.trim()} (${customAssetIssuer.trim().slice(0, 4)}…${customAssetIssuer.trim().slice(-4)})`}
+                  {isNative ? (
+                    "XLM"
+                  ) : (
+                    <>
+                      {customAssetCode.trim()}
+                      <ShortAddress address={customAssetIssuer.trim()} network={network} />
+                    </>
+                  )}
                 </p>
               )}
             </div>
@@ -1046,7 +1118,13 @@ export function GhostPaymentsPanel() {
               )}
           </CardContent>
           <CardFooter className="flex gap-2">
-            <Button onClick={handleSend}>
+            <Button
+              onClick={handleSend}
+              disabled={
+                balanceLoading ||
+                (ghostMode === "underfunded" && !underfundedAmount)
+              }
+            >
               <Ghost className="mr-2 h-4 w-4" />
               {ghostMode === "trustline_touch" ? "Touch Trustlines" : "Ghost Send"}
             </Button>
@@ -1154,17 +1232,18 @@ export function GhostPaymentsPanel() {
       {/* Mode selector */}
       <div className="grid gap-3 sm:grid-cols-3">
         {GHOST_MODES.map((m) => (
-          <button
+          <Button
             key={m.id}
             type="button"
+            variant="ghost"
             onClick={() => setGhostMode(m.id)}
-            className={`text-left rounded-lg border p-4 transition-all space-y-1.5 ${
+            className={`flex flex-col items-start justify-start whitespace-normal text-left h-auto w-full rounded-lg border p-4 transition-all space-y-1.5 ${
               ghostMode === m.id
                 ? "border-orange-500/60 bg-orange-500/5 ring-1 ring-orange-500/30"
                 : "border-border hover:border-muted-foreground/40 hover:bg-muted/30"
             }`}
           >
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between w-full">
               <span className="text-sm font-semibold">{m.label}</span>
               {ghostMode === m.id && (
                 <span className="text-xs font-medium text-orange-500 bg-orange-500/10 rounded-full px-2 py-0.5">
@@ -1179,7 +1258,7 @@ export function GhostPaymentsPanel() {
             <p className="text-xs text-muted-foreground mt-1">
               <span className="font-medium">Works for:</span> {m.worksFor}
             </p>
-          </button>
+          </Button>
         ))}
       </div>
 
@@ -1189,15 +1268,20 @@ export function GhostPaymentsPanel() {
           <CardTitle>Sender Mode</CardTitle>
           <CardDescription>
             Choose how many accounts will send and how recipients are distributed.
+            {ghostMode === "underfunded" && (
+              <span className="block mt-1 text-orange-500">
+                Underfunded mode only supports a single sender — the overshoot amount is computed from one account&apos;s balance and can&apos;t safely be reused across multiple senders.
+              </span>
+            )}
           </CardDescription>
         </CardHeader>
         <CardContent>
           <Tabs value={senderMode} onValueChange={(v) => setSenderMode(v as SenderMode)}>
             <TabsList className="mb-4 grid grid-cols-4 w-full">
               <TabsTrigger value="single">Single</TabsTrigger>
-              <TabsTrigger value="round-robin">Round-Robin</TabsTrigger>
-              <TabsTrigger value="all-to-all">All → All</TabsTrigger>
-              <TabsTrigger value="rotate">Rotate</TabsTrigger>
+              <TabsTrigger value="round-robin" disabled={ghostMode === "underfunded"}>Round-Robin</TabsTrigger>
+              <TabsTrigger value="all-to-all" disabled={ghostMode === "underfunded"}>All → All</TabsTrigger>
+              <TabsTrigger value="rotate" disabled={ghostMode === "underfunded"}>Rotate</TabsTrigger>
             </TabsList>
             <TabsContent value="single">
               <p className="text-sm text-muted-foreground">
@@ -1329,29 +1413,42 @@ export function GhostPaymentsPanel() {
               <div className="space-y-2">
                 <Label>Asset</Label>
                 <div className="flex gap-2">
-                  <button
+                  <Button
                     type="button"
+                    variant="outline"
                     onClick={() => setAssetType("xlm")}
-                    className={`flex-1 rounded-md border px-3 py-1.5 text-sm transition-colors ${
+                    disabled={ghostMode === "no_trust"}
+                    title={
+                      ghostMode === "no_trust"
+                        ? "Ghost Asset mode requires the custom GHOST asset (no trust line) to guarantee op_no_trust — XLM is disabled here."
+                        : undefined
+                    }
+                    className={`flex-1 h-auto rounded-md border px-3 py-1.5 text-sm transition-colors ${
                       assetType === "xlm"
-                        ? "bg-primary text-primary-foreground border-primary"
-                        : "border-border hover:bg-muted/50"
+                        ? "bg-primary text-primary-foreground border-primary hover:bg-primary/90"
+                        : "border-border bg-transparent hover:bg-muted/50"
                     }`}
                   >
                     XLM
-                  </button>
-                  <button
+                  </Button>
+                  <Button
                     type="button"
+                    variant="outline"
                     onClick={() => setAssetType("custom")}
-                    className={`flex-1 rounded-md border px-3 py-1.5 text-sm transition-colors ${
+                    className={`flex-1 h-auto rounded-md border px-3 py-1.5 text-sm transition-colors ${
                       assetType === "custom"
-                        ? "bg-primary text-primary-foreground border-primary"
-                        : "border-border hover:bg-muted/50"
+                        ? "bg-primary text-primary-foreground border-primary hover:bg-primary/90"
+                        : "border-border bg-transparent hover:bg-muted/50"
                     }`}
                   >
                     Custom
-                  </button>
+                  </Button>
                 </div>
+                {ghostMode === "no_trust" && (
+                  <p className="text-xs text-muted-foreground">
+                    XLM is disabled in Ghost Asset mode — only the custom GHOST asset (no trust line) guarantees op_no_trust.
+                  </p>
+                )}
                 {assetType === "custom" && (
                   <div className="flex gap-2 pt-1">
                     <Input
@@ -1413,9 +1510,11 @@ export function GhostPaymentsPanel() {
                       className="font-mono text-xs pr-10"
                       autoComplete="off"
                     />
-                    <button
+                    <Button
                       type="button"
-                      className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                      variant="ghost"
+                      size="icon"
+                      className="absolute right-2 top-1/2 -translate-y-1/2 h-auto w-auto p-0 text-muted-foreground hover:text-foreground hover:bg-transparent"
                       onClick={() => setShowSecret((v) => !v)}
                       aria-label="Toggle secret key visibility"
                     >
@@ -1423,9 +1522,9 @@ export function GhostPaymentsPanel() {
                         <EyeOff className="h-4 w-4" />
                       ) : (
                         <Eye className="h-4 w-4" />
-                    )}
-                  </button>
-                </div>
+                      )}
+                    </Button>
+                  </div>
                 </>
               )}
             </div>
@@ -1470,29 +1569,31 @@ export function GhostPaymentsPanel() {
                 className="w-20"
               />
             </div>
-            <div className="space-y-2">
-              <Label
-                htmlFor="repeat-times"
-                title="Send to all recipients this many times in sequence"
-              >
-                Repeat ×
-              </Label>
-              <Input
-                id="repeat-times"
-                type="number"
-                min={1}
-                max={100}
-                value={repeatTimes}
-                onChange={(e) => {
-                  const v = Math.min(
-                    100,
-                    Math.max(1, parseInt(e.target.value) || 1),
-                  );
-                  setRepeatTimes(v);
-                }}
-                className="w-20"
-              />
-            </div>
+            {ghostMode !== "trustline_touch" && (
+              <div className="space-y-2">
+                <Label
+                  htmlFor="repeat-times"
+                  title="Send to all recipients this many times in sequence"
+                >
+                  Repeat ×
+                </Label>
+                <Input
+                  id="repeat-times"
+                  type="number"
+                  min={1}
+                  max={100}
+                  value={repeatTimes}
+                  onChange={(e) => {
+                    const v = Math.min(
+                      100,
+                      Math.max(1, parseInt(e.target.value) || 1),
+                    );
+                    setRepeatTimes(v);
+                  }}
+                  className="w-20"
+                />
+              </div>
+            )}
           </div>
         </CardContent>
       </Card>
@@ -1711,9 +1812,10 @@ export function GhostPaymentsPanel() {
 
           {/* Exclude list */}
           <div className="mt-4 pt-3 border-t border-border">
-            <button
+            <Button
               type="button"
-              className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+              variant="ghost"
+              className="h-auto p-0 flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-transparent transition-colors"
               onClick={() => setShowExclude((v) => !v)}
             >
               <X className="h-3 w-3" />
@@ -1723,7 +1825,7 @@ export function GhostPaymentsPanel() {
                   {parseValidAddresses(excludeText).length}
                 </span>
               )}
-            </button>
+            </Button>
             {showExclude && (
               <div className="mt-2 space-y-1">
                 <textarea
@@ -1779,8 +1881,10 @@ export function GhostPaymentsPanel() {
                     key={list.id}
                     className="flex items-center gap-2 rounded-md border border-border bg-muted/30 px-3 py-1.5 text-sm"
                   >
-                    <button
-                      className="flex-1 text-left hover:text-primary transition-colors truncate"
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      className="flex-1 min-w-0 h-auto justify-start p-0 font-normal text-left hover:text-primary hover:bg-transparent transition-colors truncate"
                       onClick={() => handleLoadList(list.id)}
                       title="Load into manual list"
                     >
@@ -1788,14 +1892,17 @@ export function GhostPaymentsPanel() {
                       <span className="ml-2 text-xs text-muted-foreground">
                         {list.addresses.length.toLocaleString()} addresses
                       </span>
-                    </button>
-                    <button
-                      className="text-muted-foreground hover:text-destructive transition-colors shrink-0"
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="h-auto w-auto p-0 shrink-0 text-muted-foreground hover:text-destructive hover:bg-transparent transition-colors"
                       onClick={() => removeList(list.id)}
                       aria-label="Delete list"
                     >
                       <Trash2 className="h-3.5 w-3.5" />
-                    </button>
+                    </Button>
                   </div>
                 ))}
               </div>
