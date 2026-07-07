@@ -37,6 +37,7 @@ import { useAutoSaveSigningKey } from "@/hooks/use-auto-save-signing-key";
 import { WalletSelect } from "@/components/ui/wallet-select";
 import { shortAddr } from "@/lib/format";
 import { computeSacAddress } from "@/lib/soroban/sac";
+import { ShortAddress } from "@/components/shared/ShortAddress";
 
 type DeployStatus = "unknown" | "checking" | "deployed" | "not_deployed" | "error";
 
@@ -62,7 +63,7 @@ export function SorobanPanel() {
   } | null>(null);
   const [deployError, setDeployError] = useState<string | null>(null);
   const [logs, setLogs] = useState<string[]>([]);
-  const [copied, setCopied] = useState(false);
+  const [copied, setCopied] = useState<string | null>(null);
 
   const abortRef = useRef<AbortController | null>(null);
   const logEndRef = useRef<HTMLDivElement | null>(null);
@@ -70,11 +71,17 @@ export function SorobanPanel() {
   const userScrolledUp = useRef(false);
 
   // Derived: is the asset input valid enough to compute SAC address?
+  // NOTE: the XLM branch condition here must exactly match the one used in
+  // computeSacAddress/deploySac (lib/soroban/sac.ts) — `code === "XLM" && !issuer`
+  // — otherwise a stale non-empty issuer left over from a previously loaded
+  // custom asset would silently produce a bogus non-native "XLM" asset instead
+  // of true native XLM. The Asset Code input's onChange also clears `issuer`
+  // whenever the code is edited to XLM, as a second line of defense.
   const canCompute = useMemo(() => {
     const code = assetCode.trim();
     const iss = issuer.trim();
     if (!code) return false;
-    if (code.toUpperCase() === "XLM") return true;
+    if (code.toUpperCase() === "XLM") return !iss;
     return StrKey.isValidEd25519PublicKey(iss);
   }, [assetCode, issuer]);
 
@@ -104,9 +111,14 @@ export function SorobanPanel() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ contractId, network: settings.network }),
     })
-      .then((res) => res.json())
-      .then((data) => {
+      .then(async (res) => {
+        const data = await res.json();
         if (cancelled) return;
+        if (!res.ok) {
+          setDeployStatus("error");
+          setStatusError(data.error ?? "Check failed");
+          return;
+        }
         if (data.deployed !== undefined) {
           setDeployStatus(data.deployed ? "deployed" : "not_deployed");
         }
@@ -136,10 +148,18 @@ export function SorobanPanel() {
     if (group.issuer) setIssuer(group.issuer);
   }
 
-  async function handleCheckStatus() {
+  // `preserveDeployError` lets handleDeploy's catch block trigger an
+  // authoritative recheck after a failed deploy attempt without immediately
+  // wiping the error message it just set — a plain manual "Recheck" click
+  // (the common path) still clears logs/deployError as before.
+  async function handleCheckStatus(opts?: { preserveDeployError?: boolean }) {
     if (!contractId) return;
     setDeployStatus("checking");
     setStatusError(null);
+    setLogs([]);
+    if (!opts?.preserveDeployError) {
+      setDeployError(null);
+    }
     try {
       const res = await fetch("/api/soroban/check", {
         method: "POST",
@@ -194,6 +214,11 @@ export function SorobanPanel() {
     } catch (e) {
       if (!abortRef.current?.signal.aborted) {
         setDeployError(e instanceof Error ? e.message : String(e));
+        // Force an authoritative re-check against actual on-chain state
+        // instead of leaving deployStatus at "not_deployed" — a timeout that
+        // later resolves successfully on-chain could otherwise be
+        // double-submitted by an immediate retry click.
+        handleCheckStatus({ preserveDeployError: true });
       }
     } finally {
       setDeploying(false);
@@ -206,11 +231,11 @@ export function SorobanPanel() {
     onLog("Canceled.");
   }
 
-  function handleCopy() {
-    if (!contractId) return;
-    navigator.clipboard.writeText(contractId).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
+  function handleCopy(text: string, field: string) {
+    if (!text) return;
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(field);
+      setTimeout(() => setCopied((f) => (f === field ? null : f)), 1500);
     });
   }
 
@@ -270,7 +295,18 @@ export function SorobanPanel() {
                 id="asset-code"
                 placeholder="e.g. MYTOKEN"
                 value={assetCode}
-                onChange={(e) => setAssetCode(e.target.value)}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  setAssetCode(value);
+                  // XLM is the native-asset sentinel — normalize by clearing
+                  // any stale issuer left over from a previously loaded
+                  // custom asset, so canCompute/computeSacAddress/deploySac
+                  // agree on true native XLM rather than a bogus non-native
+                  // "XLM"-coded custom asset.
+                  if (value.trim().toUpperCase() === "XLM") {
+                    setIssuer("");
+                  }
+                }}
                 className="mt-1 font-mono"
               />
             </div>
@@ -283,6 +319,11 @@ export function SorobanPanel() {
                 onChange={(e) => setIssuer(e.target.value)}
                 className="mt-1 font-mono text-xs"
               />
+              {StrKey.isValidEd25519PublicKey(issuer.trim()) && (
+                <div className="mt-1.5">
+                  <ShortAddress address={issuer.trim()} role="issuer" network={settings.network} />
+                </div>
+              )}
             </div>
           </div>
         </CardContent>
@@ -307,9 +348,9 @@ export function SorobanPanel() {
                 variant="ghost"
                 size="sm"
                 className="h-7 shrink-0"
-                onClick={handleCopy}
+                onClick={() => handleCopy(contractId, "sac")}
               >
-                {copied ? (
+                {copied === "sac" ? (
                   <CheckCircle2 className="h-4 w-4 text-green-500" />
                 ) : (
                   <Copy className="h-4 w-4" />
@@ -359,7 +400,7 @@ export function SorobanPanel() {
                 </span>
               )}
               {deployStatus !== "checking" && (
-                <Button variant="ghost" size="sm" onClick={handleCheckStatus} className="ml-auto">
+                <Button variant="ghost" size="sm" onClick={() => handleCheckStatus()} className="ml-auto">
                   <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
                   Recheck
                 </Button>
@@ -472,17 +513,41 @@ export function SorobanPanel() {
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-3 text-sm">
-            <div>
-              <span className="text-muted-foreground">Contract ID:</span>
-              <code className="ml-2 break-all font-mono">
+            <div className="flex items-start gap-2">
+              <span className="text-muted-foreground shrink-0">Contract ID:</span>
+              <code className="flex-1 break-all font-mono">
                 {deployResult.contractId}
               </code>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-6 w-6 shrink-0 p-0"
+                onClick={() => handleCopy(deployResult.contractId, "result-contract")}
+              >
+                {copied === "result-contract" ? (
+                  <CheckCircle2 className="h-3.5 w-3.5 text-green-500" />
+                ) : (
+                  <Copy className="h-3.5 w-3.5" />
+                )}
+              </Button>
             </div>
-            <div>
-              <span className="text-muted-foreground">TX Hash:</span>
-              <code className="ml-2 break-all font-mono text-xs">
+            <div className="flex items-start gap-2">
+              <span className="text-muted-foreground shrink-0">TX Hash:</span>
+              <code className="flex-1 break-all font-mono text-xs">
                 {deployResult.txHash}
               </code>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-6 w-6 shrink-0 p-0"
+                onClick={() => handleCopy(deployResult.txHash, "result-tx")}
+              >
+                {copied === "result-tx" ? (
+                  <CheckCircle2 className="h-3.5 w-3.5 text-green-500" />
+                ) : (
+                  <Copy className="h-3.5 w-3.5" />
+                )}
+              </Button>
             </div>
             {explorerBase && (
               <div className="flex gap-3">

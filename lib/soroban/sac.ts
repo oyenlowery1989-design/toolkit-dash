@@ -36,6 +36,12 @@ export const SOROBAN_RPC_URLS: Record<Exclude<Network, "local">, string> = {
   futurenet: "https://rpc-futurenet.stellar.org",
 };
 
+// NOTE: `localRpcUrl` is currently never supplied by any caller (checkSacDeployed,
+// deploySac, the API routes, or SorobanPanel) — there is no settings field for a
+// per-user local Soroban RPC endpoint (unlike `localHorizonUrl` in lib/settings.ts
+// for Horizon). Selecting network "local" always hits the hardcoded default below
+// regardless of a user's actual local RPC endpoint. A full fix would need a new
+// settings field + UI control; out of scope for this pass.
 export function resolveRpcUrl(network: Network, localRpcUrl?: string): string {
   if (network === "local") return localRpcUrl ?? "http://localhost:8000/soroban/rpc";
   return SOROBAN_RPC_URLS[network];
@@ -176,13 +182,23 @@ export async function deploySac(
     try {
       getResult = await server.getTransaction(txHash);
     } catch (e) {
-      // stellar-sdk v13 throws "Bad union switch" when parsing SAC deployment
-      // result XDR — the transaction succeeded on-chain, the SDK just can't
-      // deserialize the Soroban return value. Treat as success.
+      // stellar-sdk v13 can throw "Bad union switch" when parsing the SAC
+      // deployment result XDR for BOTH a successful deploy AND a failed/still
+      // pending transaction — the exception message alone is not reliable
+      // proof of success. Independently confirm the contract actually exists
+      // on-ledger before reporting success.
       const msg = e instanceof Error ? e.message : String(e);
       if (msg.includes("Bad union switch")) {
-        onLog(`  ✓ SAC deployed successfully`);
-        return { contractId, txHash };
+        onLog(`  SDK could not parse the result XDR — verifying on-ledger…`);
+        const deployed = await checkSacDeployed(contractId, network, signal).catch(() => false);
+        if (signal.aborted) throw new Error("Aborted");
+        if (deployed) {
+          onLog(`  ✓ SAC deployed successfully (confirmed on-ledger)`);
+          return { contractId, txHash };
+        }
+        throw new Error(
+          `Could not confirm SAC deployment (SDK parse error, on-ledger check found no contract yet). Check TX: ${txHash}`,
+        );
       }
       throw e;
     }
