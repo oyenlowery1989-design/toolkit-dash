@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { createDbCache, dbPost, dbPatch, dbDelete, debounce } from "@/lib/db-client";
-import { purgeWalletsByFolder } from "./use-wallets-v2";
+import { purgeWalletsByFolder, reloadWalletsV2 } from "./use-wallets-v2";
 
 export interface WalletFolder {
   id: string;
@@ -46,7 +46,14 @@ export function useWalletFolders() {
   const deleteFolder = useCallback((id: string) => {
     _cache.set(_cache.get().filter((f) => f.id !== id));
     purgeWalletsByFolder(id); // optimistic cascade — DB cascade handled in API route
-    dbDelete(ENDPOINT, id).catch(() => _cache.reload(ENDPOINT));
+    dbDelete(ENDPOINT, id).catch(() => {
+      // Both caches were optimistically mutated together — if the delete
+      // actually failed server-side, restore both so the UI matches the
+      // (unchanged) DB state. Restoring only the folders cache would leave
+      // the folder back but its wallets still wrongly purged from view.
+      _cache.reload(ENDPOINT);
+      reloadWalletsV2();
+    });
   }, []);
 
   return { folders, createFolder, renameFolder, deleteFolder };

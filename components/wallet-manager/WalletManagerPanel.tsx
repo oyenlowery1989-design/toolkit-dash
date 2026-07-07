@@ -20,6 +20,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { ShortAddress } from "@/components/shared/ShortAddress";
 import type { WalletFolder } from "@/hooks/use-wallet-folders";
 import type { WalletEntry } from "@/hooks/use-wallets-v2";
 
@@ -32,6 +34,7 @@ function AddWalletForm({ folderId, onDone, prefillPub }: { folderId: string; onD
   const { folders } = useWalletFolders();
   const { entries: abEntries } = useAddressBook();
   const { groups } = useAssetGroups();
+  const { settings } = useSettings();
   const [name, setName] = useState("");
   const [watchOnly, setWatchOnly] = useState(!!prefillPub);
   const [secret, setSecret] = useState("");
@@ -85,20 +88,24 @@ function AddWalletForm({ folderId, onDone, prefillPub }: { folderId: string; onD
       <div className="flex items-center justify-between">
         <p className="text-sm font-medium">Add Wallet</p>
         <div className="flex items-center gap-1 rounded-md border border-border overflow-hidden text-xs">
-          <button
+          <Button
             type="button"
+            variant={!watchOnly ? "default" : "ghost"}
+            size="sm"
             onClick={() => { setWatchOnly(false); setErr(null); }}
-            className={`flex items-center gap-1.5 px-2.5 py-1 transition-colors ${!watchOnly ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}
+            className="h-auto rounded-none gap-1.5 px-2.5 py-1 text-xs"
           >
             <KeyRound className="h-3 w-3" /> Full
-          </button>
-          <button
+          </Button>
+          <Button
             type="button"
+            variant={watchOnly ? "default" : "ghost"}
+            size="sm"
             onClick={() => { setWatchOnly(true); setErr(null); }}
-            className={`flex items-center gap-1.5 px-2.5 py-1 transition-colors ${watchOnly ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}
+            className="h-auto rounded-none gap-1.5 px-2.5 py-1 text-xs"
           >
             <Eye className="h-3 w-3" /> Watch only
-          </button>
+          </Button>
         </div>
       </div>
       <div className="space-y-2">
@@ -122,7 +129,7 @@ function AddWalletForm({ folderId, onDone, prefillPub }: { folderId: string; onD
             autoComplete="off"
           />
           {StrKey.isValidEd25519PublicKey(pubInput.trim()) && (
-            <p className="text-xs text-muted-foreground font-mono">{shortAddr(pubInput.trim())}</p>
+            <ShortAddress address={pubInput.trim()} network={settings.network} />
           )}
         </div>
       ) : (
@@ -138,16 +145,18 @@ function AddWalletForm({ folderId, onDone, prefillPub }: { folderId: string; onD
               className="font-mono text-xs pr-10"
               autoComplete="off"
             />
-            <button
+            <Button
               type="button"
+              variant="ghost"
+              size="icon"
               aria-label={showSecret ? "Hide secret key" : "Show secret key"}
-              className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+              className="absolute right-1 top-1/2 h-7 w-7 -translate-y-1/2 text-muted-foreground hover:text-foreground"
               onClick={() => setShowSecret((v) => !v)}
             >
               {showSecret ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-            </button>
+            </Button>
           </div>
-          {currentPub && <p className="text-xs text-muted-foreground font-mono">{shortAddr(currentPub)}</p>}
+          {currentPub && <ShortAddress address={currentPub} network={settings.network} />}
         </div>
       )}
       {abMatch && (
@@ -256,7 +265,9 @@ function WalletRow({ wallet, allFolders }: { wallet: WalletEntry; allFolders: Wa
             <div className="flex items-center gap-2 min-w-0">
               <div className="min-w-0">
                 <p className="font-medium truncate">{wallet.name}</p>
-                <p className="text-xs text-muted-foreground font-mono">{shortAddr(wallet.publicKey)}</p>
+                <div className="text-xs">
+                  <ShortAddress address={wallet.publicKey} network={settings.network} />
+                </div>
               </div>
               {balance !== null && (
                 <span className="text-xs text-muted-foreground font-mono shrink-0">{balance} XLM</span>
@@ -273,14 +284,16 @@ function WalletRow({ wallet, allFolders }: { wallet: WalletEntry; allFolders: Wa
 
         <div className="flex items-center gap-1 shrink-0">
           {/* Always-visible copy public key */}
-          <button
+          <Button
             type="button"
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7"
             onClick={() => copyField("pub")}
-            className="flex items-center rounded p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
             title="Copy public key"
           >
             {copiedField === "pub" ? <Check className="h-3.5 w-3.5 text-green-500" /> : <Copy className="h-3.5 w-3.5" />}
-          </button>
+          </Button>
           {/* Stellar.Expert link */}
           <a
             href={`${explorerBase}/account/${wallet.publicKey}`}
@@ -304,7 +317,20 @@ function WalletRow({ wallet, allFolders }: { wallet: WalletEntry; allFolders: Wa
             <Pencil className="h-3.5 w-3.5" />
           </Button>
           {otherFolders.length > 0 && (
-            <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => { setShowMove((v) => !v); setEditing(false); }} title="Move to folder">
+            <Button
+              size="icon"
+              variant="ghost"
+              className="h-7 w-7"
+              onClick={() => {
+                setShowMove((v) => {
+                  const next = !v;
+                  if (next) setMovingTo(otherFolders[0]?.id ?? "");
+                  return next;
+                });
+                setEditing(false);
+              }}
+              title="Move to folder"
+            >
               <ArrowRightLeft className="h-3.5 w-3.5" />
             </Button>
           )}
@@ -328,15 +354,16 @@ function WalletRow({ wallet, allFolders }: { wallet: WalletEntry; allFolders: Wa
       {showMove && (
         <div className="mt-3 border-t border-border pt-3 flex items-center gap-2">
           <p className="text-xs text-muted-foreground shrink-0">Move to:</p>
-          <select
-            value={movingTo || wallet.folderId}
-            onChange={(e) => setMovingTo(e.target.value)}
-            className="flex-1 h-7 rounded border border-border bg-background text-xs px-2"
-          >
-            {otherFolders.map((f) => (
-              <option key={f.id} value={f.id}>{f.name}</option>
-            ))}
-          </select>
+          <Select value={movingTo} onValueChange={setMovingTo}>
+            <SelectTrigger className="flex-1 h-7 text-xs">
+              <SelectValue placeholder="Select folder…" />
+            </SelectTrigger>
+            <SelectContent>
+              {otherFolders.map((f) => (
+                <SelectItem key={f.id} value={f.id}>{f.name}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
           <Button size="sm" className="h-7 px-2 text-xs" onClick={handleMove}>Move</Button>
           <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => setShowMove(false)}>Cancel</Button>
         </div>
@@ -347,16 +374,18 @@ function WalletRow({ wallet, allFolders }: { wallet: WalletEntry; allFolders: Wa
           <div className="flex items-center justify-between gap-2">
             <div className="min-w-0 flex-1">
               <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-0.5">Public Key</p>
-              <p className="text-xs font-mono text-foreground break-all">{wallet.publicKey}</p>
+              <ShortAddress address={wallet.publicKey} network={settings.network} />
             </div>
-            <button
+            <Button
               type="button"
+              variant="ghost"
+              size="sm"
+              className="h-7 shrink-0 gap-1 px-2 text-xs text-muted-foreground hover:text-foreground"
               onClick={() => copyField("pub")}
-              className="shrink-0 flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground rounded px-2 py-1 hover:bg-muted transition-colors"
             >
               {copiedField === "pub" ? <Check className="h-3.5 w-3.5 text-green-500" /> : <Copy className="h-3.5 w-3.5" />}
               {copiedField === "pub" ? "Copied!" : "Copy"}
-            </button>
+            </Button>
           </div>
 
           {isWatchOnly ? (
@@ -372,22 +401,26 @@ function WalletRow({ wallet, allFolders }: { wallet: WalletEntry; allFolders: Wa
                 </p>
               </div>
               <div className="flex items-center gap-1 shrink-0">
-                <button
+                <Button
                   type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 gap-1 px-2 text-xs text-muted-foreground hover:text-foreground"
                   onClick={() => setShowSecret((v) => !v)}
-                  className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground rounded px-2 py-1 hover:bg-muted transition-colors"
                 >
                   {showSecret ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
                   {showSecret ? "Hide" : "Show"}
-                </button>
-                <button
+                </Button>
+                <Button
                   type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 gap-1 px-2 text-xs text-muted-foreground hover:text-foreground"
                   onClick={() => copyField("secret")}
-                  className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground rounded px-2 py-1 hover:bg-muted transition-colors"
                 >
                   {copiedField === "secret" ? <Check className="h-3.5 w-3.5 text-green-500" /> : <Copy className="h-3.5 w-3.5" />}
                   {copiedField === "secret" ? "Copied!" : "Copy"}
-                </button>
+                </Button>
               </div>
             </div>
           )}
@@ -535,19 +568,24 @@ export function WalletManagerPanel() {
                       {watchCount > 0 && <span className="inline-flex items-center gap-0.5"><Eye className="h-2.5 w-2.5" />{watchCount}</span>}
                     </span>
                     <div className="hidden group-hover:flex items-center gap-0.5 shrink-0">
-                      <button
+                      <Button
                         type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="h-5 w-5 p-0"
                         onClick={(e) => {
                           e.stopPropagation();
                           setEditFolderName(folder.name);
                           setEditingFolderId(folder.id);
                         }}
-                        className="rounded p-0.5 hover:bg-muted"
                       >
                         <Pencil className="h-3 w-3" />
-                      </button>
-                      <button
+                      </Button>
+                      <Button
                         type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="h-5 w-5 p-0 text-destructive/70 hover:text-destructive"
                         onClick={(e) => {
                           e.stopPropagation();
                           if (window.confirm(`Delete folder "${folder.name}" and all its wallets? This cannot be undone.`)) {
@@ -556,10 +594,9 @@ export function WalletManagerPanel() {
                             if (selectedFolder?.id === folder.id) setSelectedFolderId(null);
                           }
                         }}
-                        className="rounded p-0.5 hover:bg-muted text-destructive/70 hover:text-destructive"
                       >
                         <Trash2 className="h-3 w-3" />
-                      </button>
+                      </Button>
                     </div>
                   </div>
                 )}
@@ -579,21 +616,23 @@ export function WalletManagerPanel() {
             {selectedFolder && (
               <div className="flex items-center gap-2">
                 {abNotInWallets.length > 0 && (
-                  <select
-                    className="h-7 rounded border border-border bg-background text-xs px-2 text-muted-foreground"
+                  <Select
                     value=""
-                    onChange={(e) => {
-                      if (!e.target.value) return;
-                      setAddPrefillPub(e.target.value);
+                    onValueChange={(value) => {
+                      if (!value) return;
+                      setAddPrefillPub(value);
                       setAddingWallet(true);
                     }}
-                    title="Quick-add from Address Book"
                   >
-                    <option value="">+ From Address Book</option>
-                    {abNotInWallets.map((e) => (
-                      <option key={e.publicKey} value={e.publicKey}>{e.label} ({shortAddr(e.publicKey)})</option>
-                    ))}
-                  </select>
+                    <SelectTrigger className="h-7 w-auto gap-1 px-2 text-xs text-muted-foreground" title="Quick-add from Address Book">
+                      <SelectValue placeholder="+ From Address Book" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {abNotInWallets.map((e) => (
+                        <SelectItem key={e.publicKey} value={e.publicKey}>{e.label} ({shortAddr(e.publicKey)})</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 )}
                 <Button
                   size="sm"

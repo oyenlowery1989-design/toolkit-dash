@@ -33,7 +33,7 @@ export function setActiveWalletId(id: string | null) {
 
 export function useActiveWallet() {
   const [, rerender] = useState(0);
-  const { wallets } = useWalletsV2();
+  const { wallets, isLoaded } = useWalletsV2();
   // Use a ref+counter pattern to prevent multiple self-heal timers stacking up
   const selfHealTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const selfHealedRef = useRef(false);
@@ -93,8 +93,11 @@ export function useActiveWallet() {
   // Use a ref-based timer to prevent stacking multiple timers on rapid re-renders.
   useEffect(() => {
     if (_activeId === null || activeWallet !== null || selfHealedRef.current) return;
-    // Wallet list may still be loading — only heal once wallets have loaded
-    if (wallets.length === 0) return;
+    // Wallet list may still be loading — only heal once wallets have actually
+    // loaded. Using wallets.length === 0 here would also match "loaded and
+    // genuinely empty" (e.g. the last wallet was just deleted), leaving a
+    // stale active-wallet id stuck in localStorage/DB forever.
+    if (!isLoaded) return;
 
     if (selfHealTimerRef.current) clearTimeout(selfHealTimerRef.current);
     selfHealTimerRef.current = setTimeout(() => {
@@ -111,7 +114,7 @@ export function useActiveWallet() {
         selfHealTimerRef.current = null;
       }
     };
-  }, [wallets, activeWallet]);
+  }, [wallets, activeWallet, isLoaded]);
 
   const connect = useCallback((id: string) => {
     selfHealedRef.current = false;
