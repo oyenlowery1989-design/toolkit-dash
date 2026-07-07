@@ -27,6 +27,9 @@ function rowToGroup(r: GroupRow, members: GroupMember[]): AssetGroup {
     issuer: (r.issuer as string) ?? undefined,
     network: r.network as string,
     notes: (r.notes as string) ?? undefined,
+    domain: (r.domain as string) ?? undefined,
+    telegramChannel: (r.telegram_channel as string) ?? undefined,
+    telegramLink: (r.telegram_link as string) ?? undefined,
     createdAt: r.created_at as number,
     updatedAt: r.updated_at as number,
     members,
@@ -109,8 +112,8 @@ export async function POST(req: NextRequest) {
 
       try {
         db.prepare(
-          `INSERT INTO asset_groups (id, name, asset_code, issuer, network, notes, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          `INSERT INTO asset_groups (id, name, asset_code, issuer, network, notes, domain, telegram_channel, telegram_link, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT(id) DO UPDATE SET
              name       = excluded.name,
              asset_code = excluded.asset_code,
@@ -118,7 +121,7 @@ export async function POST(req: NextRequest) {
              network    = excluded.network,
              notes      = excluded.notes,
              updated_at = excluded.updated_at`,
-        ).run(id, nameTrimmed, assetCodeNorm, issuerNorm, networkNorm, notes ?? null, now, now);
+        ).run(id, nameTrimmed, assetCodeNorm, issuerNorm, networkNorm, notes ?? null, null, null, null, now, now);
 
         syncToSupabase(async () => {
           await getSupabase()!.from("asset_groups").upsert({
@@ -297,7 +300,7 @@ export async function PATCH(req: NextRequest) {
   const now = Date.now();
 
   if (body.type === "group") {
-    const { id, name, notes, assetCode, issuer, network } = body;
+    const { id, name, notes, assetCode, issuer, network, domain, telegramChannel, telegramLink } = body;
 
     if (isSupabaseOnly()) {
       const patch: Record<string, unknown> = { updated_at: now };
@@ -306,6 +309,9 @@ export async function PATCH(req: NextRequest) {
       if (assetCode !== undefined) patch.asset_code = assetCode;
       if (issuer !== undefined) patch.issuer = issuer;
       if (network !== undefined) patch.network = network;
+      if (domain !== undefined) patch.domain = domain;
+      if (telegramChannel !== undefined) patch.telegram_channel = telegramChannel;
+      if (telegramLink !== undefined) patch.telegram_link = telegramLink;
       const { error } = await getSupabase()!.from("asset_groups").update(patch).eq("id", id).eq("user_id", userId!);
       if (error) {
         if (error.code === "23503") return NextResponse.json({ ok: false, error: "group_not_found" }, { status: 409 });
@@ -317,15 +323,29 @@ export async function PATCH(req: NextRequest) {
     getDb()
       .prepare(
         `UPDATE asset_groups SET
-           name       = COALESCE(?, name),
-           notes      = COALESCE(?, notes),
-           asset_code = COALESCE(?, asset_code),
-           issuer     = COALESCE(?, issuer),
-           network    = COALESCE(?, network),
-           updated_at = ?
+           name             = COALESCE(?, name),
+           notes            = COALESCE(?, notes),
+           asset_code       = COALESCE(?, asset_code),
+           issuer           = COALESCE(?, issuer),
+           network          = COALESCE(?, network),
+           domain           = COALESCE(?, domain),
+           telegram_channel = COALESCE(?, telegram_channel),
+           telegram_link    = COALESCE(?, telegram_link),
+           updated_at       = ?
          WHERE id = ?`,
       )
-      .run(name ?? null, notes ?? null, assetCode ?? null, issuer ?? null, network ?? null, now, id);
+      .run(
+        name ?? null,
+        notes ?? null,
+        assetCode ?? null,
+        issuer ?? null,
+        network ?? null,
+        domain ?? null,
+        telegramChannel ?? null,
+        telegramLink ?? null,
+        now,
+        id,
+      );
 
     syncToSupabase(async () => {
       const patch: Record<string, unknown> = { updated_at: now };
@@ -334,6 +354,9 @@ export async function PATCH(req: NextRequest) {
       if (assetCode !== undefined) patch.asset_code = assetCode;
       if (issuer !== undefined) patch.issuer = issuer;
       if (network !== undefined) patch.network = network;
+      if (domain !== undefined) patch.domain = domain;
+      if (telegramChannel !== undefined) patch.telegram_channel = telegramChannel;
+      if (telegramLink !== undefined) patch.telegram_link = telegramLink;
       await getSupabase()!.from("asset_groups").update(patch).eq("id", id).eq("user_id", userId!);
     });
 
