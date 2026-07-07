@@ -8,6 +8,7 @@ import {
   Loader2,
   ShieldCheck,
 } from "lucide-react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -21,6 +22,7 @@ import {
   AUTH_FLAGS,
   fetchIssuerFlags,
   setIssuerFlag,
+  verifySignerIsIssuer,
   type IssuerFlags,
 } from "@/lib/asset-manager";
 
@@ -69,9 +71,10 @@ const FLAG_DEFS: FlagDef[] = [
 interface Props {
   issuer: string;
   secretKey: string;
+  isWalletConnected?: boolean;
 }
 
-export function FlagsTab({ issuer, secretKey }: Props) {
+export function FlagsTab({ issuer, secretKey, isWalletConnected }: Props) {
   const { settings } = useSettings();
   const horizonUrl = resolveHorizonUrl(settings);
 
@@ -107,6 +110,23 @@ export function FlagsTab({ issuer, secretKey }: Props) {
 
   async function handleToggleFlag(flagDef: FlagDef, enable: boolean) {
     if (!secretKey || !flags) return;
+
+    if (enable && flagDef.irreversible) {
+      const confirmed = window.confirm(
+        `Enabling ${flagDef.label} is PERMANENT AND CANNOT BE UNDONE. ` +
+          "This will lock all issuer flags forever — no further changes to " +
+          "this account's settings will ever be possible. Continue?",
+      );
+      if (!confirmed) return;
+    }
+
+    if (isWalletConnected && !verifySignerIsIssuer(secretKey, issuer)) {
+      toast.error(
+        "Connected wallet does not match the issuer address being edited — aborted to avoid changing the wrong account.",
+      );
+      return;
+    }
+
     setPendingFlag(flagDef.value);
     setFlagError(null);
     setLastTxHash(null);
@@ -171,9 +191,10 @@ export function FlagsTab({ issuer, secretKey }: Props) {
             {FLAG_DEFS.map((def) => {
               const isEnabled = flags[def.key];
               const isPending = pendingFlag === def.value;
+              const anyPending = pendingFlag !== null;
               const requiresMet = !def.requires || flags[def.requires];
               const canToggle =
-                !!secretKey && !flags.authImmutable && !isPending;
+                !!secretKey && !flags.authImmutable && !anyPending;
 
               return (
                 <div

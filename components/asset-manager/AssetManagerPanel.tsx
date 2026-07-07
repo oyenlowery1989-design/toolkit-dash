@@ -172,6 +172,7 @@ export function AssetManagerPanel() {
             <FlagsTab
               issuer={issuerAddress}
               secretKey={effectiveSecretKey}
+              isWalletConnected={!!activeWallet}
             />
           </TabsContent>
           <TabsContent value="holders">

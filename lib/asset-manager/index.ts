@@ -11,6 +11,8 @@ import {
   TransactionBuilder,
 } from "stellar-sdk";
 import { resolveNetworkPassphrase, type Network } from "@/lib/settings";
+import { withAccountLock } from "@/lib/stellar-submit";
+import { shortAddr } from "@/lib/format";
 
 // ---------------------------------------------------------------------------
 // Auth flag bitmask values (as per Stellar protocol)
@@ -76,6 +78,23 @@ export async function fetchIssuerFlags(
 }
 
 // ---------------------------------------------------------------------------
+// verifySignerIsIssuer
+// Confirms that a secret key's derived public key matches the intended
+// issuer address. Operation.setOptions has no target-account field — it
+// always applies to the tx's own source account, so a mismatched signer
+// would silently flip flags on the WRONG account instead of erroring.
+// Returns false (never throws) on any parse error (invalid secret key).
+// ---------------------------------------------------------------------------
+
+export function verifySignerIsIssuer(secretKey: string, issuerAddress: string): boolean {
+  try {
+    return Keypair.fromSecret(secretKey).publicKey() === issuerAddress;
+  } catch {
+    return false;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // setIssuerFlag
 // Enables or disables a single auth flag on the issuer account.
 // Signs and submits the transaction. Returns the TX hash.
@@ -91,25 +110,28 @@ export async function setIssuerFlag(
 ): Promise<string> {
   const keypair = Keypair.fromSecret(issuerSecretKey);
   const server = new Horizon.Server(horizonUrl);
-  const account = await server.loadAccount(keypair.publicKey());
-  if (signal?.aborted) throw new Error("Aborted");
 
-  const op = Operation.setOptions(
-    enable ? { setFlags: flagValue as never } : { clearFlags: flagValue as never },
-  );
+  return withAccountLock(keypair.publicKey(), async () => {
+    const account = await server.loadAccount(keypair.publicKey());
+    if (signal?.aborted) throw new Error("Aborted");
 
-  const tx = new TransactionBuilder(account, {
-    fee: await server.fetchBaseFee().then(String),
-    networkPassphrase: resolveNetworkPassphrase(network),
-  })
-    .addOperation(op)
-    .setTimeout(30)
-    .build();
+    const op = Operation.setOptions(
+      enable ? { setFlags: flagValue as never } : { clearFlags: flagValue as never },
+    );
 
-  tx.sign(keypair);
-  const result = await server.submitTransaction(tx);
-  if (signal?.aborted) throw new Error("Aborted");
-  return (result as { hash?: string }).hash ?? "";
+    const tx = new TransactionBuilder(account, {
+      fee: await server.fetchBaseFee().then(String),
+      networkPassphrase: resolveNetworkPassphrase(network),
+    })
+      .addOperation(op)
+      .setTimeout(30)
+      .build();
+
+    tx.sign(keypair);
+    const result = await server.submitTransaction(tx);
+    if (signal?.aborted) throw new Error("Aborted");
+    return (result as { hash?: string }).hash ?? "";
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -131,7 +153,7 @@ export async function fetchTrustlineHolders(
   let cursor: string | null = null;
   let total = 0;
 
-  onLog(`Fetching holders for ${assetCode}:${issuerAddress.slice(0, 4)}…${issuerAddress.slice(-4)}`);
+  onLog(`Fetching holders for ${assetCode}:${shortAddr(issuerAddress)}`);
 
   while (!signal.aborted) {
     let builder: ReturnType<typeof server.accounts> = server
@@ -215,32 +237,34 @@ export async function setTrustlineAuthorization(
   const server = new Horizon.Server(horizonUrl);
   const asset = new Asset(assetCode, issuerAddress);
 
-  const account = await server.loadAccount(keypair.publicKey());
-  if (signal?.aborted) throw new Error("Aborted");
+  return withAccountLock(keypair.publicKey(), async () => {
+    const account = await server.loadAccount(keypair.publicKey());
+    if (signal?.aborted) throw new Error("Aborted");
 
-  const flags = {
-    authorized: action === "authorize",
-    authorizedToMaintainLiabilities: action === "maintain_only",
-  };
+    const flags = {
+      authorized: action === "authorize",
+      authorizedToMaintainLiabilities: action === "maintain_only",
+    };
 
-  const op = Operation.setTrustLineFlags({
-    trustor: holderAddress,
-    asset,
-    flags,
+    const op = Operation.setTrustLineFlags({
+      trustor: holderAddress,
+      asset,
+      flags,
+    });
+
+    const tx = new TransactionBuilder(account, {
+      fee: await server.fetchBaseFee().then(String),
+      networkPassphrase: resolveNetworkPassphrase(network),
+    })
+      .addOperation(op)
+      .setTimeout(30)
+      .build();
+
+    tx.sign(keypair);
+    const result = await server.submitTransaction(tx);
+    if (signal?.aborted) throw new Error("Aborted");
+    return (result as { hash?: string }).hash ?? "";
   });
-
-  const tx = new TransactionBuilder(account, {
-    fee: await server.fetchBaseFee().then(String),
-    networkPassphrase: resolveNetworkPassphrase(network),
-  })
-    .addOperation(op)
-    .setTimeout(30)
-    .build();
-
-  tx.sign(keypair);
-  const result = await server.submitTransaction(tx);
-  if (signal?.aborted) throw new Error("Aborted");
-  return (result as { hash?: string }).hash ?? "";
 }
 
 // ---------------------------------------------------------------------------
@@ -276,7 +300,7 @@ export async function fetchSellOffers(
   let cursor: string | null = null;
   let total = 0;
 
-  onLog(`Scanning sell offers for ${assetCode}:${issuerAddress.slice(0, 4)}…${issuerAddress.slice(-4)}`);
+  onLog(`Scanning sell offers for ${assetCode}:${shortAddr(issuerAddress)}`);
 
   while (!signal.aborted) {
     let builder = server.offers().selling(asset).limit(200);
@@ -392,27 +416,29 @@ export async function createSellOffer(
   const server = new Horizon.Server(horizonUrl);
   const selling = new Asset(assetCode, issuerAddress);
 
-  const account = await server.loadAccount(keypair.publicKey());
+  return withAccountLock(keypair.publicKey(), async () => {
+    const account = await server.loadAccount(keypair.publicKey());
 
-  const op = Operation.manageSellOffer({
-    selling,
-    buying: Asset.native(),
-    amount,
-    price,
-    offerId: 0, // 0 = create new offer
+    const op = Operation.manageSellOffer({
+      selling,
+      buying: Asset.native(),
+      amount,
+      price,
+      offerId: 0, // 0 = create new offer
+    });
+
+    const tx = new TransactionBuilder(account, {
+      fee: await server.fetchBaseFee().then(String),
+      networkPassphrase: resolveNetworkPassphrase(network),
+    })
+      .addOperation(op)
+      .setTimeout(30)
+      .build();
+
+    tx.sign(keypair);
+    const result = await server.submitTransaction(tx);
+    return (result as { hash?: string }).hash ?? "";
   });
-
-  const tx = new TransactionBuilder(account, {
-    fee: await server.fetchBaseFee().then(String),
-    networkPassphrase: resolveNetworkPassphrase(network),
-  })
-    .addOperation(op)
-    .setTimeout(30)
-    .build();
-
-  tx.sign(keypair);
-  const result = await server.submitTransaction(tx);
-  return (result as { hash?: string }).hash ?? "";
 }
 
 // ---------------------------------------------------------------------------
@@ -462,63 +488,65 @@ export async function createBatchOffers(options: {
   const from = parseFloat(priceFrom);
   const to = mode === "ladder" && priceTo ? parseFloat(priceTo) : from;
 
-  for (let i = 0; i < count; i++) {
-    if (signal?.aborted) break;
-
-    const price =
-      count === 1
-        ? from
-        : from + (to - from) * (i / (count - 1));
-
-    const priceStr = price.toFixed(7);
-
-    try {
-      const account = await server.loadAccount(keypair.publicKey());
+  return withAccountLock(keypair.publicKey(), async () => {
+    for (let i = 0; i < count; i++) {
       if (signal?.aborted) break;
 
-      const op =
-        side === "sell"
-          ? Operation.manageSellOffer({
-              selling: asset,
-              buying: Asset.native(),
-              amount,
-              price: priceStr,
-              offerId: 0,
-            })
-          : Operation.manageBuyOffer({
-              selling: Asset.native(),
-              buying: asset,
-              buyAmount: amount,
-              price: priceStr,
-              offerId: 0,
-            });
+      const price =
+        count === 1
+          ? from
+          : from + (to - from) * (i / (count - 1));
 
-      const tx = new TransactionBuilder(account, {
-        fee: await server.fetchBaseFee().then(String),
-        networkPassphrase: resolveNetworkPassphrase(network),
-      })
-        .addOperation(op)
-        .setTimeout(30)
-        .build();
+      const priceStr = price.toFixed(7);
 
-      tx.sign(keypair);
-      const result = await server.submitTransaction(tx);
-      const hash = (result as { hash?: string }).hash ?? "";
-      const entry: BatchOfferResult = { price: priceStr, amount, hash };
-      results.push(entry);
-      onProgress?.(i + 1, count, entry);
-    } catch (e) {
-      const entry: BatchOfferResult = {
-        price: priceStr,
-        amount,
-        error: e instanceof Error ? e.message : String(e),
-      };
-      results.push(entry);
-      onProgress?.(i + 1, count, entry);
+      try {
+        const account = await server.loadAccount(keypair.publicKey());
+        if (signal?.aborted) break;
+
+        const op =
+          side === "sell"
+            ? Operation.manageSellOffer({
+                selling: asset,
+                buying: Asset.native(),
+                amount,
+                price: priceStr,
+                offerId: 0,
+              })
+            : Operation.manageBuyOffer({
+                selling: Asset.native(),
+                buying: asset,
+                buyAmount: amount,
+                price: priceStr,
+                offerId: 0,
+              });
+
+        const tx = new TransactionBuilder(account, {
+          fee: await server.fetchBaseFee().then(String),
+          networkPassphrase: resolveNetworkPassphrase(network),
+        })
+          .addOperation(op)
+          .setTimeout(30)
+          .build();
+
+        tx.sign(keypair);
+        const result = await server.submitTransaction(tx);
+        const hash = (result as { hash?: string }).hash ?? "";
+        const entry: BatchOfferResult = { price: priceStr, amount, hash };
+        results.push(entry);
+        onProgress?.(i + 1, count, entry);
+      } catch (e) {
+        const entry: BatchOfferResult = {
+          price: priceStr,
+          amount,
+          error: e instanceof Error ? e.message : String(e),
+        };
+        results.push(entry);
+        onProgress?.(i + 1, count, entry);
+      }
     }
-  }
 
-  return results;
+    return results;
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -541,33 +569,35 @@ export async function deleteOffer(
   const server = new Horizon.Server(horizonUrl);
   const asset = new Asset(assetCode, issuerAddress);
 
-  const account = await server.loadAccount(keypair.publicKey());
+  return withAccountLock(keypair.publicKey(), async () => {
+    const account = await server.loadAccount(keypair.publicKey());
 
-  const op = side === "sell"
-    ? Operation.manageSellOffer({
-        selling: asset,
-        buying: Asset.native(),
-        amount: "0",
-        price,
-        offerId: parseInt(offerId, 10),
-      })
-    : Operation.manageBuyOffer({
-        selling: Asset.native(),
-        buying: asset,
-        buyAmount: "0",
-        price,
-        offerId: parseInt(offerId, 10),
-      });
+    const op = side === "sell"
+      ? Operation.manageSellOffer({
+          selling: asset,
+          buying: Asset.native(),
+          amount: "0",
+          price,
+          offerId: parseInt(offerId, 10),
+        })
+      : Operation.manageBuyOffer({
+          selling: Asset.native(),
+          buying: asset,
+          buyAmount: "0",
+          price,
+          offerId: parseInt(offerId, 10),
+        });
 
-  const tx = new TransactionBuilder(account, {
-    fee: await server.fetchBaseFee().then(String),
-    networkPassphrase: resolveNetworkPassphrase(network),
-  })
-    .addOperation(op)
-    .setTimeout(30)
-    .build();
+    const tx = new TransactionBuilder(account, {
+      fee: await server.fetchBaseFee().then(String),
+      networkPassphrase: resolveNetworkPassphrase(network),
+    })
+      .addOperation(op)
+      .setTimeout(30)
+      .build();
 
-  tx.sign(keypair);
-  const result = await server.submitTransaction(tx);
-  return (result as { hash?: string }).hash ?? "";
+    tx.sign(keypair);
+    const result = await server.submitTransaction(tx);
+    return (result as { hash?: string }).hash ?? "";
+  });
 }

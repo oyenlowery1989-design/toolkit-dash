@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   CheckCircle2,
   Download,
@@ -19,7 +19,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { useSettings, resolveHorizonUrl } from "@/lib/settings";
-import { ShortAddress } from "@/components/asset-lookup";
+import { ShortAddress } from "@/components/shared/ShortAddress";
 import { downloadCSV } from "@/lib/csv-export";
 import {
   fetchTrustlineHolders,
@@ -95,6 +95,30 @@ export function HoldersTab({ assetCode, issuer, secretKey }: Props) {
   const userScrolledUp = useRef(false);
 
   const horizonUrl = resolveHorizonUrl(settings);
+
+  // Reset stale scan results whenever the shared asset context changes —
+  // otherwise already-rendered holder rows (and their action buttons) would
+  // remain clickable against the OLD asset's addresses combined with the
+  // NEW assetCode/issuer.
+  useEffect(() => {
+    abortRef.current?.abort();
+    setHoldersMap(new Map());
+    setOffersMap(new Map());
+    setLogs([]);
+    setScanning(false);
+    setScanDone(false);
+    setActionResults({});
+    setPendingAddress(null);
+    setFilterMode("all");
+  }, [assetCode, issuer]);
+
+  // Abort any in-flight scan on unmount so it can't keep paging in the
+  // background and race a fresh scan started on re-entry.
+  useEffect(() => {
+    return () => {
+      abortRef.current?.abort();
+    };
+  }, []);
 
   const explorerBase =
     settings.network === "public"
@@ -318,37 +342,40 @@ export function HoldersTab({ assetCode, issuer, secretKey }: Props) {
                 </CardTitle>
                 {/* Filter pills */}
                 <div className="flex flex-wrap gap-1.5">
-                  <button
+                  <Button
+                    variant="ghost"
                     onClick={() => setFilterMode("all")}
-                    className={`rounded-full border px-2.5 py-0.5 text-xs font-medium transition-colors ${
+                    className={`h-auto rounded-full border px-2.5 py-0.5 text-xs font-medium transition-colors ${
                       filterMode === "all"
-                        ? "border-primary bg-primary text-primary-foreground"
+                        ? "border-primary bg-primary text-primary-foreground hover:bg-primary hover:text-primary-foreground"
                         : "border-muted-foreground/30 text-muted-foreground hover:border-foreground"
                     }`}
                   >
                     All ({allRows.length})
-                  </button>
-                  <button
+                  </Button>
+                  <Button
+                    variant="ghost"
                     onClick={() => setFilterMode("sellers")}
-                    className={`rounded-full border px-2.5 py-0.5 text-xs font-medium transition-colors ${
+                    className={`h-auto rounded-full border px-2.5 py-0.5 text-xs font-medium transition-colors ${
                       filterMode === "sellers"
-                        ? "border-amber-500 bg-amber-500 text-white"
+                        ? "border-amber-500 bg-amber-500 text-white hover:bg-amber-500 hover:text-white"
                         : "border-amber-500/40 text-amber-500 hover:bg-amber-500/10"
                     }`}
                   >
                     Sellers ({sellerCount})
-                  </button>
+                  </Button>
                   {frozenCount > 0 && (
-                    <button
+                    <Button
+                      variant="ghost"
                       onClick={() => setFilterMode("frozen")}
-                      className={`rounded-full border px-2.5 py-0.5 text-xs font-medium transition-colors ${
+                      className={`h-auto rounded-full border px-2.5 py-0.5 text-xs font-medium transition-colors ${
                         filterMode === "frozen"
-                          ? "border-destructive bg-destructive text-destructive-foreground"
+                          ? "border-destructive bg-destructive text-destructive-foreground hover:bg-destructive hover:text-destructive-foreground"
                           : "border-destructive/40 text-destructive hover:bg-destructive/10"
                       }`}
                     >
                       Frozen ({frozenCount})
-                    </button>
+                    </Button>
                   )}
                 </div>
               </div>
@@ -430,40 +457,43 @@ export function HoldersTab({ assetCode, issuer, secretKey }: Props) {
                             ) : (
                               <>
                                 {row.status !== "authorized" && (
-                                  <button
+                                  <Button
+                                    variant="ghost"
                                     title="Unfreeze — full authorization"
                                     onClick={() =>
                                       handleAction(row.address, "authorize")
                                     }
-                                    disabled={!secretKey}
-                                    className="inline-flex items-center gap-1 rounded border border-green-500/40 bg-green-500/10 px-1.5 py-0.5 text-[10px] font-medium text-green-500 hover:bg-green-500/20 disabled:opacity-40"
+                                    disabled={!secretKey || pendingAddress !== null}
+                                    className="h-auto inline-flex items-center gap-1 rounded border border-green-500/40 bg-green-500/10 px-1.5 py-0.5 text-[10px] font-medium text-green-500 hover:bg-green-500/20 disabled:opacity-40"
                                   >
                                     <LockOpen className="h-3 w-3" />
-                                  </button>
+                                  </Button>
                                 )}
                                 {row.status !== "maintain_liabilities" && (
-                                  <button
+                                  <Button
+                                    variant="ghost"
                                     title="Restrict — can hold but not create new offers or send"
                                     onClick={() =>
                                       handleAction(row.address, "maintain_only")
                                     }
-                                    disabled={!secretKey}
-                                    className="inline-flex items-center gap-1 rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-500 hover:bg-amber-500/20 disabled:opacity-40"
+                                    disabled={!secretKey || pendingAddress !== null}
+                                    className="h-auto inline-flex items-center gap-1 rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-500 hover:bg-amber-500/20 disabled:opacity-40"
                                   >
                                     <Minus className="h-3 w-3" />
-                                  </button>
+                                  </Button>
                                 )}
                                 {row.status !== "frozen" && (
-                                  <button
+                                  <Button
+                                    variant="ghost"
                                     title="Freeze — deauthorize, cancels all open offers"
                                     onClick={() =>
                                       handleAction(row.address, "freeze")
                                     }
-                                    disabled={!secretKey}
-                                    className="inline-flex items-center gap-1 rounded border border-destructive/40 bg-destructive/10 px-1.5 py-0.5 text-[10px] font-medium text-destructive hover:bg-destructive/20 disabled:opacity-40"
+                                    disabled={!secretKey || pendingAddress !== null}
+                                    className="h-auto inline-flex items-center gap-1 rounded border border-destructive/40 bg-destructive/10 px-1.5 py-0.5 text-[10px] font-medium text-destructive hover:bg-destructive/20 disabled:opacity-40"
                                   >
                                     <Lock className="h-3 w-3" />
-                                  </button>
+                                  </Button>
                                 )}
                               </>
                             )}

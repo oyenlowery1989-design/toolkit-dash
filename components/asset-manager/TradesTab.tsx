@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   CheckCircle2,
   ChevronDown,
@@ -27,7 +27,7 @@ import { Keypair } from "stellar-sdk";
 import { useSettings, resolveHorizonUrl } from "@/lib/settings";
 import { useActiveWallet } from "@/hooks/use-active-wallet";
 import { shortAddr } from "@/lib/format";
-import { ShortAddress } from "@/components/asset-lookup";
+import { ShortAddress } from "@/components/shared/ShortAddress";
 import {
   fetchMyOffers,
   createSellOffer,
@@ -222,6 +222,21 @@ export function TradesTab({ assetCode, issuer }: Props) {
     price.trim().length > 0 &&
     parseFloat(price) > 0;
 
+  // Reset stale offer rows whenever the asset identity changes — prevents
+  // handleDelete from firing a cancel for the previous asset's offer id/price
+  // against the newly-selected assetCode/issuer.
+  useEffect(() => {
+    setOffers([]);
+    setLoaded(false);
+    setLoadError(null);
+    setDeleteResults({});
+  }, [assetCode, issuer]);
+
+  // Only one write action (place / batch / cancel) may be in flight at a
+  // time — they all sign with the same distributor account and would
+  // otherwise race its sequence number.
+  const anyActionInFlight = creating || batchRunning || !!deletingId;
+
   return (
     <div className="space-y-6">
       {/* Distributor signing key */}
@@ -254,7 +269,7 @@ export function TradesTab({ assetCode, issuer }: Props) {
               />
               {signerPublicKey && (
                 <p className="mt-1 text-xs text-muted-foreground font-mono">
-                  {signerPublicKey}
+                  <ShortAddress address={signerPublicKey} network={settings.network} />
                 </p>
               )}
             </div>
@@ -333,7 +348,7 @@ export function TradesTab({ assetCode, issuer }: Props) {
             </p>
           )}
 
-          <Button onClick={handleCreate} disabled={!canCreate || creating}>
+          <Button onClick={handleCreate} disabled={!canCreate || anyActionInFlight}>
             {creating ? (
               <>
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -374,9 +389,10 @@ export function TradesTab({ assetCode, issuer }: Props) {
       {/* Batch offers */}
       <Card>
         <CardHeader className="pb-3">
-          <button
-            className="flex w-full items-center justify-between gap-2 text-left"
+          <Button
+            variant="ghost"
             onClick={() => setBatchOpen((v) => !v)}
+            className="flex h-auto w-full items-center justify-between gap-2 p-0 text-left font-normal hover:bg-transparent"
           >
             <div className="flex items-center gap-2">
               <Layers className="h-5 w-5" />
@@ -388,7 +404,7 @@ export function TradesTab({ assetCode, issuer }: Props) {
               </div>
             </div>
             {batchOpen ? <ChevronUp className="h-4 w-4 shrink-0 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />}
-          </button>
+          </Button>
         </CardHeader>
 
         {batchOpen && (
@@ -399,19 +415,20 @@ export function TradesTab({ assetCode, issuer }: Props) {
                 <Label className="text-xs mb-1 block">Side</Label>
                 <div className="flex gap-1">
                   {(["sell", "buy"] as OfferSide[]).map((s) => (
-                    <button
+                    <Button
                       key={s}
+                      variant="ghost"
                       onClick={() => setBatchSide(s)}
-                      className={`rounded-full border px-3 py-0.5 text-xs font-medium transition-colors ${
+                      className={`h-auto rounded-full border px-3 py-0.5 text-xs font-medium transition-colors ${
                         batchSide === s
                           ? s === "sell"
-                            ? "border-destructive bg-destructive text-destructive-foreground"
-                            : "border-green-500 bg-green-500 text-white"
-                          : "border-muted-foreground/30 text-muted-foreground hover:border-foreground"
+                            ? "border-destructive bg-destructive text-destructive-foreground hover:bg-destructive hover:text-destructive-foreground"
+                            : "border-green-500 bg-green-500 text-white hover:bg-green-500 hover:text-white"
+                          : "border-muted-foreground/30 text-muted-foreground hover:border-foreground hover:bg-transparent hover:text-muted-foreground"
                       }`}
                     >
                       {s === "sell" ? "Sell" : "Buy"}
-                    </button>
+                    </Button>
                   ))}
                 </div>
               </div>
@@ -419,17 +436,18 @@ export function TradesTab({ assetCode, issuer }: Props) {
                 <Label className="text-xs mb-1 block">Mode</Label>
                 <div className="flex gap-1">
                   {(["repeat", "ladder"] as BatchMode[]).map((m) => (
-                    <button
+                    <Button
                       key={m}
+                      variant="ghost"
                       onClick={() => setBatchMode(m)}
-                      className={`rounded-full border px-3 py-0.5 text-xs font-medium transition-colors ${
+                      className={`h-auto rounded-full border px-3 py-0.5 text-xs font-medium transition-colors ${
                         batchMode === m
-                          ? "border-primary bg-primary text-primary-foreground"
-                          : "border-muted-foreground/30 text-muted-foreground hover:border-foreground"
+                          ? "border-primary bg-primary text-primary-foreground hover:bg-primary hover:text-primary-foreground"
+                          : "border-muted-foreground/30 text-muted-foreground hover:border-foreground hover:bg-transparent hover:text-muted-foreground"
                       }`}
                     >
                       {m === "repeat" ? "Repeat" : "Ladder"}
-                    </button>
+                    </Button>
                   ))}
                 </div>
               </div>
@@ -511,7 +529,7 @@ export function TradesTab({ assetCode, issuer }: Props) {
 
             <div className="flex gap-2">
               {!batchRunning ? (
-                <Button onClick={handleBatch} disabled={!canBatch}>
+                <Button onClick={handleBatch} disabled={!canBatch || anyActionInFlight}>
                   <Layers className="mr-2 h-4 w-4" />
                   Place {batchCount || "?"} Offers
                 </Button>
@@ -674,14 +692,15 @@ export function TradesTab({ assetCode, issuer }: Props) {
                                 Error
                               </span>
                             ) : (
-                              <button
+                              <Button
+                                variant="ghost"
                                 onClick={() => handleDelete(offer)}
-                                disabled={!effectiveSecretKey || !!deletingId}
-                                className="inline-flex items-center gap-1 rounded border border-destructive/40 bg-destructive/10 px-2 py-0.5 text-[10px] font-medium text-destructive hover:bg-destructive/20 disabled:opacity-40"
+                                disabled={!effectiveSecretKey || anyActionInFlight}
+                                className="h-auto inline-flex items-center gap-1 rounded border border-destructive/40 bg-destructive/10 px-2 py-0.5 text-[10px] font-medium text-destructive hover:bg-destructive/20 hover:text-destructive disabled:opacity-40"
                               >
                                 <Trash2 className="h-3 w-3" />
                                 Cancel
-                              </button>
+                              </Button>
                             )}
                           </div>
                         </td>
