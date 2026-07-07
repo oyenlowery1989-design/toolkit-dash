@@ -183,6 +183,7 @@ Full `autoCreate` URL param spec:
 - 9 roles: `issuer`, `distributor`, `creator`, `intermediary`, `bank`, `withdrawal`, `destination`, `service`, `other`
 - Types + role constants: `lib/asset-groups/types.ts` (`GroupMemberRole`, `ROLE_LABELS`, `ROLE_COLORS`)
 - Hook: `hooks/use-asset-groups.ts` — uses DB cache pattern; delete uses custom fetch (not `dbDelete`) because body needs `type` discriminator
+- **Social links** (group-level, optional, independent): `domain`, `telegramChannel`, `telegramLink` — editable inline in the expanded card (same click-to-edit pattern as Notes), surfaced as Globe/Send icon links next to the group name in the collapsed header. URL derivation (scheme prefixing, explicit link wins over derived `t.me/{channel}`) lives in `lib/asset-groups/links.ts` (`normalizeExternalUrl`, `resolveTelegramUrl`)
 - API: `/api/db/groups` — POST/PATCH/DELETE body must include `type: "group"` or `type: "member"`
 - Page: `app/(data)/groups/page.tsx` is a standard Suspense shell; all logic lives in `components/groups/GroupsPanel.tsx` — handles `?autoCreate=1&name=...&assetCode=...&issuer=...&distrib=...&issuerHomeDomain=...&distribHomeDomain=...&network=...` to auto-create group on mount; `?open=ID` syncs on same-tab nav, bypasses search filter, scrolls card into view (once per id)
 - "Save to Group" always opens in a **new tab** (`target="_blank"` or `window.open(..., "_blank")`) — never navigate away from source page
