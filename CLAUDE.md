@@ -92,10 +92,9 @@
 | Module | Status |
 |---|---|
 | `address-investigator` | Working — recently updated with home domain, group buttons |
-| `asset-lookup` | Working, signed off — Save/Open Group button is context-aware (checks `useAssetGroups()`) |
+| `asset-lookup` | Working, signed off — Save/Open Group button is context-aware (checks `useAssetGroups()`); Distribution Sales feature now also auto-saves to Saved Analyses (one-line wiring, no other changes to this file) |
 | `search-history` | Working, signed off — standard page shell, filter uses shared `<Input>` |
-| `bulk-asset-sales` | Working — recently updated with context-aware group buttons |
-| `asset-sales` (proceeds) | Working — recently updated with auto-infer distrib, context-aware group buttons |
+| `asset-sales` (proceeds) | Working — merged with Bulk Asset Sales into one tabbed module (`/asset-sales`, tabs Single Asset / Bulk via `?tab=`); `bulk-asset-sales` route now redirects here. Auto-infer distrib, context-aware group buttons, live destination-balance check |
 | `intermediary-tracer` | Mostly complete — see notes below |
 | `address-generator` | Working — Web Worker vanity address generator; reviewed+fixed 2026-07-06 (Stop button didn't set the same staleness guard the internal search-complete path uses, could revert UI out of "stopped" after an already-queued worker message landed) |
 | `bulk-payments` | Working — secret key field replaced by active wallet indicator when wallet connected; reviewed+fixed 2026-07-06 (fatal-throw false-success, stale exclude-list, abort-on-unmount) |
@@ -198,12 +197,13 @@ Full `autoCreate` URL param spec:
 - Home domain: pass **separate** `issuerHomeDomain` and `distribHomeDomain` params — never share one domain for both
 - Cross-group correlation: shared intermediary/bank/withdrawal address across multiple groups = same operator fingerprint
 
-## Bulk Asset Sales
-- `BulkAssetSalesPanel.tsx` — `AssetRow` has `homeDomain?` field fetched from `/accounts/{issuer}` after distrib is inferred
-- Summary row shows: asset code + home domain, issuer (ISS label) + distrib (DST label), XLM proceeds, asset sold, status, Save to Group button
-- Watchdog `useEffect`: `if (running && rows.length > 0 && pendingCount === 0)` → abort + `setRunning(false)` to prevent infinite spinner
-- Progress text: `pendingCount === 0 ? "Finalising…" : Scanning ${Math.min(done+error+1, total)} of ${total}…`
-- Lobstr URLs (`https://lobstr.co/trade/CODE:ISSUER`) are accepted directly in the textarea — parser extracts code + issuer
+## Asset Sales (merged: Single Asset + Bulk tabs)
+- Route `app/(analysis)/asset-sales/page.tsx` renders `components/asset-sales/AssetSalesPanel.tsx` — thin `<Tabs>` shell (`?tab=single|bulk`, default single), both tabs `forceMount`-ed so switching tabs never unmounts/aborts an in-flight scan
+- All logic files live in `components/asset-sales/`: `AssetXlmProceedsTab.tsx` (single), `BulkAssetSalesTab.tsx` (bulk, exported symbol still `BulkAssetSalesPanel`), `useProceedsHistory.ts`, `useProceedsPresets.ts` — moved here verbatim from the old `proceeds-investigator`/`bulk-asset-sales` dirs, no logic changed in the move
+- `app/(analysis)/bulk-asset-sales/page.tsx` is now a redirect to `/asset-sales?tab=bulk` (old bookmarks/dashboard card still work)
+- Both tabs share the same `fetchAssetXlmProceeds` engine (`lib/proceeds-investigator/fetchers.ts`) — bulk has zero unique calculation logic, it's a concurrency-pool wrapper (`runConcurrent`) over the same per-asset call
+- **Bulk tab**: `AssetRow` has `homeDomain?` field fetched from `/accounts/{issuer}` after distrib is inferred; summary row shows asset code + home domain, issuer (ISS)/distrib (DST) labels, XLM proceeds, asset sold, status, Save to Group; watchdog `useEffect` (`if (running && rows.length > 0 && pendingCount === 0)` → abort + `setRunning(false)`) prevents infinite spinner; progress text `pendingCount === 0 ? "Finalising…" : Scanning ${Math.min(done+error+1, total)} of ${total}…`; Lobstr URLs (`https://lobstr.co/trade/CODE:ISSUER`) accepted directly in the textarea
+- Re-run deep-link param is `?asset=` (canonical — read by `AssetXlmProceedsTab.tsx`, with `?code=` accepted as a back-compat fallback). `SavedAnalysesPanel` re-run buttons and Search History's "Run Asset Sales" both push `?asset=`
 
 ## Address Investigator
 - `AddressInvestigatorTab.tsx` — imports `useKnownIntermediaries`, `useKnownCreators`, `useAssetGroups`
@@ -223,11 +223,12 @@ Full `autoCreate` URL param spec:
 ## Saved Analyses Module
 - Hook: `hooks/use-saved-analyses.ts` — DB-backed, stores `SavedAnalysis` (id, name, assetCode, issuer, distribAddresses, network, timestamp, result, notes?, tags?)
 - `result` is the full `AssetProceedsResult` — all XLM proceeds/sold/outgoing/onHand + topDestinations
-- **Auto-save**: `BulkAssetSalesPanel` calls `saveAnalysis()` automatically on each row completion (no manual button needed); Asset Sales single still has manual "Save Analysis" button
+- **Auto-save**: Asset Sales' Bulk tab calls `saveAnalysis()` automatically on each row completion (no manual button needed); Single Asset tab still has manual "Save Analysis" button; Asset Lookup's Distribution Sales feature also auto-saves (added so all three proceeds-producing surfaces share one history)
 - `SavedAnalysesPanel` has two views toggled by header buttons:
   - **Table view** (default): sortable by any column (asset, XLM proceeds, asset sold, outgoing, on hand, saved date); click header to sort asc/desc
   - **Cards view**: expandable cards with tags, notes, re-run button, top destinations table
 - **Aggregate stats bar**: total XLM proceeds, total outgoing, unique assets, unique issuers, top earner — shown above the list
+- **Compare Snapshots** section (`components/saved-analyses/SnapshotCompare.tsx` + `lib/saved-analyses/diff.ts`): groups saved analyses by `assetCode:issuer:network`, shown only for assets with 2+ snapshots. Pick a baseline (older) and compare (newer) snapshot — renders field deltas (XLM proceeds/asset sold/outgoing/on-hand, before → after with signed delta) plus a destinations-diff table (`new`/`increased`/`decreased`/`dropped` per address, sorted by `|delta|` desc). "dropped" means the address fell out of the top-50 `topDestinations` cap, not proven-empty — this is stated in the UI. Collapsed by default, next to Cross-Asset Destinations
 - **Cross-Asset Destinations** section: aggregates `topDestinations` across ALL filtered analyses, highlights addresses that appear in multiple assets with a yellow "shared" badge — reveals shared banks/exchanges across projects; collapsed by default
 - DB endpoint: `/api/db/saved-analyses`; max 50 entries (oldest dropped on insert)
 - `window focus` sync not added to saved-analyses (only asset-groups has it) — may be needed if cross-tab save is required
@@ -375,7 +376,7 @@ Check this list before writing a new address-display row, CSV export, save-to-gr
 
 ### Proceeds/Destinations UI (`components/shared/proceeds/`)
 Built for the asset-sales family, now also used by Address Investigator's sender/recipient tables — generalize further before writing a bespoke destinations table.
-- `<ProceedsDestinationsTable destinations totalXlmProceeds network ... />` — the standard table for any "list of counterparty addresses with an XLM total and tx count" view. Optional props cover both the proceeds case (`showGroupAction`, `assetCode`/`issuer`) and the no-asset-context case (`onAddToGroup` callback instead — required whenever the caller has no `assetCode`/`issuer`, e.g. Address Investigator). Also: `showPercentColumn`, `percentColumnLabel`, `addressColumnLabel`, `showProgressBar`, `onDownloadCsv`, `onInvestigate`, `emptyMessage`.
+- `<ProceedsDestinationsTable destinations totalXlmProceeds network ... />` — the standard table for any "list of counterparty addresses with an XLM total and tx count" view. Optional props cover both the proceeds case (`showGroupAction`, `assetCode`/`issuer`) and the no-asset-context case (`onAddToGroup` callback instead — required whenever the caller has no `assetCode`/`issuer`, e.g. Address Investigator). Also: `showPercentColumn`, `percentColumnLabel`, `addressColumnLabel`, `showProgressBar`, `onDownloadCsv`, `onInvestigate`, `emptyMessage`. **`showBalanceColumn`** (default `true`) adds a "Holds Now" column with a lazy per-row (or "check top 10") live-balance check via `fetchXlmBalance` (`lib/horizon-balance.ts`) — surfaces whether a destination still holds the XLM it received or has moved it on, distinct from the historical `%` column which never changes. Since this is default-on, every existing caller (asset-sales, asset-lookup's Distribution Sales, Address Investigator) gets the column automatically with no caller edit.
 - `<ProceedsStatsCards ... />` — the row of summary stat cards (XLM proceeds, asset sold, outgoing, on-hand style cards).
 - `<ProceedsStatusBadge status />` + `ProceedsScanStatus` type — scan-in-progress/done/error badge.
 - `<SaveToGroupButton assetCode issuer network targetAddress />` — context-aware "Save to Group" / "Open Group →" / "✓ in group" button (see Asset Groups section above for the exact state logic). Supports separate `homeDomain`/`distribHomeDomain` props and a `size="sm"` variant.

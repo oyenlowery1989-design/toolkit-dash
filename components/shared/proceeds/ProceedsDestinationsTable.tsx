@@ -1,11 +1,16 @@
 "use client";
 
-import { Download, UserSearch, Layers } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Download, UserSearch, Layers, Wallet, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ShortAddress } from "@/components/shared/ShortAddress";
 import { formatXlm } from "@/lib/format";
 import { SaveToGroupButton } from "./SaveToGroupButton";
+import { useHorizonServer } from "@/hooks/use-horizon-server";
+import { fetchXlmBalance, type XlmBalanceValue } from "@/lib/horizon-balance";
 import type { DestinationSummary } from "@/lib/proceeds-investigator/types";
+
+const BALANCE_CHECK_BATCH = 10;
 
 interface ProceedsDestinationsTableProps {
   destinations: DestinationSummary[];
@@ -34,6 +39,8 @@ interface ProceedsDestinationsTableProps {
   onAddToGroup?: (address: string) => void;
   /** Message shown when destinations is empty. Default "No destination outflows found." */
   emptyMessage?: string;
+  /** Show the live "Holds Now" balance-check column. Default true. */
+  showBalanceColumn?: boolean;
 }
 
 /** Standard table for a list of counterparty/destination address summaries
@@ -54,9 +61,56 @@ export function ProceedsDestinationsTable({
   showGroupAction = false,
   onAddToGroup,
   emptyMessage = "No destination outflows found.",
+  showBalanceColumn = true,
 }: ProceedsDestinationsTableProps) {
   const hasActions = !!onDownloadCsv || !!onInvestigate || showGroupAction || !!onAddToGroup;
-  const colSpan = 3 + (showPercentColumn ? 1 : 0) + (hasActions ? 1 : 0);
+  const colSpan =
+    3 + (showPercentColumn ? 1 : 0) + (hasActions ? 1 : 0) + (showBalanceColumn ? 1 : 0);
+
+  const { url: horizonUrl } = useHorizonServer();
+  const [balances, setBalances] = useState<Record<string, XlmBalanceValue | "loading">>({});
+  const abortRef = useRef<AbortController | null>(null);
+
+  const addressKey = useMemo(
+    () => destinations.map((d) => d.address).join(","),
+    [destinations],
+  );
+
+  useEffect(() => {
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+    setBalances({});
+    return () => controller.abort();
+  }, [addressKey]);
+
+  async function checkBalance(address: string) {
+    setBalances((prev) => ({ ...prev, [address]: "loading" }));
+    const controller = abortRef.current;
+    const result = await fetchXlmBalance(horizonUrl, address, controller?.signal);
+    if (controller?.signal.aborted) return;
+    setBalances((prev) => ({ ...prev, [address]: result }));
+  }
+
+  async function checkTopBatch() {
+    const targets = destinations
+      .filter((d) => balances[d.address] === undefined)
+      .slice(0, BALANCE_CHECK_BATCH);
+    if (targets.length === 0) return;
+    const controller = abortRef.current;
+    setBalances((prev) => {
+      const next = { ...prev };
+      for (const t of targets) next[t.address] = "loading";
+      return next;
+    });
+    await Promise.allSettled(
+      targets.map(async (t) => {
+        const result = await fetchXlmBalance(horizonUrl, t.address, controller?.signal);
+        if (controller?.signal.aborted) return;
+        setBalances((prev) => ({ ...prev, [t.address]: result }));
+      }),
+    );
+  }
 
   return (
     <div className="overflow-x-auto border rounded-md">
@@ -66,6 +120,24 @@ export function ProceedsDestinationsTable({
             <th className="text-left px-3 py-2">{addressColumnLabel}</th>
             <th className="text-right px-3 py-2">Amount XLM</th>
             {showPercentColumn && <th className="text-right px-3 py-2">{percentColumnLabel}</th>}
+            {showBalanceColumn && (
+              <th className="text-right px-3 py-2">
+                <div className="flex items-center justify-end gap-1.5">
+                  <span title="Live balance still held by this address now — distinct from % of proceeds ever received">
+                    Holds Now
+                  </span>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-auto py-0.5 px-1.5 text-[10px] font-normal"
+                    onClick={checkTopBatch}
+                    title={`Check current balance for the first ${BALANCE_CHECK_BATCH} unchecked rows`}
+                  >
+                    check top {BALANCE_CHECK_BATCH}
+                  </Button>
+                </div>
+              </th>
+            )}
             <th className="text-right px-3 py-2">Tx Count</th>
             {hasActions && <th className="text-right px-3 py-2">Actions</th>}
           </tr>
@@ -94,6 +166,52 @@ export function ProceedsDestinationsTable({
                     ) : (
                       <>{pct.toFixed(2)}%</>
                     )}
+                  </td>
+                )}
+                {showBalanceColumn && (
+                  <td className="px-3 py-2 text-right tabular-nums">
+                    {(() => {
+                      const bal = balances[row.address];
+                      if (bal === undefined) {
+                        return (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-auto py-0.5 px-1.5 text-xs"
+                            onClick={() => checkBalance(row.address)}
+                            title="Check current XLM balance"
+                          >
+                            <Wallet className="h-3 w-3" />
+                          </Button>
+                        );
+                      }
+                      if (bal === "loading") {
+                        return <Loader2 className="h-3.5 w-3.5 animate-spin ml-auto text-muted-foreground" />;
+                      }
+                      if (bal === "unfunded") {
+                        return <span className="text-xs text-muted-foreground/60">closed</span>;
+                      }
+                      if (bal === "error") {
+                        return (
+                          <Button
+                            variant="ghost"
+                            className="h-auto p-0 text-xs text-destructive/70 hover:bg-transparent hover:text-destructive"
+                            onClick={() => checkBalance(row.address)}
+                            title="Click to retry"
+                          >
+                            error ↺
+                          </Button>
+                        );
+                      }
+                      return (
+                        <span
+                          className="text-xs text-muted-foreground"
+                          title="Live balance still held by this address — not yet forwarded/spent"
+                        >
+                          ~{formatXlm(bal)} unspent
+                        </span>
+                      );
+                    })()}
                   </td>
                 )}
                 <td className="px-3 py-2 text-right tabular-nums">{row.count}</td>

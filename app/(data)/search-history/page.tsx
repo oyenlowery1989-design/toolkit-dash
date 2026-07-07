@@ -32,7 +32,7 @@ export default function SearchHistoryPage() {
   const handleRunSales = (value: string) => {
     const [code, issuer] = value.split(":");
     router.push(
-      `/asset-sales?code=${encodeURIComponent(code)}&issuer=${encodeURIComponent(issuer)}`,
+      `/asset-sales?asset=${encodeURIComponent(code)}&issuer=${encodeURIComponent(issuer)}`,
     );
   };
 

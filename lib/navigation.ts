@@ -9,7 +9,6 @@ import {
   Coins,
   UserSearch,
   Megaphone,
-  TrendingDown,
   Clock,
   BookmarkCheck,
   BookUser,
@@ -70,11 +69,6 @@ export const menuItems: MenuEntry[] = [
     title: "Asset Sales",
     href: "/asset-sales",
     icon: Coins,
-  },
-  {
-    title: "Bulk Asset Sales",
-    href: "/bulk-asset-sales",
-    icon: TrendingDown,
   },
   {
     title: "Account Investigator",

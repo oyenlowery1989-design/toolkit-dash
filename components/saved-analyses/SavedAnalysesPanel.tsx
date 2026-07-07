@@ -34,6 +34,7 @@ import { ShortAddress } from "@/components/shared/ShortAddress";
 import { formatXlm } from "@/lib/format";
 import { timeAgo } from "@/lib/stellar-helpers";
 import { NETWORK_LABELS } from "@/lib/settings";
+import { SnapshotCompare } from "./SnapshotCompare";
 
 // ---------------------------------------------------------------------------
 // DestinationsTable — used in card expanded view
@@ -113,7 +114,7 @@ function AnalysisCard({ analysis }: { analysis: SavedAnalysis }) {
 
   const handleRerun = () => {
     const params = new URLSearchParams({
-      code: analysis.assetCode,
+      asset: analysis.assetCode,
       issuer: analysis.issuer,
       account: analysis.distribAddresses[0] ?? "",
     });
@@ -421,7 +422,7 @@ function TableView({ analyses }: { analyses: SavedAnalysis[] }) {
                     className="h-7 w-7"
                     title="Re-run"
                     onClick={() => {
-                      const p = new URLSearchParams({ code: a.assetCode, issuer: a.issuer, account: a.distribAddresses[0] ?? "" });
+                      const p = new URLSearchParams({ asset: a.assetCode, issuer: a.issuer, account: a.distribAddresses[0] ?? "" });
                       router.push(`/asset-sales?${p.toString()}`);
                     }}
                   >
@@ -644,6 +645,9 @@ export function SavedAnalysesPanel() {
           />
         </div>
       )}
+
+      {/* Snapshot compare */}
+      {analyses.length > 1 && <SnapshotCompare analyses={filtered} />}
 
       {/* Cross-asset destinations */}
       {analyses.length > 1 && <CrossAssetDestinations analyses={filtered} />}

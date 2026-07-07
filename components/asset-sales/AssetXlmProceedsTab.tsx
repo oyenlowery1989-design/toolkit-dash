@@ -93,7 +93,7 @@ function exportOutgoingCsv(
 export function AssetXlmProceedsTab() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const urlAsset = searchParams.get("asset");
+  const urlAsset = searchParams.get("asset") ?? searchParams.get("code");
   const urlIssuer = searchParams.get("issuer");
   const urlAccount = searchParams.get("account");
   const urlAutorun = searchParams.get("autorun") === "1";

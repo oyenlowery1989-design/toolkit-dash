@@ -105,7 +105,7 @@ const MODULE_SECTIONS: ModuleSection[] = [
       },
       {
         title: "Bulk Asset Sales",
-        href: "/bulk-asset-sales",
+        href: "/asset-sales?tab=bulk",
         icon: TrendingDown,
         description:
           "Run Asset Sales analysis across many assets at once. Accepts Lobstr URLs. Auto-saves results to Saved Analyses.",

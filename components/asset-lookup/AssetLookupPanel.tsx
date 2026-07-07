@@ -77,6 +77,7 @@ import { fetchAssetXlmProceeds } from "@/lib/proceeds-investigator/fetchers";
 import type { AssetProceedsResult } from "@/lib/proceeds-investigator/types";
 import { useAssetHistory, assetHistoryGetSnapshot } from "./useAssetHistory";
 import { useSavedSearches } from "@/hooks/use-saved-searches";
+import { useSavedAnalyses } from "@/hooks/use-saved-analyses";
 import { useKnownIntermediaries } from "@/hooks/use-known-intermediaries";
 import { ShortAddress } from "@/components/shared/ShortAddress";
 import { AuthFlag } from "@/components/shared/AuthFlag";
@@ -219,6 +220,7 @@ export function AssetLookupPanel({
     remove: removeHistory,
   } = useAssetHistory();
   const { upsert: upsertSearch } = useSavedSearches();
+  const { saveAnalysis } = useSavedAnalyses();
   const { entries: knownIntermediaries } = useKnownIntermediaries();
   const knownIntermediarySet = useMemo(
     () => new Set(knownIntermediaries.map((e) => e.address)),
@@ -911,6 +913,14 @@ export function AssetLookupPanel({
           ),
       );
       setDistribSales(result);
+      saveAnalysis({
+        name: `${assetCode} — ${new Date().toLocaleDateString()}`,
+        assetCode,
+        issuer,
+        distribAddresses: [primaryDistrib],
+        network: settings.network,
+        result,
+      });
     } catch (err) {
       if (!signal.aborted) setDistribSalesError(getErrorMessage(err));
     } finally {
