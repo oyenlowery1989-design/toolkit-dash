@@ -49,11 +49,11 @@ import {
   type Network,
 } from "@/lib/settings";
 import { getErrorMessage } from "@/lib/stellar-helpers";
-import { ShortAddress } from "@/components/asset-lookup";
+import { ShortAddress } from "@/components/shared/ShortAddress";
 import { downloadCSV } from "@/lib/csv-export";
 import { fetchAllHolders } from "@/lib/asset-lookup/fetchers";
 import { estimateCost } from "@/lib/bulk-payments/builder";
-import { runBulkPayments } from "@/lib/bulk-payments/runner";
+import { runBulkPayments, BATCH_SIZE } from "@/lib/bulk-payments/runner";
 import type { BatchResult, AssetSource } from "@/lib/bulk-payments/types";
 import { useBulkRecipients } from "@/hooks/use-bulk-recipients";
 import { useBulkRunHistory } from "@/hooks/use-bulk-run-history";
@@ -193,7 +193,7 @@ export function BulkPaymentsPanel() {
   const [secretKey, setSecretKey] = useState("");
 
   const effectiveSecretKey = activeWallet?.secretKey ?? secretKey;
-  const [batchSize, setBatchSize] = useState(100);
+  const [batchSize, setBatchSize] = useState(BATCH_SIZE);
   const [feeMultiplier, setFeeMultiplier] = useState(1);
   const [showSecret, setShowSecret] = useState(false);
   const [sourceTab, setSourceTab] = useState<"manual" | "assets" | "group">(
@@ -239,6 +239,15 @@ export function BulkPaymentsPanel() {
   const [balanceLoading, setBalanceLoading] = useState(false);
 
   const abortRef = useRef<AbortController | null>(null);
+
+  // Abort any in-flight send if the panel unmounts (e.g. user navigates away
+  // mid-send) so the batch loop doesn't keep running with no UI to control it.
+  useEffect(() => {
+    return () => {
+      abortRef.current?.abort();
+    };
+  }, []);
+
   const { addRun } = useBulkRunHistory();
   const { settings } = useSettings();
   const network = settings.network;
@@ -271,14 +280,19 @@ export function BulkPaymentsPanel() {
       if (!list) return;
       if (list.assetsText) {
         setAssetsText(list.assetsText);
-        setRecipients(list.addresses);
+        // Re-apply the current exclude list so a saved list never resurrects
+        // an address the user has since decided to exclude.
+        const senderPub = getSenderPublicKey();
+        const excludeSet = getExcludeSet();
+        if (senderPub) excludeSet.add(senderPub);
+        setRecipients(list.addresses.filter((a) => !excludeSet.has(a)));
         setSourceTab("assets");
       } else {
         setManualText(list.addresses.join("\n"));
         setSourceTab("manual");
       }
     },
-    [savedLists],
+    [savedLists, getSenderPublicKey, getExcludeSet],
   );
 
   function getPaymentAsset(): Asset {
@@ -467,6 +481,12 @@ export function BulkPaymentsPanel() {
         setError("Fetch holders first, or switch to the Manual tab.");
         return;
       }
+      // Recipients were frozen at fetch time — re-apply the current exclude
+      // list now so an exclusion added after fetching is always honored.
+      const senderPub = getSenderPublicKey();
+      const excludeSet = getExcludeSet();
+      if (senderPub) excludeSet.add(senderPub);
+      setRecipients((prev) => prev.filter((a) => !excludeSet.has(a)));
     }
 
     setPhase("preview");
@@ -537,13 +557,26 @@ export function BulkPaymentsPanel() {
     } catch (err) {
       if (!abortRef.current.signal.aborted) {
         setError(getErrorMessage(err));
+        // Defensive fallback: runner.ts marks every batch failed via
+        // onBatchUpdate before it would ever throw, but if something
+        // unexpected still throws here, don't leave results stuck at
+        // "pending" — mark whatever never got a final status as failed so
+        // counts/history/Retry Failed all reflect reality.
+        setBatchResults((prev) => {
+          const next = prev.map((r) =>
+            r.status === "pending" || r.status === "sending"
+              ? { ...r, status: "failed" as const, error: getErrorMessage(err) }
+              : r,
+          );
+          finalResults = next;
+          return next;
+        });
       }
     }
 
     // Auto-save manual signing key if not already in a group
     if (!activeWallet) {
       try {
-        const { Keypair } = await import("stellar-sdk");
         const pub = Keypair.fromSecret(effectiveSecretKey.trim()).publicKey();
         autoSaveSigningKey(pub);
       } catch { /* invalid key — skip */ }
@@ -561,7 +594,12 @@ export function BulkPaymentsPanel() {
     } else {
       toast.success("Batch sent successfully");
     }
-    notifyIfHidden("Bulk Payments Complete", `${recipients.length} payments sent`);
+    notifyIfHidden(
+      "Bulk Payments Complete",
+      failedCount > 0
+        ? `${successCount} sent, ${failedCount} failed`
+        : `${successCount} payments sent`,
+    );
   }
 
   function handleAbort() {
@@ -578,17 +616,19 @@ export function BulkPaymentsPanel() {
     abortRef.current = new AbortController();
 
     // Mark failed batches as pending again
-    setBatchResults((prev) =>
-      prev.map((r) =>
-        failedIndices.includes(r.batchIndex) ? { ...r, status: "pending", error: undefined } : r,
-      ),
+    const resetResults = batchResults.map((r) =>
+      failedIndices.includes(r.batchIndex) ? { ...r, status: "pending" as const, error: undefined } : r,
     );
+    setBatchResults(resetResults);
     setPhase("sending");
     setError(null);
 
     const failedRecipients = failedIndices.flatMap((i) => batches[i] ?? []);
 
-    let finalResults = batchResults;
+    // Seed from the freshly-reset array (not the stale pre-retry closure) so
+    // that if Abort fires before any onBatchUpdate callback runs, the retried
+    // batches are still reported as "pending" rather than falsely "failed".
+    let finalResults = resetResults;
     try {
       await runBulkPayments({
         horizonUrl,
@@ -614,13 +654,33 @@ export function BulkPaymentsPanel() {
         },
       });
     } catch (err) {
-      if (!abortRef.current.signal.aborted) setError(getErrorMessage(err));
+      if (!abortRef.current.signal.aborted) {
+        setError(getErrorMessage(err));
+        setBatchResults((prev) => {
+          const next = prev.map((r) =>
+            r.status === "pending" || r.status === "sending"
+              ? { ...r, status: "failed" as const, error: getErrorMessage(err) }
+              : r,
+          );
+          finalResults = next;
+          return next;
+        });
+      }
     }
     setPhase("done");
 
-    const successCount = finalResults.filter((r) => r.status === "success").reduce((s, r) => s + r.count, 0);
-    const failedCount = finalResults.filter((r) => r.status === "failed").reduce((s, r) => s + r.count, 0);
-    addRun({ network, memo: memo.trim(), recipientCount: recipients.length, successCount, failedCount });
+    // Scope the history entry + toast to only the batches that were actually
+    // retried this attempt — not the running totals across the whole send.
+    const retryResults = failedIndices.map((i) => finalResults[i]);
+    const successCount = retryResults.filter((r) => r.status === "success").reduce((s, r) => s + r.count, 0);
+    const failedCount = retryResults.filter((r) => r.status === "failed").reduce((s, r) => s + r.count, 0);
+    addRun({ network, memo: memo.trim(), recipientCount: failedRecipients.length, successCount, failedCount });
+
+    if (failedCount > 0) {
+      toast.error(`Retry failed — ${failedCount} payments failed`);
+    } else {
+      toast.success("Retry completed successfully");
+    }
   }
 
   function handleReset() {
@@ -720,7 +780,7 @@ export function BulkPaymentsPanel() {
             <div className="rounded-md border border-border p-3 text-sm space-y-1">
               <p className="text-xs text-muted-foreground">Payment</p>
               <p className="font-mono font-semibold">
-                {amount} {isNative ? "XLM" : `${customAssetCode.trim()} (${customAssetIssuer.trim().slice(0, 4)}…${customAssetIssuer.trim().slice(-4)})`}
+                {amount} {isNative ? "XLM" : `${customAssetCode.trim()} (${shortAddr(customAssetIssuer.trim())})`}
               </p>
             </div>
 
@@ -925,20 +985,24 @@ export function BulkPaymentsPanel() {
             <div className="space-y-2">
               <Label>Asset</Label>
               <div className="flex gap-2">
-                <button
+                <Button
                   type="button"
+                  size="sm"
+                  variant={assetType === "xlm" ? "default" : "outline"}
                   onClick={() => setAssetType("xlm")}
-                  className={`flex-1 rounded-md border px-3 py-1.5 text-sm transition-colors ${assetType === "xlm" ? "bg-primary text-primary-foreground border-primary" : "border-border hover:bg-muted/50"}`}
+                  className="flex-1"
                 >
                   XLM
-                </button>
-                <button
+                </Button>
+                <Button
                   type="button"
+                  size="sm"
+                  variant={assetType === "custom" ? "default" : "outline"}
                   onClick={() => setAssetType("custom")}
-                  className={`flex-1 rounded-md border px-3 py-1.5 text-sm transition-colors ${assetType === "custom" ? "bg-primary text-primary-foreground border-primary" : "border-border hover:bg-muted/50"}`}
+                  className="flex-1"
                 >
                   Custom
-                </button>
+                </Button>
               </div>
               {assetType === "custom" && (
                 <div className="flex gap-2 pt-1">
@@ -991,9 +1055,11 @@ export function BulkPaymentsPanel() {
                       className="font-mono text-xs pr-10"
                       autoComplete="off"
                     />
-                    <button
+                    <Button
                       type="button"
-                      className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                      variant="ghost"
+                      size="icon"
+                      className="absolute right-2 top-1/2 h-auto w-auto -translate-y-1/2 p-0 text-muted-foreground hover:bg-transparent hover:text-foreground"
                       onClick={() => setShowSecret((v) => !v)}
                       aria-label="Toggle secret key visibility"
                     >
@@ -1002,7 +1068,7 @@ export function BulkPaymentsPanel() {
                       ) : (
                         <Eye className="h-4 w-4" />
                       )}
-                    </button>
+                    </Button>
                   </div>
                 </>
               )}
@@ -1013,10 +1079,10 @@ export function BulkPaymentsPanel() {
                 id="batch-size"
                 type="number"
                 min={1}
-                max={100}
+                max={BATCH_SIZE}
                 value={batchSize}
                 onChange={(e) => {
-                  const v = Math.min(100, Math.max(1, parseInt(e.target.value) || 1));
+                  const v = Math.min(BATCH_SIZE, Math.max(1, parseInt(e.target.value) || 1));
                   setBatchSize(v);
                 }}
                 className="w-20"
@@ -1089,6 +1155,7 @@ export function BulkPaymentsPanel() {
                   placeholder={"USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN\nYOURC:GISSUER…"}
                   value={assetsText}
                   onChange={(e) => setAssetsText(e.target.value)}
+                  disabled={fetchingHolders}
                 />
               </div>
 
@@ -1235,9 +1302,11 @@ export function BulkPaymentsPanel() {
 
           {/* Exclude list */}
           <div className="mt-4 pt-3 border-t border-border">
-            <button
+            <Button
               type="button"
-              className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+              variant="ghost"
+              size="sm"
+              className="h-auto gap-1.5 px-0 py-0 font-normal text-xs text-muted-foreground hover:bg-transparent hover:text-foreground"
               onClick={() => setShowExclude((v) => !v)}
             >
               <X className="h-3 w-3" />
@@ -1247,7 +1316,7 @@ export function BulkPaymentsPanel() {
                   {parseValidAddresses(excludeText).length}
                 </span>
               )}
-            </button>
+            </Button>
             {showExclude && (
               <div className="mt-2 space-y-1">
                 <textarea
@@ -1302,8 +1371,10 @@ export function BulkPaymentsPanel() {
                     key={list.id}
                     className="flex items-center gap-2 rounded-md border border-border bg-muted/30 px-3 py-1.5 text-sm"
                   >
-                    <button
-                      className="flex-1 text-left hover:text-primary transition-colors truncate"
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      className="h-auto flex-1 justify-start truncate px-2 py-1 text-left font-normal hover:bg-transparent hover:text-primary"
                       onClick={() => handleLoadList(list.id)}
                       title="Load into manual list"
                     >
@@ -1311,14 +1382,17 @@ export function BulkPaymentsPanel() {
                       <span className="ml-2 text-xs text-muted-foreground">
                         {list.addresses.length.toLocaleString()} addresses
                       </span>
-                    </button>
-                    <button
-                      className="text-muted-foreground hover:text-destructive transition-colors shrink-0"
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="h-auto w-auto shrink-0 p-1 text-muted-foreground hover:bg-transparent hover:text-destructive"
                       onClick={() => removeList(list.id)}
                       aria-label="Delete list"
                     >
                       <Trash2 className="h-3.5 w-3.5" />
-                    </button>
+                    </Button>
                   </div>
                 ))}
               </div>

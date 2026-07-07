@@ -80,12 +80,28 @@ export async function runBulkPayments({
   onBatchUpdate,
 }: RunBulkOptions): Promise<void> {
   const server = new Horizon.Server(horizonUrl);
-  const keypair = Keypair.fromSecret(secretKey);
   const networkPassphrase = resolveNetworkPassphrase(network);
-
   const batches = chunkArray(recipients, batchSize);
 
-  let account = await server.loadAccount(keypair.publicKey());
+  // Keypair derivation and the initial account load can both throw (bad
+  // secret key, unfunded/nonexistent sender, unreachable Horizon). If either
+  // fails here, none of the batches ever get a chance to run — report every
+  // batch as failed via the normal onBatchUpdate channel so the caller's
+  // success/failure counting, history logging, and Retry Failed affordance
+  // all work exactly as they would for a per-batch failure.
+  let keypair: Keypair;
+  let account: Horizon.AccountResponse;
+  try {
+    keypair = Keypair.fromSecret(secretKey);
+    account = await server.loadAccount(keypair.publicKey());
+  } catch (err) {
+    const { error } = extractHorizonResult(err);
+    for (let i = 0; i < batches.length; i++) {
+      if (signal.aborted) break;
+      onBatchUpdate({ batchIndex: i, count: batches[i].length, status: "failed", error });
+    }
+    return;
+  }
 
   for (let i = 0; i < batches.length; i++) {
     if (signal.aborted) break;
