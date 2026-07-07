@@ -35,6 +35,7 @@ import { useSettings, resolveHorizonUrl } from "@/lib/settings";
 import { useSavedSearches } from "@/hooks/use-saved-searches";
 
 import { WalletSelect } from "@/components/ui/wallet-select";
+import { ShortAddress } from "@/components/shared/ShortAddress";
 import type { Network } from "@/lib/settings";
 import {
   getErrorMessage,
@@ -183,6 +184,16 @@ function resolveAssetName(
   return formatAsset(assetType ?? "native", assetCode);
 }
 
+// create_claimable_balance records carry a single combined `asset` string
+// (either the literal "native" or "CODE:ISSUER") instead of separate
+// asset_type/asset_code fields, so resolveAssetName cannot be reused as-is.
+function resolveClaimableBalanceAsset(r: Record<string, unknown>): string {
+  const asset = r.asset as string | undefined;
+  if (!asset || asset === "native") return "XLM";
+  const [code] = asset.split(":");
+  return code || "unknown";
+}
+
 function describeOperation(r: Record<string, unknown>): {
   description: string;
   amount?: string;
@@ -226,8 +237,8 @@ function describeOperation(r: Record<string, unknown>): {
 
     case "manage_sell_offer": {
       const amt = r.amount as string;
-      const asset = resolveAssetName(r, "selling");
-      const buying = resolveAssetName(r, "buying");
+      const asset = resolveAssetName(r, "selling_asset");
+      const buying = resolveAssetName(r, "buying_asset");
       if (amt === "0")
         return {
           description: `Cancel sell offer for ${asset}/${buying}`,
@@ -242,8 +253,8 @@ function describeOperation(r: Record<string, unknown>): {
 
     case "manage_buy_offer": {
       const amt = r.amount as string;
-      const asset = resolveAssetName(r, "buying");
-      const selling = resolveAssetName(r, "selling");
+      const asset = resolveAssetName(r, "buying_asset");
+      const selling = resolveAssetName(r, "selling_asset");
       if (amt === "0")
         return {
           description: `Cancel buy offer for ${asset}/${selling}`,
@@ -257,8 +268,8 @@ function describeOperation(r: Record<string, unknown>): {
     }
 
     case "create_passive_sell_offer": {
-      const asset = resolveAssetName(r, "selling");
-      const buying = resolveAssetName(r, "buying");
+      const asset = resolveAssetName(r, "selling_asset");
+      const buying = resolveAssetName(r, "buying_asset");
       return {
         description: `Passive sell ${formatBalance(r.amount as string)} ${asset} for ${buying}`,
         amount: r.amount as string,
@@ -325,12 +336,14 @@ function describeOperation(r: Record<string, unknown>): {
       };
     }
 
-    case "create_claimable_balance":
+    case "create_claimable_balance": {
+      const asset = resolveClaimableBalanceAsset(r);
       return {
-        description: `Create claimable balance of ${formatBalance(r.amount as string)} ${resolveAssetName(r)}`,
+        description: `Create claimable balance of ${formatBalance(r.amount as string)} ${asset}`,
         amount: r.amount as string,
-        asset: resolveAssetName(r),
+        asset,
       };
+    }
 
     case "claim_claimable_balance":
       return {
@@ -475,7 +488,8 @@ export default function TransactionsPage() {
       .operations()
       .forAccount(accountId.trim())
       .order("desc")
-      .limit(PAGE_SIZE);
+      .limit(PAGE_SIZE)
+      .includeFailed(true);
 
     if (cursor) builder = builder.cursor(cursor);
 
@@ -490,7 +504,8 @@ export default function TransactionsPage() {
     if (err) return;
 
     abortRef.current?.abort();
-    abortRef.current = new AbortController();
+    const controller = new AbortController();
+    abortRef.current = controller;
 
     setIsSearching(true);
     setError(null);
@@ -503,7 +518,7 @@ export default function TransactionsPage() {
 
     try {
       const records = await fetchPage(null);
-      if (abortRef.current?.signal.aborted) return;
+      if (controller.signal.aborted) return;
       setOperations(records);
       upsertSearch({
         type: "address",
@@ -515,7 +530,7 @@ export default function TransactionsPage() {
         records.length > 0 ? records[records.length - 1].pagingToken : null,
       );
     } catch (e) {
-      if (abortRef.current?.signal.aborted) return;
+      if (controller.signal.aborted) return;
       setError(getErrorMessage(e));
     } finally {
       setIsSearching(false);
@@ -526,21 +541,22 @@ export default function TransactionsPage() {
     if (!lastPagingToken) return;
 
     abortRef.current?.abort();
-    abortRef.current = new AbortController();
+    const controller = new AbortController();
+    abortRef.current = controller;
 
     setIsLoadingMore(true);
     setError(null);
 
     try {
       const records = await fetchPage(lastPagingToken);
-      if (abortRef.current?.signal.aborted) return;
+      if (controller.signal.aborted) return;
       setOperations((prev) => [...prev, ...records]);
       setHasMore(records.length === PAGE_SIZE);
       setLastPagingToken(
         records.length > 0 ? records[records.length - 1].pagingToken : null,
       );
     } catch (e) {
-      if (abortRef.current?.signal.aborted) return;
+      if (controller.signal.aborted) return;
       setError(getErrorMessage(e));
     } finally {
       setIsLoadingMore(false);
@@ -581,7 +597,10 @@ export default function TransactionsPage() {
                 <Label htmlFor="account-id">Account ID</Label>
                 <WalletSelect
                   currentValue={accountId}
-                  onPick={(w) => setAccountId(w.publicKey)}
+                  onPick={(w) => {
+                    setAccountId(w.publicKey);
+                    setAccountIdError(validate(w.publicKey));
+                  }}
                 />
               </div>
               <Input
@@ -618,7 +637,7 @@ export default function TransactionsPage() {
         <CardFooter>
           <Button
             onClick={handleSearch}
-            disabled={isSearching}
+            disabled={isSearching || isLoadingMore}
             className="w-full sm:w-auto"
           >
             {isSearching ? (
@@ -705,10 +724,12 @@ export default function TransactionsPage() {
                       if (cat !== "all" && count === 0) return null;
                       const isActive = categoryFilter === cat;
                       return (
-                        <button
+                        <Button
                           key={cat}
+                          size="sm"
+                          variant={isActive ? "default" : "outline"}
                           onClick={() => setCategoryFilter(cat)}
-                          className={`px-3 py-1.5 rounded-md text-xs font-medium border transition-colors ${
+                          className={`h-auto px-3 py-1.5 rounded-md text-xs font-medium border transition-colors ${
                             isActive
                               ? cat === "all"
                                 ? "bg-primary text-primary-foreground border-primary"
@@ -720,7 +741,7 @@ export default function TransactionsPage() {
                           <span className="ml-1.5 opacity-60">
                             {cat === "all" ? operations.length : count}
                           </span>
-                        </button>
+                        </Button>
                       );
                     },
                   )}
@@ -761,6 +782,7 @@ export default function TransactionsPage() {
                           <OpRow
                             key={op.id}
                             op={op}
+                            network={network}
                             isExpanded={isExpanded}
                             onToggle={() =>
                               setExpandedId(isExpanded ? null : op.id)
@@ -788,7 +810,7 @@ export default function TransactionsPage() {
                   <Button
                     variant="outline"
                     onClick={handleLoadMore}
-                    disabled={isLoadingMore}
+                    disabled={isLoadingMore || isSearching}
                     className="w-full"
                   >
                     {isLoadingMore ? (
@@ -814,10 +836,12 @@ export default function TransactionsPage() {
 
 function OpRow({
   op,
+  network,
   isExpanded,
   onToggle,
 }: {
   op: OpDisplay;
+  network: Network;
   isExpanded: boolean;
   onToggle: () => void;
 }) {
@@ -856,18 +880,22 @@ function OpRow({
             <span className="text-muted-foreground/40">—</span>
           )}
         </td>
-        <td className="px-4 py-3 text-xs font-mono">
+        <td className="px-4 py-3 text-xs">
           {op.from || op.to ? (
             <div className="space-y-0.5">
               {op.from && (
-                <div className="text-muted-foreground" title={op.from}>
-                  {shortAddr(op.from)}
+                <div className="text-muted-foreground">
+                  <ShortAddress address={op.from} network={network} />
                 </div>
               )}
               {op.from && op.to && (
                 <div className="text-muted-foreground/40 text-[10px]">↓</div>
               )}
-              {op.to && <div title={op.to}>{shortAddr(op.to)}</div>}
+              {op.to && (
+                <div>
+                  <ShortAddress address={op.to} network={network} />
+                </div>
+              )}
             </div>
           ) : (
             <span className="text-muted-foreground/40">—</span>
@@ -904,8 +932,18 @@ function OpRow({
                 />
               </div>
               <div className="space-y-2">
-                {op.from && <DetailField label="From" value={op.from} mono />}
-                {op.to && <DetailField label="To" value={op.to} mono />}
+                {op.from && (
+                  <div>
+                    <span className="text-muted-foreground">From:</span>{" "}
+                    <ShortAddress address={op.from} network={network} />
+                  </div>
+                )}
+                {op.to && (
+                  <div>
+                    <span className="text-muted-foreground">To:</span>{" "}
+                    <ShortAddress address={op.to} network={network} />
+                  </div>
+                )}
                 <DetailField label="Operation Type" value={op.type} />
                 <DetailField
                   label="Time"
