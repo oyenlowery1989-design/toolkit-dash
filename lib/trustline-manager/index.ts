@@ -172,7 +172,7 @@ export async function addTrustlineBulk(opts: AddTrustlineBulkOptions): Promise<v
 
       try {
         const builder = new TransactionBuilder(account, {
-          fee: String(Number(BASE_FEE) * batch.length),
+          fee: BASE_FEE,
           networkPassphrase,
         }).setTimeout(30);
 
@@ -251,7 +251,7 @@ export async function drainAndRemoveTrustline(
   const account = await server.loadAccount(keypair.publicKey());
 
   const builder = new TransactionBuilder(account, {
-    fee: String(Number(BASE_FEE) * 2),
+    fee: BASE_FEE,
     networkPassphrase,
   }).setTimeout(30);
 
@@ -267,7 +267,7 @@ export async function drainAndRemoveTrustline(
     const balanceLine = account.balances.find(
       (b) =>
         (b.asset_type === "credit_alphanum4" || b.asset_type === "credit_alphanum12") &&
-        (b as { asset_code?: string }).asset_code === assetCode &&
+        (b as { asset_code?: string }).asset_code?.toUpperCase() === assetCode.toUpperCase() &&
         (b as { asset_issuer?: string }).asset_issuer === issuer
     );
     const balance = balanceLine ? (balanceLine as { balance: string }).balance : "0";
@@ -382,7 +382,7 @@ export async function drainAndRemoveBulk(opts: DrainAndRemoveBulkOptions): Promi
 
       try {
         const builder = new TransactionBuilder(account, {
-          fee: String(Number(BASE_FEE) * batch.length * 2),
+          fee: BASE_FEE,
           networkPassphrase,
         }).setTimeout(30);
 
@@ -391,7 +391,7 @@ export async function drainAndRemoveBulk(opts: DrainAndRemoveBulkOptions): Promi
           const balanceLine = account.balances.find(
             (b) =>
               (b.asset_type === "credit_alphanum4" || b.asset_type === "credit_alphanum12") &&
-              (b as { asset_code?: string }).asset_code === a.code &&
+              (b as { asset_code?: string }).asset_code?.toUpperCase() === a.code.toUpperCase() &&
               (b as { asset_issuer?: string }).asset_issuer === a.issuer
           );
           const balance = balanceLine ? (balanceLine as { balance: string }).balance : "0";
@@ -580,7 +580,7 @@ export async function cancelOffersBatch(
   for (let i = 0; i < offers.length; i += BATCH) {
     const batch = offers.slice(i, i + BATCH);
     const builder = new TransactionBuilder(account, {
-      fee: String(Number(BASE_FEE) * batch.length),
+      fee: BASE_FEE,
       networkPassphrase,
     }).setTimeout(30);
 

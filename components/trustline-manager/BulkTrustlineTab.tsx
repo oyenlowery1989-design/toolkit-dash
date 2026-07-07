@@ -13,6 +13,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
 import { useSettings, resolveHorizonUrl } from "@/lib/settings";
 import { shortAddr } from "@/lib/format";
 import { StrKey } from "stellar-sdk";
@@ -156,8 +157,7 @@ export function BulkTrustlineTab() {
           remove: true,
           horizonUrl,
           network: settings.network,
-          onResult: (result) =>
-            handleResult({ ...result, assetCode: result.assetCode, issuer: result.issuer }),
+          onResult: handleResult,
           onLog: (msg) => setLogs((prev) => [...prev, `[delete] ${msg}`]),
           signal: ctrl.signal,
         });
@@ -207,6 +207,7 @@ export function BulkTrustlineTab() {
             value={assetText}
             onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setAssetText(e.target.value)}
             placeholder={"USDC:GA5ZSE…\nUSDT:GB3JLY…"}
+            disabled={running}
             className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 font-mono text-xs min-h-[160px] mt-1 resize-y"
           />
           {invalidAssets.length > 0 && (
@@ -237,6 +238,7 @@ export function BulkTrustlineTab() {
             value={secretText}
             onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setSecretText(e.target.value)}
             placeholder={"SCZANGBA…\nSCZANGB…"}
+            disabled={running}
             className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 font-mono text-xs min-h-[160px] mt-1 resize-y"
           />
           {invalidSecrets.length > 0 && (
@@ -278,22 +280,21 @@ export function BulkTrustlineTab() {
 
       {/* Auto-delete toggle */}
       {!running && (
-        <label className="flex items-start gap-3 cursor-pointer group w-fit">
-          <input
-            type="checkbox"
+        <div className="flex items-start gap-3 w-fit">
+          <Switch
             checked={autoDelete}
-            onChange={(e) => setAutoDelete(e.target.checked)}
-            className="mt-0.5 h-4 w-4 rounded border-border accent-primary cursor-pointer"
+            onCheckedChange={setAutoDelete}
+            className="mt-0.5"
           />
           <div>
-            <span className="text-sm font-medium group-hover:text-foreground transition-colors">
+            <span className="text-sm font-medium">
               Auto-delete after adding
             </span>
             <p className="text-xs text-muted-foreground mt-0.5">
               Removes all trustlines immediately after the add pass completes.
             </p>
           </div>
-        </label>
+        </div>
       )}
 
       {/* Preview + controls */}
@@ -337,22 +338,21 @@ export function BulkTrustlineTab() {
           {/* Drain option + remove warning */}
           {!running && (
             <div className="space-y-3">
-              <label className="flex items-start gap-3 cursor-pointer group w-fit">
-                <input
-                  type="checkbox"
+              <div className="flex items-start gap-3 w-fit">
+                <Switch
                   checked={drainFirst}
-                  onChange={(e) => setDrainFirst(e.target.checked)}
-                  className="mt-0.5 h-4 w-4 rounded border-border accent-primary cursor-pointer"
+                  onCheckedChange={setDrainFirst}
+                  className="mt-0.5"
                 />
                 <div>
-                  <span className="text-sm font-medium group-hover:text-foreground transition-colors">
+                  <span className="text-sm font-medium">
                     Send all balance to destination first
                   </span>
                   <p className="text-xs text-muted-foreground mt-0.5">
                     Custom assets: sends balance then removes trustline. XLM: Account Merge.
                   </p>
                 </div>
-              </label>
+              </div>
 
               {drainFirst && (
                 <div className="max-w-sm">

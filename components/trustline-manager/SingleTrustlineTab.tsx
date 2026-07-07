@@ -19,6 +19,8 @@ import { useAutoSaveSigningKey } from "@/hooks/use-auto-save-signing-key";
 import { WalletSelect } from "@/components/ui/wallet-select";
 import { useAssetGroups } from "@/hooks/use-asset-groups";
 import { shortAddr } from "@/lib/format";
+import { ShortAddress } from "@/components/shared/ShortAddress";
+import { Switch } from "@/components/ui/switch";
 import {
   addTrustline,
   drainAndRemoveTrustline,
@@ -53,6 +55,7 @@ export function SingleTrustlineTab() {
   const [autoDelete, setAutoDelete] = useState(false);
   const [drainFirst, setDrainFirst] = useState(false);
   const [drainDestination, setDrainDestination] = useState("");
+  const drainDestManuallyEdited = useRef(false);
 
   // Derived
   const effectiveSecret = activeWallet?.secretKey ?? secretKey.trim();
@@ -63,12 +66,13 @@ export function SingleTrustlineTab() {
     signingPubkey = null;
   }
 
-  // Auto-populate drain destination from active wallet
+  // Auto-populate drain destination from active wallet — re-fires whenever the
+  // active wallet changes, unless the user has manually edited the field.
   useEffect(() => {
-    if (activeWallet?.publicKey && !drainDestination) {
+    if (activeWallet?.publicKey && !drainDestManuallyEdited.current) {
       setDrainDestination(activeWallet.publicKey);
     }
-  }, [activeWallet?.publicKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [activeWallet?.publicKey]);
 
   // Warnings
   const [authRequired, setAuthRequired] = useState<boolean | null>(null);
@@ -82,6 +86,7 @@ export function SingleTrustlineTab() {
   const [cancellingOffers, setCancellingOffers] = useState(false);
   const [offerCancelHashes, setOfferCancelHashes] = useState<string[]>([]);
   const offerTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const offerRequestIdRef = useRef(0);
 
   // Submission state
   const [submitting, setSubmitting] = useState(false);
@@ -97,7 +102,8 @@ export function SingleTrustlineTab() {
     issuerValid &&
     effectiveSecret.length > 0 &&
     !(mode === "remove" && drainFirst && !drainDestValid) &&
-    !submitting;
+    !submitting &&
+    !cancellingOffers;
 
   // Reset result when mode changes
   useEffect(() => {
@@ -136,6 +142,11 @@ export function SingleTrustlineTab() {
 
   // Offer detection (remove mode, debounced)
   useEffect(() => {
+    // Bump the request id immediately so any fetch already in flight from a
+    // prior asset/issuer/mode is marked stale the moment inputs change again —
+    // clearTimeout alone can't cancel a fetch that has already started.
+    const requestId = ++offerRequestIdRef.current;
+
     if (offerTimerRef.current) clearTimeout(offerTimerRef.current);
     setOffers([]);
 
@@ -150,11 +161,13 @@ export function SingleTrustlineTab() {
           issuer.trim(),
           resolveHorizonUrl(settings),
         );
+        // Discard if a newer asset/issuer/account query has started since this fetch began
+        if (requestId !== offerRequestIdRef.current) return;
         setOffers(found);
       } catch {
         // silently ignore — offer check is advisory
       } finally {
-        setCheckingOffers(false);
+        if (requestId === offerRequestIdRef.current) setCheckingOffers(false);
       }
     }, 900);
 
@@ -274,64 +287,60 @@ export function SingleTrustlineTab() {
   return (
     <div className="space-y-6 max-w-xl">
       {/* Mode toggle */}
-      <div className="flex rounded-lg border border-border overflow-hidden w-fit">
-        <button
+      <div className="flex gap-2">
+        <Button
+          variant={mode === "add" ? "default" : "outline"}
+          size="sm"
           onClick={() => setMode("add")}
-          className={`px-4 py-1.5 text-sm font-medium transition-colors ${
-            !isRemove
-              ? "bg-primary text-primary-foreground"
-              : "text-muted-foreground hover:text-foreground hover:bg-accent"
-          }`}
         >
           Add Trustline
-        </button>
-        <button
+        </Button>
+        <Button
+          variant={mode === "remove" ? "destructive" : "outline"}
+          size="sm"
           onClick={() => setMode("remove")}
-          className={`px-4 py-1.5 text-sm font-medium transition-colors flex items-center gap-1.5 ${
-            isRemove
-              ? "bg-destructive text-destructive-foreground"
-              : "text-muted-foreground hover:text-foreground hover:bg-accent"
-          }`}
+          className="gap-1.5"
         >
           <Trash2 className="h-3.5 w-3.5" />
           Remove Trustline
-        </button>
+        </Button>
       </div>
 
       {/* Remove mode — drain option */}
       {isRemove && (
         <div className="space-y-3">
-          <label className="flex items-start gap-3 cursor-pointer group">
-            <input
-              type="checkbox"
-              checked={drainFirst}
-              onChange={(e) => setDrainFirst(e.target.checked)}
-              className="mt-0.5 h-4 w-4 rounded border-border accent-primary cursor-pointer"
-            />
-            <div>
-              <span className="text-sm font-medium group-hover:text-foreground transition-colors">
+          <div className="flex items-center justify-between gap-3">
+            <div className="space-y-0.5">
+              <span className="text-sm font-medium">
                 Send all balance to destination first
               </span>
-              <p className="text-xs text-muted-foreground mt-0.5">
+              <p className="text-xs text-muted-foreground">
                 For custom assets: sends full balance then removes trustline in one tx.
                 For XLM: uses <strong>Account Merge</strong> — sends all XLM and closes the account.
               </p>
             </div>
-          </label>
+            <Switch checked={drainFirst} onCheckedChange={setDrainFirst} />
+          </div>
 
           {drainFirst && (
             <div>
               <Label htmlFor="st-drain-dest">Send balance to</Label>
               <p className="text-xs text-muted-foreground mb-1.5">
                 The full asset balance will be sent to this address before the trustline is removed.
-                {activeWallet && (
-                  <> Defaults to your connected wallet (<span className="font-mono">{shortAddr(activeWallet.publicKey)}</span>).</>
+                {activeWallet && activeWallet.publicKey === drainDestination && (
+                  <> Currently matches your connected wallet (<span className="font-mono">{shortAddr(activeWallet.publicKey)}</span>).</>
+                )}
+                {activeWallet && activeWallet.publicKey !== drainDestination && (
+                  <> This does <strong>not</strong> match your connected wallet — double-check before submitting.</>
                 )}
               </p>
               <Input
                 id="st-drain-dest"
                 value={drainDestination}
-                onChange={(e) => setDrainDestination(e.target.value)}
+                onChange={(e) => {
+                  drainDestManuallyEdited.current = true;
+                  setDrainDestination(e.target.value);
+                }}
                 placeholder="G…"
                 className={`font-mono text-xs ${
                   drainDestination && !StrKey.isValidEd25519PublicKey(drainDestination)
@@ -343,9 +352,9 @@ export function SingleTrustlineTab() {
                 <p className="text-xs text-destructive mt-1">Invalid public key</p>
               )}
               {drainDestValid && (
-                <p className="text-xs text-muted-foreground mt-1 font-mono">
-                  → {shortAddr(drainDestination.trim())}
-                </p>
+                <div className="mt-1">
+                  <ShortAddress address={drainDestination.trim()} network={settings.network} />
+                </div>
               )}
             </div>
           )}
@@ -410,23 +419,18 @@ export function SingleTrustlineTab() {
 
       {/* Auto-delete toggle (add mode only) */}
       {!isRemove && (
-        <label className="flex items-start gap-3 cursor-pointer group">
-          <input
-            type="checkbox"
-            checked={autoDelete}
-            onChange={(e) => setAutoDelete(e.target.checked)}
-            className="mt-0.5 h-4 w-4 rounded border-border accent-primary cursor-pointer"
-          />
-          <div>
-            <span className="text-sm font-medium group-hover:text-foreground transition-colors">
+        <div className="flex items-center justify-between gap-3">
+          <div className="space-y-0.5">
+            <span className="text-sm font-medium">
               Auto-delete after adding
             </span>
-            <p className="text-xs text-muted-foreground mt-0.5">
+            <p className="text-xs text-muted-foreground">
               Immediately removes the trustline after it is confirmed — useful for testing
               eligibility without keeping the trustline open.
             </p>
           </div>
-        </label>
+          <Switch checked={autoDelete} onCheckedChange={setAutoDelete} />
+        </div>
       )}
 
       <div>
@@ -561,7 +565,7 @@ export function SingleTrustlineTab() {
                 variant="outline"
                 size="sm"
                 onClick={handleCancelOffers}
-                disabled={cancellingOffers || !effectiveSecret}
+                disabled={cancellingOffers || submitting || !effectiveSecret}
                 className="border-amber-500/50 text-amber-700 dark:text-amber-400 hover:bg-amber-500/10"
               >
                 {cancellingOffers ? (
