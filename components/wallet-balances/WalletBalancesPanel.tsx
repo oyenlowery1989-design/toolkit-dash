@@ -16,6 +16,7 @@ import {
   Eye,
 } from "lucide-react";
 import { Keypair } from "stellar-sdk";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -26,7 +27,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { ShortAddress } from "@/components/asset-lookup";
+import { ShortAddress } from "@/components/shared/ShortAddress";
 import { useWalletsV2 } from "@/hooks/use-wallets-v2";
 import { useWalletFolders } from "@/hooks/use-wallet-folders";
 import { useAssetGroups } from "@/hooks/use-asset-groups";
@@ -45,6 +46,7 @@ type SortField = "balance" | "name" | "key";
 type KeyFilter = "all" | "signing" | "watch";
 
 const LOW_BALANCE_THRESHOLD = 20;
+const BALANCE_FETCH_TIMEOUT_MS = 15_000;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -55,8 +57,19 @@ async function fetchXlmBalance(
   publicKey: string,
   signal?: AbortSignal,
 ): Promise<number | "error" | "unfunded"> {
+  // Merge the caller's signal (if any) with an internal timeout so a hung
+  // Horizon URL can't leave this request — and the row's "loading" state —
+  // pending forever.
+  const controller = new AbortController();
+  const onExternalAbort = () => controller.abort();
+  if (signal) {
+    if (signal.aborted) controller.abort();
+    else signal.addEventListener("abort", onExternalAbort);
+  }
+  const timeoutId = setTimeout(() => controller.abort(), BALANCE_FETCH_TIMEOUT_MS);
+
   try {
-    const res = await fetch(`${horizonUrl}/accounts/${publicKey}`, { signal });
+    const res = await fetch(`${horizonUrl}/accounts/${publicKey}`, { signal: controller.signal });
     if (res.status === 404) return "unfunded";
     if (!res.ok) return "error";
     const data = await res.json();
@@ -66,6 +79,9 @@ async function fetchXlmBalance(
     return xlm ? parseFloat(xlm) : "error";
   } catch {
     return "error";
+  } finally {
+    clearTimeout(timeoutId);
+    signal?.removeEventListener("abort", onExternalAbort);
   }
 }
 
@@ -274,7 +290,7 @@ export function WalletBalancesPanel() {
   function handleCopy(walletId: string, publicKey: string) {
     navigator.clipboard.writeText(publicKey).then(
       () => { setCopiedId(walletId); setTimeout(() => setCopiedId(null), 2000); },
-      () => { /* clipboard unavailable */ },
+      () => { toast.error("Failed to copy to clipboard."); },
     );
   }
 
@@ -297,12 +313,12 @@ export function WalletBalancesPanel() {
 
     setAddLoading(true);
     const publicKey = keypair.publicKey();
+    // Pre-seed "loading" so the row never flashes undefined — the
+    // walletKeys-driven bulk fetch effect below picks up this new wallet
+    // and fetches its balance on its own; no need for a second, unguarded
+    // direct fetch here that would race the bulk effect for the same key.
     setBalances((prev) => ({ ...prev, [publicKey]: "loading" }));
     addWallet(newFolderId, newName.trim(), publicKey, newSecretKey.trim());
-
-    const result = await fetchXlmBalance(horizonUrl, publicKey);
-    if (!mountedRef.current) return;
-    setBalances((prev) => ({ ...prev, [publicKey]: result }));
 
     resetForm();
     setAddLoading(false);
@@ -330,24 +346,26 @@ export function WalletBalancesPanel() {
             {loadingCount > 0 ? "…" : formatXlm(totalXlm)}
           </p>
         </div>
-        <button
+        <Button
+          variant="ghost"
           onClick={() => setKeyFilter((f) => f === "signing" ? "all" : "signing")}
-          className={`bg-card border rounded-lg px-4 py-3 min-w-[100px] text-left transition-colors ${keyFilter === "signing" ? "border-yellow-500/50 bg-yellow-500/5" : "border-border hover:border-yellow-500/30"}`}
+          className={`h-auto bg-card hover:bg-card hover:text-foreground border rounded-lg px-4 py-3 min-w-[100px] flex-col items-start text-left transition-colors ${keyFilter === "signing" ? "border-yellow-500/50 bg-yellow-500/5" : "border-border hover:border-yellow-500/30"}`}
         >
           <p className="text-xs text-muted-foreground uppercase tracking-wide flex items-center gap-1">
             <KeyRound className="h-3 w-3 text-yellow-500/70" /> Signing
           </p>
           <p className="text-xl font-bold mt-0.5 text-yellow-500">{signingCount}</p>
-        </button>
-        <button
+        </Button>
+        <Button
+          variant="ghost"
           onClick={() => setKeyFilter((f) => f === "watch" ? "all" : "watch")}
-          className={`bg-card border rounded-lg px-4 py-3 min-w-[100px] text-left transition-colors ${keyFilter === "watch" ? "border-border bg-muted/30" : "border-border hover:border-border/80"}`}
+          className={`h-auto bg-card hover:bg-card hover:text-foreground border rounded-lg px-4 py-3 min-w-[100px] flex-col items-start text-left transition-colors ${keyFilter === "watch" ? "border-border bg-muted/30" : "border-border hover:border-border/80"}`}
         >
           <p className="text-xs text-muted-foreground uppercase tracking-wide flex items-center gap-1">
             <Eye className="h-3 w-3 text-muted-foreground/50" /> Watch-only
           </p>
           <p className="text-xl font-bold mt-0.5 text-muted-foreground">{watchCount}</p>
-        </button>
+        </Button>
         <div className="bg-card border border-border rounded-lg px-4 py-3 min-w-[100px]">
           <p className="text-xs text-muted-foreground uppercase tracking-wide">Low Balance</p>
           <p className={`text-xl font-bold mt-0.5 ${lowCount > 0 ? "text-destructive" : ""}`}>
@@ -374,17 +392,18 @@ export function WalletBalancesPanel() {
           {/* Mode pills */}
           <div className="flex rounded-lg border border-border overflow-hidden shrink-0">
             {(["all", "folder", "group"] as const).map((mode) => (
-              <button
+              <Button
                 key={mode}
+                variant="ghost"
                 onClick={() => changeFilterMode(mode)}
-                className={`px-3 py-1.5 text-xs font-medium transition-colors capitalize ${
+                className={`h-auto rounded-none px-3 py-1.5 text-xs font-medium transition-colors capitalize ${
                   filterMode === mode
-                    ? "bg-primary text-primary-foreground"
+                    ? "bg-primary text-primary-foreground hover:bg-primary hover:text-primary-foreground"
                     : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
                 }`}
               >
                 {mode === "all" ? "All" : mode === "folder" ? "Folder" : "Asset Group"}
-              </button>
+              </Button>
             ))}
           </div>
 
@@ -441,19 +460,20 @@ export function WalletBalancesPanel() {
             const Icon = active ? (sortDir === "desc" ? ArrowDown : ArrowUp) : ArrowDown;
             const label = field === "balance" ? "XLM Balance" : field === "name" ? "Name" : "With Key";
             return (
-              <button
+              <Button
                 key={field}
+                variant="ghost"
                 onClick={() => toggleSort(field)}
-                className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-medium transition-colors border ${
+                className={`h-auto flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-medium transition-colors border ${
                   active
-                    ? "border-primary/50 bg-primary/10 text-foreground"
+                    ? "border-primary/50 bg-primary/10 text-foreground hover:bg-primary/10 hover:text-foreground"
                     : "border-border text-muted-foreground hover:text-foreground hover:bg-muted/40"
                 }`}
               >
                 {field === "key" && <KeyRound className="h-3 w-3" />}
                 {label}
                 <Icon className={`h-3 w-3 ${active ? "opacity-100" : "opacity-30"}`} />
-              </button>
+              </Button>
             );
           })}
         </div>
@@ -465,9 +485,13 @@ export function WalletBalancesPanel() {
           <p className="text-sm font-medium">Add Wallet</p>
           <p className="text-xs text-muted-foreground -mt-1">
             Wallet Manager is for accounts you can sign with. To track an address without a key, add it to an{" "}
-            <button className="underline hover:text-foreground transition-colors" onClick={() => router.push("/groups")}>
+            <Button
+              variant="link"
+              onClick={() => router.push("/groups")}
+              className="h-auto p-0 align-baseline text-xs font-normal text-inherit underline hover:text-foreground hover:bg-transparent transition-colors"
+            >
               Asset Group
-            </button>{" "}
+            </Button>{" "}
             instead.
           </p>
           <div className="grid grid-cols-2 gap-3">
@@ -484,12 +508,13 @@ export function WalletBalancesPanel() {
               {folders.length === 0 ? (
                 <p className="text-xs text-muted-foreground pt-1.5">
                   No folders yet —{" "}
-                  <button
-                    className="underline hover:text-foreground transition-colors"
+                  <Button
+                    variant="link"
                     onClick={() => router.push("/wallet-manager")}
+                    className="h-auto p-0 align-baseline text-xs font-normal text-inherit underline hover:text-foreground hover:bg-transparent transition-colors"
                   >
                     create one in Wallet Manager
-                  </button>
+                  </Button>
                 </p>
               ) : (
                 <Select value={newFolderId} onValueChange={setNewFolderId}>
@@ -613,21 +638,23 @@ export function WalletBalancesPanel() {
                     {bal === undefined || bal === "loading" ? (
                       <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground ml-auto" />
                     ) : bal === "unfunded" ? (
-                      <button
-                        className="text-xs text-muted-foreground/60 hover:text-muted-foreground transition-colors"
+                      <Button
+                        variant="ghost"
+                        className="h-auto p-0 text-xs text-muted-foreground/60 hover:bg-transparent hover:text-muted-foreground transition-colors"
                         onClick={() => retrySingle(wallet.publicKey)}
                         title="Account not yet funded — click to retry"
                       >
                         unfunded
-                      </button>
+                      </Button>
                     ) : bal === "error" ? (
-                      <button
-                        className="text-xs text-destructive/70 hover:text-destructive transition-colors"
+                      <Button
+                        variant="ghost"
+                        className="h-auto p-0 text-xs text-destructive/70 hover:bg-transparent hover:text-destructive transition-colors"
                         onClick={() => retrySingle(wallet.publicKey)}
                         title="Click to retry"
                       >
                         error ↺
-                      </button>
+                      </Button>
                     ) : (
                       <span className={`font-mono font-semibold ${isLow ? "text-destructive" : "text-purple-400"}`}>
                         {formatXlm(bal as number)}
@@ -638,37 +665,45 @@ export function WalletBalancesPanel() {
 
                   {/* Actions */}
                   <div className="flex items-center gap-1 justify-end">
-                    <button
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      className="h-7 w-7"
                       title={isCopied ? "Copied!" : "Copy address"}
-                      className="p-1.5 rounded hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
                       onClick={() => handleCopy(wallet.id, wallet.publicKey)}
                     >
                       {isCopied ? <Check className="h-3.5 w-3.5 text-green-500" /> : <Copy className="h-3.5 w-3.5" />}
-                    </button>
+                    </Button>
                     {!isActive && (
-                      <button
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        className="h-7 w-7"
                         title="Connect as active wallet"
-                        className="p-1.5 rounded hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
                         onClick={() => connect(wallet.id)}
                       >
                         <Zap className="h-3.5 w-3.5" />
-                      </button>
+                      </Button>
                     )}
-                    <button
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      className="h-7 w-7"
                       title="Investigate address"
-                      className="p-1.5 rounded hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
                       onClick={() => router.push(`/address-investigator?address=${wallet.publicKey}`)}
                     >
                       <Search className="h-3.5 w-3.5" />
-                    </button>
+                    </Button>
                     {hasSecretKey && (
-                      <button
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        className="h-7 w-7"
                         title="Go to Payments"
-                        className="p-1.5 rounded hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
                         onClick={() => router.push("/payments")}
                       >
                         <Send className="h-3.5 w-3.5" />
-                      </button>
+                      </Button>
                     )}
                   </div>
                 </div>
