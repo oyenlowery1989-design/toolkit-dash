@@ -30,7 +30,7 @@ import {
 } from "@/components/ui/card";
 import { useSavedAnalyses } from "@/hooks/use-saved-analyses";
 import type { SavedAnalysis } from "@/hooks/use-saved-analyses";
-import { ShortAddress } from "@/components/asset-lookup";
+import { ShortAddress } from "@/components/shared/ShortAddress";
 import { formatXlm } from "@/lib/format";
 import { timeAgo } from "@/lib/stellar-helpers";
 import { NETWORK_LABELS } from "@/lib/settings";

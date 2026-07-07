@@ -21,7 +21,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { ShortAddress } from "@/components/asset-lookup";
+import { ShortAddress } from "@/components/shared/ShortAddress";
 import { useSettings, resolveHorizonUrl } from "@/lib/settings";
 import { getErrorMessage } from "@/lib/stellar-helpers";
 import { useActiveWallet } from "@/hooks/use-active-wallet";

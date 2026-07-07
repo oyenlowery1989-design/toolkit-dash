@@ -27,7 +27,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { ShortAddress } from "@/components/asset-lookup/ShortAddress";
+import { ShortAddress } from "@/components/shared/ShortAddress";
 import { useAssetGroups } from "@/hooks/use-asset-groups";
 import type { GroupMemberRole } from "@/lib/asset-groups/types";
 import { ROLE_LABELS } from "@/lib/asset-groups/types";

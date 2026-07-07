@@ -14,7 +14,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useKnownCreators } from "@/hooks/use-known-creators";
-import { ShortAddress } from "@/components/asset-lookup";
+import { ShortAddress } from "@/components/shared/ShortAddress";
 import { useSettings } from "@/lib/settings";
 import type { KnownCreator } from "@/lib/intermediary-tracer/types";
 
