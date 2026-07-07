@@ -1,6 +1,7 @@
 "use client";
 
-import { Suspense } from "react";
+import { Suspense, useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { Loader2 } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { FingerprintTab } from "./FingerprintTab";
@@ -8,7 +9,26 @@ import { BulkTraceTab } from "./BulkTraceTab";
 import { WatchlistTab } from "./WatchlistTab";
 import { FlowGraphTab } from "./FlowGraphTab";
 
+type TabValue = "fingerprint" | "bulk" | "watchlist" | "graph";
+const VALID_TABS: TabValue[] = ["fingerprint", "bulk", "watchlist", "graph"];
+
+function InitialTabReader({ onTab }: { onTab: (t: TabValue) => void }) {
+  const searchParams = useSearchParams();
+  const tabParam = searchParams.get("tab");
+  const addressesParam = searchParams.get("addresses");
+  useEffect(() => {
+    if (tabParam && (VALID_TABS as string[]).includes(tabParam)) {
+      onTab(tabParam as TabValue);
+    } else if (addressesParam) {
+      onTab("bulk");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tabParam, addressesParam]);
+  return null;
+}
+
 export function TracerV2Panel() {
+  const [activeTab, setActiveTab] = useState<TabValue>("fingerprint");
   return (
     <div className="space-y-6">
       <div>
@@ -17,7 +37,10 @@ export function TracerV2Panel() {
           Correlate asset groups by shared operators using data already collected across the toolkit.
         </p>
       </div>
-      <Tabs defaultValue="fingerprint">
+      <Suspense fallback={null}>
+        <InitialTabReader onTab={setActiveTab} />
+      </Suspense>
+      <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as TabValue)}>
         <TabsList className="flex-wrap h-auto gap-y-1">
           <TabsTrigger value="fingerprint">Operator Fingerprint</TabsTrigger>
           <TabsTrigger value="bulk">Bulk Trace</TabsTrigger>

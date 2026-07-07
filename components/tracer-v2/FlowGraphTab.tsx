@@ -509,7 +509,7 @@ export function FlowGraphTab() {
                           Investigate <ExternalLink className="h-3 w-3" />
                         </a>
                         <a
-                          href={`/tracer-v2?addresses=${selectedNode.id}`}
+                          href={`/tracer-v2?tab=bulk&addresses=${encodeURIComponent(selectedNode.id)}`}
                           target="_blank"
                           rel="noopener noreferrer"
                           className="inline-flex items-center gap-1 text-primary hover:underline"

@@ -1,8 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { StrKey } from "stellar-sdk";
-import { Loader2, Trash2, ExternalLink, CheckCheck } from "lucide-react";
+import { Loader2, Trash2, ExternalLink, CheckCheck, AlertTriangle } from "lucide-react";
 import {
   Card,
   CardContent,
@@ -23,6 +23,7 @@ import {
 import { ShortAddress } from "@/components/shared/ShortAddress";
 import { useSettings } from "@/lib/settings";
 import { timeAgo } from "@/lib/stellar-helpers";
+import { authHeaders, waitForAuth } from "@/lib/db-client";
 import { useTracerWatchlist } from "@/hooks/use-tracer-watchlist";
 import { useTracerWatchEvents } from "@/hooks/use-tracer-watch-events";
 import { useKnownIntermediaries } from "@/hooks/use-known-intermediaries";
@@ -37,6 +38,16 @@ export function WatchlistTab() {
   const [label, setLabel] = useState("");
   const [addError, setAddError] = useState<string | null>(null);
   const [pickerId, setPickerId] = useState("");
+  const [disabled, setDisabled] = useState(false);
+
+  useEffect(() => {
+    waitForAuth().then(() =>
+      fetch("/api/tracer-watchlist/scheduler-status", { headers: authHeaders() })
+        .then((r) => r.json())
+        .then((d: { disabled: boolean }) => { if (d.disabled) setDisabled(true); })
+        .catch(() => {})
+    );
+  }, []);
 
   const isLoaded = watchlistLoaded && eventsLoaded;
 
@@ -47,6 +58,10 @@ export function WatchlistTab() {
     const trimmed = address.trim();
     if (!StrKey.isValidEd25519PublicKey(trimmed)) {
       setAddError("Enter a valid Stellar address (G...)");
+      return;
+    }
+    if (alreadyWatched(trimmed)) {
+      setAddError("This address is already being watched.");
       return;
     }
     setAddError(null);
@@ -73,6 +88,12 @@ export function WatchlistTab() {
 
   return (
     <div className="space-y-4">
+      {disabled && (
+        <div className="flex items-center gap-2 px-4 py-2.5 rounded-lg bg-yellow-500/10 border border-yellow-500/20 text-xs text-yellow-400">
+          <AlertTriangle className="h-3.5 w-3.5 flex-shrink-0" />
+          <span>This deployment has no local watch poller running — new watches will NOT be monitored and may silently disappear on reload. Add watches from your local dev environment instead.</span>
+        </div>
+      )}
       <Card>
         <CardHeader>
           <CardTitle>Watch an Address</CardTitle>
@@ -239,7 +260,7 @@ export function WatchlistTab() {
                     {ev.ledgerTime ? timeAgo(ev.ledgerTime) : ""}
                   </span>
                   <a
-                    href={`/tracer-v2?addresses=${encodeURIComponent(ev.accountCreated)}`}
+                    href={`/tracer-v2?tab=bulk&addresses=${encodeURIComponent(ev.accountCreated)}`}
                     target="_blank"
                     rel="noopener noreferrer"
                     onClick={(e) => e.stopPropagation()}
