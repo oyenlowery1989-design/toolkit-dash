@@ -18,6 +18,7 @@ import {
   Zap,
   Wallet,
   Loader2,
+  Send,
 } from "lucide-react";
 import {
   Card,
@@ -45,6 +46,7 @@ import { useSettings, resolveHorizonUrl } from "@/lib/settings";
 import type { Network } from "@/lib/settings";
 import { fetchHomeDomain } from "@/components/shared/ChainDisplay";
 import { ROLE_LABELS, ROLE_COLORS } from "@/lib/asset-groups/types";
+import { normalizeExternalUrl, resolveTelegramUrl } from "@/lib/asset-groups/links";
 import type {
   AssetGroup,
   GroupMember,
@@ -242,6 +244,12 @@ function GroupCard({
   const [renameError, setRenameError] = useState<string | null>(null);
   const [editingNotes, setEditingNotes] = useState(false);
   const [notesVal, setNotesVal] = useState(group.notes ?? "");
+  const [editingDomain, setEditingDomain] = useState(false);
+  const [domainVal, setDomainVal] = useState(group.domain ?? "");
+  const [editingTelegramChannel, setEditingTelegramChannel] = useState(false);
+  const [telegramChannelVal, setTelegramChannelVal] = useState(group.telegramChannel ?? "");
+  const [editingTelegramLink, setEditingTelegramLink] = useState(false);
+  const [telegramLinkVal, setTelegramLinkVal] = useState(group.telegramLink ?? "");
   const [addingMember, setAddingMember] = useState(false);
   const [editingMemberId, setEditingMemberId] = useState<string | null>(null);
 
@@ -346,6 +354,28 @@ function GroupCard({
                 >
                   <Pencil className="h-3.5 w-3.5" />
                 </Button>
+                {group.domain && (
+                  <a
+                    href={normalizeExternalUrl(group.domain)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    title={group.domain}
+                    className="text-muted-foreground hover:text-foreground transition-colors"
+                  >
+                    <Globe className="h-3.5 w-3.5" />
+                  </a>
+                )}
+                {resolveTelegramUrl(group.telegramChannel, group.telegramLink) && (
+                  <a
+                    href={resolveTelegramUrl(group.telegramChannel, group.telegramLink)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    title={group.telegramChannel || "Telegram"}
+                    className="text-muted-foreground hover:text-foreground transition-colors"
+                  >
+                    <Send className="h-3.5 w-3.5" />
+                  </a>
+                )}
               </div>
             )}
             {group.assetCode && (
@@ -441,6 +471,138 @@ function GroupCard({
                 {group.notes || (
                   <span className="italic">Add investigation notes…</span>
                 )}
+              </Button>
+            )}
+          </div>
+
+          {/* Website */}
+          <div className="space-y-1">
+            <Label className="text-xs text-muted-foreground">Website</Label>
+            {editingDomain ? (
+              <div className="flex gap-2">
+                <Input
+                  value={domainVal}
+                  onChange={(e) => setDomainVal(e.target.value)}
+                  className="text-xs"
+                  autoFocus
+                  placeholder="example.com"
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      updateGroup(group.id, { domain: domainVal });
+                      setEditingDomain(false);
+                    }
+                    if (e.key === "Escape") {
+                      setDomainVal(group.domain ?? "");
+                      setEditingDomain(false);
+                    }
+                  }}
+                />
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => {
+                    updateGroup(group.id, { domain: domainVal });
+                    setEditingDomain(false);
+                  }}
+                >
+                  <Check className="h-3.5 w-3.5" />
+                </Button>
+              </div>
+            ) : (
+              <Button
+                variant="ghost"
+                className="h-auto w-full justify-start text-left text-xs text-muted-foreground hover:text-foreground rounded px-2 py-1 border border-dashed border-border hover:border-muted-foreground transition-colors"
+                onClick={() => setEditingDomain(true)}
+              >
+                {group.domain || <span className="italic">Add website…</span>}
+              </Button>
+            )}
+          </div>
+
+          {/* Telegram Channel */}
+          <div className="space-y-1">
+            <Label className="text-xs text-muted-foreground">Telegram Channel</Label>
+            {editingTelegramChannel ? (
+              <div className="flex gap-2">
+                <Input
+                  value={telegramChannelVal}
+                  onChange={(e) => setTelegramChannelVal(e.target.value)}
+                  className="text-xs"
+                  autoFocus
+                  placeholder="channelname"
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      updateGroup(group.id, { telegramChannel: telegramChannelVal });
+                      setEditingTelegramChannel(false);
+                    }
+                    if (e.key === "Escape") {
+                      setTelegramChannelVal(group.telegramChannel ?? "");
+                      setEditingTelegramChannel(false);
+                    }
+                  }}
+                />
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => {
+                    updateGroup(group.id, { telegramChannel: telegramChannelVal });
+                    setEditingTelegramChannel(false);
+                  }}
+                >
+                  <Check className="h-3.5 w-3.5" />
+                </Button>
+              </div>
+            ) : (
+              <Button
+                variant="ghost"
+                className="h-auto w-full justify-start text-left text-xs text-muted-foreground hover:text-foreground rounded px-2 py-1 border border-dashed border-border hover:border-muted-foreground transition-colors"
+                onClick={() => setEditingTelegramChannel(true)}
+              >
+                {group.telegramChannel || <span className="italic">Add Telegram channel…</span>}
+              </Button>
+            )}
+          </div>
+
+          {/* Telegram Link */}
+          <div className="space-y-1">
+            <Label className="text-xs text-muted-foreground">Telegram Link</Label>
+            {editingTelegramLink ? (
+              <div className="flex gap-2">
+                <Input
+                  value={telegramLinkVal}
+                  onChange={(e) => setTelegramLinkVal(e.target.value)}
+                  className="text-xs"
+                  autoFocus
+                  placeholder="t.me/channelname"
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      updateGroup(group.id, { telegramLink: telegramLinkVal });
+                      setEditingTelegramLink(false);
+                    }
+                    if (e.key === "Escape") {
+                      setTelegramLinkVal(group.telegramLink ?? "");
+                      setEditingTelegramLink(false);
+                    }
+                  }}
+                />
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => {
+                    updateGroup(group.id, { telegramLink: telegramLinkVal });
+                    setEditingTelegramLink(false);
+                  }}
+                >
+                  <Check className="h-3.5 w-3.5" />
+                </Button>
+              </div>
+            ) : (
+              <Button
+                variant="ghost"
+                className="h-auto w-full justify-start text-left text-xs text-muted-foreground hover:text-foreground rounded px-2 py-1 border border-dashed border-border hover:border-muted-foreground transition-colors"
+                onClick={() => setEditingTelegramLink(true)}
+              >
+                {group.telegramLink || <span className="italic">Add Telegram link…</span>}
               </Button>
             )}
           </div>
