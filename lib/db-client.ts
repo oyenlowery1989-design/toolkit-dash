@@ -165,7 +165,9 @@ export function createDbCache<T>(): DbCache<T> {
         // that starts (or continues) after this call, not a no-op.
         return fetchPromise!.then(() => doFetch(endpoint));
       }
-      cache = null;
+      // Stale-while-revalidate: keep showing current data until the fresh GET
+      // lands. Nulling here blanks every consumer (list → empty/spinner) and a
+      // single failed fetch leaves the UI empty until a retry succeeds.
       return doFetch(endpoint);
     },
     invalidate() {
@@ -195,7 +197,7 @@ export function debounce<T extends () => void>(fn: T, ms: number): T {
   } as T;
 }
 
-export async function dbPost(endpoint: string, data: unknown): Promise<void> {
+export async function dbPost(endpoint: string, data: unknown): Promise<unknown> {
   await waitForAuth();
   let res: Response;
   try {
@@ -210,8 +212,12 @@ export async function dbPost(endpoint: string, data: unknown): Promise<void> {
   }
   if (!res.ok) {
     console.error(`[db] POST ${endpoint} failed: ${res.status}`);
-    throw new Error(`POST ${endpoint} failed: ${res.status}`);
+    const body = await res.json().catch(() => undefined);
+    const err = new Error(`POST ${endpoint} failed: ${res.status}`) as Error & { body?: unknown };
+    err.body = body;
+    throw err;
   }
+  return res.json().catch(() => undefined);
 }
 
 export async function dbPatch(endpoint: string, data: unknown): Promise<void> {

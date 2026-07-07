@@ -207,8 +207,43 @@ export async function POST(req: NextRequest) {
   if (body.type === "member") {
     const { id, groupId, address, role, label, notes, homeDomain } = body;
 
-    if (!isSupabaseOnly()) {
-      const db = getDb();
+    if (isSupabaseOnly()) {
+      const sb = getSupabase()!;
+      // IDOR guard: only let the caller add members to a group they own.
+      const { data: ownerGroup } = await sb
+        .from("asset_groups")
+        .select("id")
+        .eq("id", groupId)
+        .eq("user_id", userId!)
+        .single();
+      if (!ownerGroup) {
+        return NextResponse.json({ ok: false, error: "Not authorized" }, { status: 403 });
+      }
+      const { error } = await sb.from("asset_group_members").upsert(
+        {
+          id,
+          group_id: groupId,
+          address,
+          role,
+          label: label ?? null,
+          notes: notes ?? null,
+          home_domain: homeDomain ?? null,
+          added_at: now,
+        },
+        { onConflict: "group_id,address" },
+      );
+      if (error) {
+        if (error.code === "23503") {
+          return NextResponse.json({ ok: false, error: "group_not_found" }, { status: 409 });
+        }
+        return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
+      }
+      await sb.from("asset_groups").update({ updated_at: now }).eq("id", groupId).eq("user_id", userId!);
+      return NextResponse.json({ ok: true });
+    }
+
+    const db = getDb();
+    try {
       db.prepare(
         `INSERT INTO asset_group_members (id, group_id, address, role, label, notes, home_domain, added_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -219,6 +254,12 @@ export async function POST(req: NextRequest) {
            home_domain = excluded.home_domain`,
       ).run(id, groupId, address, role, label ?? null, notes ?? null, homeDomain ?? null, now);
       db.prepare("UPDATE asset_groups SET updated_at = ? WHERE id = ?").run(now, groupId);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message.toLowerCase().includes("foreign key")) {
+        return NextResponse.json({ ok: false, error: "group_not_found" }, { status: 409 });
+      }
+      throw error;
     }
 
     syncToSupabase(async () => {
@@ -258,20 +299,33 @@ export async function PATCH(req: NextRequest) {
   if (body.type === "group") {
     const { id, name, notes, assetCode, issuer, network } = body;
 
-    if (!isSupabaseOnly()) {
-      getDb()
-        .prepare(
-          `UPDATE asset_groups SET
-             name       = COALESCE(?, name),
-             notes      = COALESCE(?, notes),
-             asset_code = COALESCE(?, asset_code),
-             issuer     = COALESCE(?, issuer),
-             network    = COALESCE(?, network),
-             updated_at = ?
-           WHERE id = ?`,
-        )
-        .run(name ?? null, notes ?? null, assetCode ?? null, issuer ?? null, network ?? null, now, id);
+    if (isSupabaseOnly()) {
+      const patch: Record<string, unknown> = { updated_at: now };
+      if (name !== undefined) patch.name = name;
+      if (notes !== undefined) patch.notes = notes;
+      if (assetCode !== undefined) patch.asset_code = assetCode;
+      if (issuer !== undefined) patch.issuer = issuer;
+      if (network !== undefined) patch.network = network;
+      const { error } = await getSupabase()!.from("asset_groups").update(patch).eq("id", id).eq("user_id", userId!);
+      if (error) {
+        if (error.code === "23503") return NextResponse.json({ ok: false, error: "group_not_found" }, { status: 409 });
+        return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
+      }
+      return NextResponse.json({ ok: true });
     }
+
+    getDb()
+      .prepare(
+        `UPDATE asset_groups SET
+           name       = COALESCE(?, name),
+           notes      = COALESCE(?, notes),
+           asset_code = COALESCE(?, asset_code),
+           issuer     = COALESCE(?, issuer),
+           network    = COALESCE(?, network),
+           updated_at = ?
+         WHERE id = ?`,
+      )
+      .run(name ?? null, notes ?? null, assetCode ?? null, issuer ?? null, network ?? null, now, id);
 
     syncToSupabase(async () => {
       const patch: Record<string, unknown> = { updated_at: now };
@@ -289,19 +343,54 @@ export async function PATCH(req: NextRequest) {
   if (body.type === "member") {
     const { id, label, notes, role, homeDomain, groupId } = body;
 
-    if (!isSupabaseOnly()) {
-      const db = getDb();
-      db.prepare(
-        `UPDATE asset_group_members SET
-           label       = COALESCE(?, label),
-           notes       = COALESCE(?, notes),
-           role        = COALESCE(?, role),
-           home_domain = COALESCE(?, home_domain)
-         WHERE id = ?`,
-      ).run(label ?? null, notes ?? null, role ?? null, homeDomain ?? null, id);
-      if (groupId) {
-        db.prepare("UPDATE asset_groups SET updated_at = ? WHERE id = ?").run(now, groupId);
+    if (isSupabaseOnly()) {
+      const sb = getSupabase()!;
+      // IDOR guard: verify the member's parent group belongs to the caller.
+      const { data: member } = await sb
+        .from("asset_group_members")
+        .select("group_id")
+        .eq("id", id)
+        .single();
+      const { data: ownerGroup } = member
+        ? await sb
+            .from("asset_groups")
+            .select("id")
+            .eq("id", member.group_id)
+            .eq("user_id", userId!)
+            .single()
+        : { data: null };
+      if (!ownerGroup) {
+        return NextResponse.json({ ok: false, error: "Not authorized" }, { status: 403 });
       }
+      const patch: Record<string, unknown> = {};
+      if (label !== undefined) patch.label = label;
+      if (notes !== undefined) patch.notes = notes;
+      if (role !== undefined) patch.role = role;
+      if (homeDomain !== undefined) patch.home_domain = homeDomain;
+      if (Object.keys(patch).length > 0) {
+        const { error } = await sb.from("asset_group_members").update(patch).eq("id", id);
+        if (error) {
+          if (error.code === "23503") return NextResponse.json({ ok: false, error: "group_not_found" }, { status: 409 });
+          return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
+        }
+      }
+      if (groupId) {
+        await sb.from("asset_groups").update({ updated_at: now }).eq("id", groupId).eq("user_id", userId!);
+      }
+      return NextResponse.json({ ok: true });
+    }
+
+    const db = getDb();
+    db.prepare(
+      `UPDATE asset_group_members SET
+         label       = COALESCE(?, label),
+         notes       = COALESCE(?, notes),
+         role        = COALESCE(?, role),
+         home_domain = COALESCE(?, home_domain)
+       WHERE id = ?`,
+    ).run(label ?? null, notes ?? null, role ?? null, homeDomain ?? null, id);
+    if (groupId) {
+      db.prepare("UPDATE asset_groups SET updated_at = ? WHERE id = ?").run(now, groupId);
     }
 
     syncToSupabase(async () => {
@@ -333,13 +422,37 @@ export async function DELETE(req: NextRequest) {
   let key: string, type: string;
   try { ({ key, type } = await req.json()); } catch { return NextResponse.json({ error: "Invalid JSON" }, { status: 400 }); }
 
-  if (!isSupabaseOnly()) {
-    const db = getDb();
+  if (isSupabaseOnly()) {
+    const sb = getSupabase()!;
     if (type === "group") {
-      db.prepare("DELETE FROM asset_groups WHERE id = ?").run(key);
-    } else if (type === "member") {
-      db.prepare("DELETE FROM asset_group_members WHERE id = ?").run(key);
+      const { error } = await sb.from("asset_groups").delete().eq("id", key).eq("user_id", userId!);
+      if (error) {
+        if (error.code === "23503") return NextResponse.json({ ok: false, error: "group_not_found" }, { status: 409 });
+        return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
+      }
+    } else {
+      // asset_group_members has no user_id — scope via parent group ownership
+      const { data: member } = await sb.from("asset_group_members").select("group_id").eq("id", key).single();
+      if (member) {
+        const { data: parentGroup } = await sb.from("asset_groups").select("id").eq("id", member.group_id).eq("user_id", userId!).single();
+        if (parentGroup) {
+          const { error } = await sb.from("asset_group_members").delete().eq("id", key);
+          if (error) {
+            if (error.code === "23503") return NextResponse.json({ ok: false, error: "group_not_found" }, { status: 409 });
+            return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
+          }
+        }
+        // caller doesn't own the parent group — silently no-op, matches prior behavior
+      }
     }
+    return NextResponse.json({ ok: true });
+  }
+
+  const db = getDb();
+  if (type === "group") {
+    db.prepare("DELETE FROM asset_groups WHERE id = ?").run(key);
+  } else if (type === "member") {
+    db.prepare("DELETE FROM asset_group_members WHERE id = ?").run(key);
   }
 
   syncToSupabase(async () => {

@@ -26,12 +26,64 @@ function dbDeleteMember(id: string) {
 }
 const _cache = createDbCache<AssetGroup>();
 
+// Client group id -> promise resolving to the canonical server id.
+// Populated by createGroup, consumed by upsertMember/updateGroup/deleteGroup
+// so writes that race the group-create dedupe response target the right id.
+const _pendingGroupCreates = new Map<string, Promise<string>>();
+
+/**
+ * Rewrites a group's id (and all its members' groupId) from oldId to newId
+ * in the cache. If a group with newId already exists, merges oldId's members
+ * into it (skipping members whose address is already present) and drops the
+ * oldId entry. Always notifies subscribers.
+ */
+function remapGroupId(oldId: string, newId: string): void {
+  if (oldId === newId) return;
+  const groups = _cache.get();
+  const oldGroup = groups.find((g) => g.id === oldId);
+  if (!oldGroup) return;
+  const newGroup = groups.find((g) => g.id === newId);
+
+  if (newGroup) {
+    const mergedMembers = [...newGroup.members];
+    for (const m of oldGroup.members) {
+      if (!mergedMembers.some((existing) => existing.address === m.address)) {
+        mergedMembers.push({ ...m, groupId: newId });
+      }
+    }
+    _cache.set(
+      groups
+        .filter((g) => g.id !== oldId)
+        .map((g) =>
+          g.id === newId ? { ...g, members: mergedMembers } : g,
+        ),
+    );
+  } else {
+    _cache.set(
+      groups.map((g) =>
+        g.id !== oldId
+          ? g
+          : {
+              ...g,
+              id: newId,
+              members: g.members.map((m) => ({ ...m, groupId: newId })),
+            },
+      ),
+    );
+  }
+}
+
 export function getAssetGroupsSnapshot(): AssetGroup[] {
   return _cache.get();
 }
 
 export function isAssetGroupsLoaded(): boolean {
   return _cache.isLoaded();
+}
+
+/** Resolves to the canonical server id for a group that may still be mid-create. */
+export function waitForGroupId(clientId: string): Promise<string> {
+  return _pendingGroupCreates.get(clientId) ?? Promise.resolve(clientId);
 }
 
 export function useAssetGroups() {
@@ -96,7 +148,22 @@ export function useAssetGroups() {
         updatedAt: now,
       };
       _cache.set([newGroup, ..._cache.get()]);
-      dbPost(ENDPOINT, { type: "group", id, ...normalizedEntry }).catch(() => _cache.reload(ENDPOINT));
+      const p = dbPost(ENDPOINT, { type: "group", id, ...normalizedEntry })
+        .then((res: any) => {
+          const serverId = res?.reused && res?.existingId ? String(res.existingId) : id;
+          if (serverId !== id) remapGroupId(id, serverId);
+          return serverId;
+        })
+        .catch((err: any) => {
+          const existingId = err?.body?.existingId;
+          if (existingId) {
+            remapGroupId(id, String(existingId));
+            return String(existingId);
+          }
+          _cache.reload(ENDPOINT);
+          return id;
+        });
+      _pendingGroupCreates.set(id, p);
       return id;
     },
     [],
@@ -116,14 +183,29 @@ export function useAssetGroups() {
             g.id === id ? { ...g, ...patch, updatedAt: Date.now() } : g,
           ),
       );
-      dbPatch(ENDPOINT, { type: "group", id, ...patch }).catch(() => _cache.reload(ENDPOINT));
+      const pending = _pendingGroupCreates.get(id) ?? Promise.resolve(id);
+      pending
+        .then((realId) => {
+          if (realId !== id) {
+            _cache.set(
+              _cache
+                .get()
+                .map((g) =>
+                  g.id === realId ? { ...g, ...patch, updatedAt: Date.now() } : g,
+                ),
+            );
+          }
+          return dbPatch(ENDPOINT, { type: "group", id: realId, ...patch });
+        })
+        .catch(() => _cache.reload(ENDPOINT));
     },
     [],
   );
 
   const deleteGroup = useCallback((id: string) => {
     _cache.set(_cache.get().filter((g) => g.id !== id));
-    dbDeleteGroup(id);
+    const pending = _pendingGroupCreates.get(id) ?? Promise.resolve(id);
+    pending.then((realId) => dbDeleteGroup(realId));
   }, []);
 
   const upsertMember = useCallback(
@@ -149,7 +231,12 @@ export function useAssetGroups() {
           return { ...g, members, updatedAt: now };
         }),
       );
-      dbPost(ENDPOINT, { type: "member", id, groupId, ...member }).catch(() => _cache.reload(ENDPOINT));
+      const pending = _pendingGroupCreates.get(groupId) ?? Promise.resolve(groupId);
+      pending
+        .then((realGroupId) =>
+          dbPost(ENDPOINT, { type: "member", id, groupId: realGroupId, ...member }),
+        )
+        .catch(() => _cache.reload(ENDPOINT));
     },
     [],
   );
@@ -175,7 +262,12 @@ export function useAssetGroups() {
               },
         ),
       );
-      dbPatch(ENDPOINT, { type: "member", id: memberId, groupId, ...patch }).catch(() => _cache.reload(ENDPOINT));
+      const pending = _pendingGroupCreates.get(groupId) ?? Promise.resolve(groupId);
+      pending
+        .then((realGroupId) =>
+          dbPatch(ENDPOINT, { type: "member", id: memberId, groupId: realGroupId, ...patch }),
+        )
+        .catch(() => _cache.reload(ENDPOINT));
     },
     [],
   );
@@ -202,5 +294,6 @@ export function useAssetGroups() {
     upsertMember,
     updateMember,
     removeMember,
+    waitForGroupId,
   };
 }

@@ -19,7 +19,7 @@ describe("dbPost/dbPatch/dbDelete throw on failure", () => {
 
   it("dbPost resolves on 200", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("{}", { status: 200 })));
-    await expect(dbPost("/api/db/groups", {})).resolves.toBeUndefined();
+    await expect(dbPost("/api/db/groups", {})).resolves.toEqual({});
   });
 
   it("dbPatch throws on network error", async () => {
