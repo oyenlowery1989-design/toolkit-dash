@@ -173,7 +173,10 @@ export function useAssetGroups() {
     (
       id: string,
       patch: Partial<
-        Pick<AssetGroup, "name" | "notes" | "assetCode" | "issuer" | "network">
+        Pick<
+          AssetGroup,
+          "name" | "notes" | "assetCode" | "issuer" | "network" | "domain" | "telegramChannel" | "telegramLink"
+        >
       >,
     ) => {
       _cache.set(
