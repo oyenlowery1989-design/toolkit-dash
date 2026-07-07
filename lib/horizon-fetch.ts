@@ -7,6 +7,19 @@ export class HorizonFetchError extends Error {
 
 const RETRYABLE = new Set([429, 502, 503, 504]);
 
+// Parse a Retry-After header into milliseconds. Supports both the
+// delta-seconds form ("120") and the HTTP-date form. Returns null when the
+// header is absent or unparseable, so the caller falls back to exponential
+// backoff.
+function parseRetryAfter(value: string | null): number | null {
+  if (!value) return null;
+  const seconds = Number(value);
+  if (Number.isFinite(seconds)) return Math.max(0, seconds * 1000);
+  const dateMs = Date.parse(value);
+  if (Number.isFinite(dateMs)) return Math.max(0, dateMs - Date.now());
+  return null;
+}
+
 export async function fetchJson(
   url: string,
   signal?: AbortSignal,
@@ -14,9 +27,11 @@ export async function fetchJson(
 ): Promise<any> {
   const retries = opts.retries ?? 4;
   let lastStatus = 0;
+  let retryAfterMs: number | null = null;
   for (let attempt = 0; attempt <= retries; attempt++) {
     if (attempt > 0) {
-      const delay = 500 * 2 ** (attempt - 1);
+      const delay = retryAfterMs ?? 500 * 2 ** (attempt - 1);
+      retryAfterMs = null;
       opts.onLog?.(`  retry ${attempt}/${retries} in ${delay}ms (HTTP ${lastStatus})`);
       await new Promise<void>((resolve, reject) => {
         const onAbort = () => { clearTimeout(t); reject(new DOMException("aborted", "AbortError")); };
@@ -37,6 +52,9 @@ export async function fetchJson(
     lastStatus = res.status;
     if (!RETRYABLE.has(res.status)) throw new HorizonFetchError(res.status, url);
     if (attempt === retries) throw new HorizonFetchError(res.status, url);
+    // Honour a server-provided Retry-After for the next backoff sleep;
+    // falls back to exponential backoff when the header is absent.
+    retryAfterMs = parseRetryAfter(res.headers.get("retry-after"));
   }
   throw new HorizonFetchError(lastStatus, url); // unreachable guard (finding F9)
 }

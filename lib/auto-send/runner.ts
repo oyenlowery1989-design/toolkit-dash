@@ -26,7 +26,7 @@ const NETWORK_PASSPHRASES: Record<string, string> = {
 const DEFAULT_MIN_RESERVE = 10.0;
 const FEE_BUDGET = 1.0; // flat 1 XLM safety buffer for fees
 
-function extractError(err: unknown): string {
+export function extractError(err: unknown): string {
   if (err && typeof err === "object") {
     const e = err as Record<string, unknown>;
     // Stellar SDK 400 error — result_codes live in response.data.extras
@@ -55,11 +55,11 @@ async function loadNativeBalance(server: InstanceType<typeof Server>, address: s
   );
 }
 
-function calcAmount(spendable: number, percentage: number): number {
+export function calcAmount(spendable: number, percentage: number): number {
   return Math.floor(spendable * (percentage / 100) * 1e7) / 1e7;
 }
 
-function skipReason(spendable: number, amount: number, minThreshold: number, paused?: boolean): string | undefined {
+export function skipReason(spendable: number, amount: number, minThreshold: number, paused?: boolean): string | undefined {
   if (paused) return "Paused";
   if (amount <= 0) return `Spendable ${spendable.toFixed(7)} XLM — too low`;
   if (minThreshold > 0 && amount < minThreshold) return `Below minimum threshold (${minThreshold} XLM)`;
@@ -80,7 +80,7 @@ function logResult(groupId: string, walletAddress: string, result: DestinationRu
 }
 
 /** Compute how much each destination receives, handling remainder destinations and max caps. */
-function calcAmounts(spendable: number, destinations: AutoSendGroup["destinations"]): Map<string, number> {
+export function calcAmounts(spendable: number, destinations: AutoSendGroup["destinations"]): Map<string, number> {
   const amounts = new Map<string, number>();
   // First pass: fixed-% destinations
   let fixedTotal = 0;

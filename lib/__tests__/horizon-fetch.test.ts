@@ -40,6 +40,45 @@ describe("fetchJson", () => {
     expect(f).toHaveBeenCalledTimes(1);
   });
 
+  it("respects Retry-After header (seconds) as the backoff delay", async () => {
+    const f = vi.fn()
+      .mockResolvedValueOnce(
+        new Response("rate", { status: 429, headers: { "Retry-After": "2" } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: 5 }), { status: 200 }));
+    vi.stubGlobal("fetch", f);
+    vi.useFakeTimers();
+
+    const p = fetchJson("http://x");
+    // Default exponential backoff would be 500ms; Retry-After demands 2000ms,
+    // so no retry should have fired yet at the 500ms mark.
+    await vi.advanceTimersByTimeAsync(500);
+    expect(f).toHaveBeenCalledTimes(1);
+    // After the full 2000ms header delay the retry fires and succeeds.
+    await vi.advanceTimersByTimeAsync(1500);
+    await expect(p).resolves.toEqual({ ok: 5 });
+    expect(f).toHaveBeenCalledTimes(2);
+
+    vi.useRealTimers();
+  });
+
+  it("falls back to exponential backoff when Retry-After header absent", async () => {
+    const f = vi.fn()
+      .mockResolvedValueOnce(new Response("x", { status: 503 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: 6 }), { status: 200 }));
+    vi.stubGlobal("fetch", f);
+    vi.useFakeTimers();
+
+    const p = fetchJson("http://x");
+    // Exponential backoff for the first retry is 500ms.
+    await vi.advanceTimersByTimeAsync(499);
+    expect(f).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+    await expect(p).resolves.toEqual({ ok: 6 });
+    expect(f).toHaveBeenCalledTimes(2);
+
+    vi.useRealTimers();
+  });
+
   it("rethrows abort without retry", async () => {
     const err = new DOMException("aborted", "AbortError");
     const f = vi.fn().mockRejectedValue(err);

@@ -338,12 +338,14 @@ function GroupCard({
             ) : (
               <div className="flex items-center gap-2">
                 <CardTitle className="text-base">{group.name}</CardTitle>
-                <button
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="h-6 w-6 text-muted-foreground hover:text-foreground transition-colors"
                   onClick={() => setEditingName(true)}
-                  className="text-muted-foreground hover:text-foreground transition-colors"
                 >
                   <Pencil className="h-3.5 w-3.5" />
-                </button>
+                </Button>
               </div>
             )}
             {group.assetCode && (
@@ -431,14 +433,15 @@ function GroupCard({
                 </Button>
               </div>
             ) : (
-              <button
-                className="w-full text-left text-xs text-muted-foreground hover:text-foreground rounded px-2 py-1 border border-dashed border-border hover:border-muted-foreground transition-colors"
+              <Button
+                variant="ghost"
+                className="h-auto w-full justify-start text-left text-xs text-muted-foreground hover:text-foreground rounded px-2 py-1 border border-dashed border-border hover:border-muted-foreground transition-colors"
                 onClick={() => setEditingNotes(true)}
               >
                 {group.notes || (
                   <span className="italic">Add investigation notes…</span>
                 )}
-              </button>
+              </Button>
             )}
           </div>
 
@@ -534,18 +537,22 @@ function GroupCard({
                           />
                         </td>
                         <td className="px-2 py-1.5 flex gap-1">
-                          <button
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="h-6 w-6 text-green-500 hover:text-green-400"
                             onClick={() => saveMember(m)}
-                            className="text-green-500 hover:text-green-400"
                           >
                             <Check className="h-3.5 w-3.5" />
-                          </button>
-                          <button
+                          </Button>
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="h-6 w-6 text-muted-foreground hover:text-foreground"
                             onClick={() => setEditingMemberId(null)}
-                            className="text-muted-foreground hover:text-foreground"
                           >
                             <X className="h-3.5 w-3.5" />
-                          </button>
+                          </Button>
                         </td>
                       </tr>
                     ) : (
@@ -600,21 +607,25 @@ function GroupCard({
                                         Active
                                       </span>
                                     ) : (
-                                      <button
+                                      <Button
+                                        size="icon"
+                                        variant="ghost"
                                         title={`Connect ${walletEntry.name}`}
-                                        className="text-muted-foreground hover:text-foreground transition-colors"
+                                        className="h-6 w-6 text-muted-foreground hover:text-foreground transition-colors"
                                         onClick={() => connect(walletEntry.id)}
                                       >
                                         <Zap className="h-3.5 w-3.5" />
-                                      </button>
+                                      </Button>
                                     )}
-                                    <button
+                                    <Button
+                                      size="icon"
+                                      variant="ghost"
                                       title="Open in Wallet Manager"
-                                      className="text-muted-foreground hover:text-foreground transition-colors"
+                                      className="h-6 w-6 text-muted-foreground hover:text-foreground transition-colors"
                                       onClick={() => router.push("/wallet-manager")}
                                     >
                                       <Wallet className="h-3.5 w-3.5" />
-                                    </button>
+                                    </Button>
                                     <span className="w-px h-3 bg-border mx-0.5" />
                                   </>
                                 )}
@@ -627,18 +638,22 @@ function GroupCard({
                                 >
                                   <ExternalLink className="h-3.5 w-3.5" />
                                 </a>
-                                <button
+                                <Button
+                                  size="icon"
+                                  variant="ghost"
+                                  className="h-6 w-6 text-muted-foreground hover:text-foreground transition-colors"
                                   onClick={() => startEditMember(m)}
-                                  className="text-muted-foreground hover:text-foreground transition-colors"
                                 >
                                   <Pencil className="h-3.5 w-3.5" />
-                                </button>
-                                <button
+                                </Button>
+                                <Button
+                                  size="icon"
+                                  variant="ghost"
+                                  className="h-6 w-6 text-muted-foreground hover:text-destructive transition-colors"
                                   onClick={() => removeMember(group.id, m.id)}
-                                  className="text-muted-foreground hover:text-destructive transition-colors"
                                 >
                                   <Trash2 className="h-3.5 w-3.5" />
-                                </button>
+                                </Button>
                               </div>
                             );
                           })()}
