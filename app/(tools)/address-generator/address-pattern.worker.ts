@@ -39,7 +39,7 @@ self.onmessage = (e: MessageEvent<WorkerConfig>) => {
         self.postMessage({
           type: "found",
           key: { publicKey: pub, secret: pair.secret() },
-          attempts,
+          attempts: attempts + 1,
         });
       }
 

@@ -46,6 +46,7 @@ import {
   DatabaseZap,
 } from "lucide-react";
 import { useSettings } from "@/lib/settings";
+import { shortAddr } from "@/lib/format";
 import QRCodeLib from "qrcode";
 import { toast } from "sonner";
 
@@ -245,13 +246,15 @@ function SecretKeyModal({
             <ShieldAlert className="h-5 w-5" />
             <span className="font-semibold">Secret Key — Handle With Care</span>
           </div>
-          <button
+          <Button
             onClick={onClose}
-            className="rounded-md p-1 text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+            variant="ghost"
+            size="icon"
+            className="h-auto w-auto p-1 text-muted-foreground hover:text-foreground"
             aria-label="Close"
           >
             <X className="h-4 w-4" />
-          </button>
+          </Button>
         </div>
 
         {/* Security checklist */}
@@ -420,6 +423,11 @@ export default function AddressPatternGeneratorPage() {
   const foundCountRef = useRef<number>(0);
   const targetCountRef = useRef<number>(1);
   const seenPublicKeysRef = useRef<Set<string>>(new Set());
+  // Shared staleness guard: set whenever a run is terminated (either via
+  // stopAll's internal completion path or handleStop), so worker messages
+  // already in flight at termination time are ignored regardless of which
+  // code path triggered the termination.
+  const finishedRef = useRef<boolean>(false);
 
   useEffect(() => {
     return () => {
@@ -482,11 +490,11 @@ export default function AddressPatternGeneratorPage() {
 
     // Shared mutable state across worker closures (not React state — intentional).
     const workerAttempts = new Array<number>(threadCount).fill(0);
-    let finished = false;
+    finishedRef.current = false;
     let exhaustedCount = 0;
 
     const stopAll = () => {
-      finished = true;
+      finishedRef.current = true;
       workersRef.current.forEach((w) => w.terminate());
       workersRef.current = [];
     };
@@ -498,7 +506,7 @@ export default function AddressPatternGeneratorPage() {
       workersRef.current.push(worker);
 
       worker.onmessage = (e) => {
-        if (finished) return;
+        if (finishedRef.current) return;
         const { type, attempts: wa, key, message } = e.data;
 
         if (type === "progress") {
@@ -574,6 +582,7 @@ export default function AddressPatternGeneratorPage() {
   };
 
   const handleStop = () => {
+    finishedRef.current = true;
     workersRef.current.forEach((w) => w.terminate());
     workersRef.current = [];
     setIsRunning(false);
@@ -706,15 +715,17 @@ export default function AddressPatternGeneratorPage() {
           <CardContent className="space-y-6">
             {/* Advanced mode toggle */}
             <div className="flex items-center justify-end">
-              <button
+              <Button
                 onClick={() => setAdvancedMode(!advancedMode)}
                 disabled={isRunning}
-                className="text-sm text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
+                variant="ghost"
+                size="sm"
+                className="h-auto p-0 text-sm text-muted-foreground hover:text-foreground hover:bg-transparent"
               >
                 {advancedMode
                   ? "Simple Search"
                   : "Advanced Search (prefix + suffix)"}
-              </button>
+              </Button>
             </div>
 
             <div className="space-y-2">
@@ -1199,10 +1210,10 @@ export default function AddressPatternGeneratorPage() {
                       <span>{entry.attempts.toLocaleString()} attempts</span>
                     </div>
                     <p
-                      className="font-mono text-xs text-muted-foreground truncate"
+                      className="font-mono text-xs text-muted-foreground"
                       title={entry.publicKey}
                     >
-                      {entry.publicKey}
+                      {shortAddr(entry.publicKey)}
                     </p>
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
@@ -1223,6 +1234,9 @@ export default function AddressPatternGeneratorPage() {
                                 ),
                               2000,
                             );
+                          })
+                          .catch(() => {
+                            toast.error("Clipboard access was denied");
                           });
                       }}
                     >
