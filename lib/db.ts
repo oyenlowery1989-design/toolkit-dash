@@ -110,14 +110,17 @@ function initDb(): Database.Database {
     -- ── Asset Groups (case files — cluster related addresses around an asset) ─
 
     CREATE TABLE IF NOT EXISTS asset_groups (
-      id          TEXT    PRIMARY KEY,
-      name        TEXT    NOT NULL,
-      asset_code  TEXT,
-      issuer      TEXT,
-      network     TEXT    NOT NULL DEFAULT 'public',
-      notes       TEXT,
-      created_at  INTEGER NOT NULL,
-      updated_at  INTEGER NOT NULL
+      id               TEXT    PRIMARY KEY,
+      name             TEXT    NOT NULL,
+      asset_code       TEXT,
+      issuer           TEXT,
+      network          TEXT    NOT NULL DEFAULT 'public',
+      notes            TEXT,
+      domain           TEXT,
+      telegram_channel TEXT,
+      telegram_link    TEXT,
+      created_at       INTEGER NOT NULL,
+      updated_at       INTEGER NOT NULL
     );
 
     CREATE UNIQUE INDEX IF NOT EXISTS idx_asset_groups_identity
@@ -485,6 +488,18 @@ function initDb(): Database.Database {
   const creatorCols = (db.pragma("table_info(known_creators)") as { name: string }[]).map((c) => c.name);
   if (!creatorCols.includes("parent_address")) {
     db.exec(`ALTER TABLE known_creators ADD COLUMN parent_address TEXT`);
+  }
+
+  // ── Asset groups migration: add domain/telegram columns if missing ────────
+  const assetGroupCols = (db.pragma("table_info(asset_groups)") as { name: string }[]).map((c) => c.name);
+  if (!assetGroupCols.includes("domain")) {
+    db.exec(`ALTER TABLE asset_groups ADD COLUMN domain TEXT`);
+  }
+  if (!assetGroupCols.includes("telegram_channel")) {
+    db.exec(`ALTER TABLE asset_groups ADD COLUMN telegram_channel TEXT`);
+  }
+  if (!assetGroupCols.includes("telegram_link")) {
+    db.exec(`ALTER TABLE asset_groups ADD COLUMN telegram_link TEXT`);
   }
 
   // ── Wallet migration: ensure id + folder_id columns exist ─────────────────

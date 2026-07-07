@@ -12,7 +12,7 @@ CREATE TABLE IF NOT EXISTS saved_searches (id BIGSERIAL PRIMARY KEY, user_id TEX
 CREATE INDEX IF NOT EXISTS idx_saved_searches_user ON saved_searches(user_id);
 CREATE TABLE IF NOT EXISTS bulk_run_history (id TEXT PRIMARY KEY, user_id TEXT NOT NULL DEFAULT '', network TEXT NOT NULL, memo TEXT NOT NULL, recipient_count INTEGER NOT NULL, success_count INTEGER NOT NULL, failed_count INTEGER NOT NULL, ran_at BIGINT NOT NULL);
 CREATE INDEX IF NOT EXISTS idx_bulk_run_history_user ON bulk_run_history(user_id);
-CREATE TABLE IF NOT EXISTS asset_groups (id TEXT PRIMARY KEY, user_id TEXT NOT NULL DEFAULT '', name TEXT NOT NULL, asset_code TEXT, issuer TEXT, network TEXT NOT NULL DEFAULT 'public', notes TEXT, created_at BIGINT NOT NULL, updated_at BIGINT NOT NULL);
+CREATE TABLE IF NOT EXISTS asset_groups (id TEXT PRIMARY KEY, user_id TEXT NOT NULL DEFAULT '', name TEXT NOT NULL, asset_code TEXT, issuer TEXT, network TEXT NOT NULL DEFAULT 'public', notes TEXT, domain TEXT, telegram_channel TEXT, telegram_link TEXT, created_at BIGINT NOT NULL, updated_at BIGINT NOT NULL);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_asset_groups_identity ON asset_groups(user_id, asset_code, issuer, network) WHERE asset_code IS NOT NULL AND issuer IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_asset_groups_user ON asset_groups(user_id);
 CREATE TABLE IF NOT EXISTS asset_group_members (id TEXT PRIMARY KEY, group_id TEXT NOT NULL REFERENCES asset_groups(id) ON DELETE CASCADE, address TEXT NOT NULL, role TEXT NOT NULL, label TEXT, notes TEXT, home_domain TEXT, added_at BIGINT NOT NULL, UNIQUE(group_id, address));
