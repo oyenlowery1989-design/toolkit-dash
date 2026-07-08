@@ -183,8 +183,7 @@ export function useAssetGroups() {
           | "domain"
           | "telegramChannel"
           | "telegramLink"
-          | "personName"
-          | "personRole"
+          | "personId"
         >
       >,
     ) => {
@@ -213,6 +212,16 @@ export function useAssetGroups() {
     },
     [],
   );
+
+  const unlinkGroupPerson = useCallback((id: string) => {
+    _cache.set(
+      _cache.get().map((g) => (g.id === id ? { ...g, personId: undefined, updatedAt: Date.now() } : g)),
+    );
+    const pending = _pendingGroupCreates.get(id) ?? Promise.resolve(id);
+    pending
+      .then((realId) => dbPatch(ENDPOINT, { type: "group", id: realId, clearPersonId: true }))
+      .catch(() => _cache.reload(ENDPOINT));
+  }, []);
 
   const deleteGroup = useCallback((id: string) => {
     _cache.set(_cache.get().filter((g) => g.id !== id));
@@ -302,6 +311,7 @@ export function useAssetGroups() {
     isLoaded: _cache.isLoaded(),
     createGroup,
     updateGroup,
+    unlinkGroupPerson,
     deleteGroup,
     upsertMember,
     updateMember,
