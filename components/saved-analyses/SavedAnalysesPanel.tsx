@@ -231,13 +231,13 @@ function ConfirmDeleteButton({
     <button
       className={
         confirming
-          ? "text-destructive animate-pulse"
+          ? "text-xs font-semibold whitespace-nowrap text-destructive px-1.5 py-0.5 rounded bg-destructive/15 hover:bg-destructive/25"
           : className ?? "text-muted-foreground hover:text-destructive"
       }
       title={confirming ? "Click again to confirm delete" : title}
       onClick={onClick}
     >
-      <Trash2 className={iconClassName ?? "h-3.5 w-3.5"} />
+      {confirming ? "Confirm delete" : <Trash2 className={iconClassName ?? "h-3.5 w-3.5"} />}
     </button>
   );
 }
@@ -379,10 +379,10 @@ function AnalysisCard({ group, xlmUsdPrice }: { group: SavedAnalysis[]; xlmUsdPr
           </Button>
           <Button
             variant="ghost"
-            size="icon"
+            size={confirmingDelete ? "sm" : "icon"}
             className={
               confirmingDelete
-                ? "h-8 w-8 bg-destructive/15 text-destructive animate-pulse"
+                ? "h-8 px-2 text-xs font-semibold whitespace-nowrap bg-destructive/15 text-destructive hover:bg-destructive/25 hover:text-destructive"
                 : "h-8 w-8 text-muted-foreground hover:text-destructive"
             }
             title={
@@ -394,7 +394,7 @@ function AnalysisCard({ group, xlmUsdPrice }: { group: SavedAnalysis[]; xlmUsdPr
             }
             onClick={handleDeleteClick}
           >
-            <Trash2 className="h-4 w-4" />
+            {confirmingDelete ? "Confirm delete" : <Trash2 className="h-4 w-4" />}
           </Button>
         </div>
       </div>
@@ -701,16 +701,16 @@ function TableRow({ analysis: a }: { analysis: SavedAnalysis }) {
           </Button>
           <Button
             variant="ghost"
-            size="icon"
+            size={confirmingDelete ? "sm" : "icon"}
             className={
               confirmingDelete
-                ? "h-7 w-7 bg-destructive/15 text-destructive animate-pulse"
+                ? "h-7 px-2 text-xs font-semibold whitespace-nowrap bg-destructive/15 text-destructive hover:bg-destructive/25 hover:text-destructive"
                 : "h-7 w-7 text-muted-foreground hover:text-destructive"
             }
             title={confirmingDelete ? "Click again to confirm delete" : "Delete"}
             onClick={handleDeleteClick}
           >
-            <Trash2 className="h-3.5 w-3.5" />
+            {confirmingDelete ? "Confirm delete" : <Trash2 className="h-3.5 w-3.5" />}
           </Button>
         </div>
       </td>
