@@ -22,12 +22,23 @@ function dbDeleteAddress(id: string) {
 }
 const _cache = createDbCache<Person>();
 
+// asset_groups.person_id is a foreign key — a PATCH linking a group to a
+// still-in-flight new person can commit before the person's own INSERT does,
+// tripping the FK constraint. Callers that immediately link a freshly created
+// person (e.g. GroupsPanel's "+ New Person" flow) must await this first.
+const _pendingPersonCreates = new Map<string, Promise<void>>();
+
 export function getPersonsSnapshot(): Person[] {
   return _cache.get();
 }
 
 export function isPersonsLoaded(): boolean {
   return _cache.isLoaded();
+}
+
+/** Resolves once a person created via createPerson has been persisted server-side. */
+export function waitForPersonId(id: string): Promise<string> {
+  return (_pendingPersonCreates.get(id) ?? Promise.resolve()).then(() => id);
 }
 
 export function usePersons() {
@@ -61,8 +72,13 @@ export function usePersons() {
       updatedAt: now,
     };
     _cache.set([newPerson, ..._cache.get()]);
-    dbPost(ENDPOINT, { type: "person", id, name: nameTrimmed, role: entry.role, notes: entry.notes })
-      .catch(() => _cache.reload(ENDPOINT));
+    const p = dbPost(ENDPOINT, { type: "person", id, name: nameTrimmed, role: entry.role, notes: entry.notes })
+      .then(() => undefined)
+      .catch((err) => {
+        _cache.reload(ENDPOINT);
+        throw err;
+      });
+    _pendingPersonCreates.set(id, p);
     return id;
   }, []);
 

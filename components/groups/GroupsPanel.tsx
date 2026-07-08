@@ -694,7 +694,9 @@ function GroupCard({
                     if (newPersonMode) {
                       if (!newPersonName.trim()) return;
                       const id = createPerson({ name: newPersonName, role: newPersonRole || undefined });
-                      waitForPersonId(id).then(() => updateGroup(group.id, { personId: id }));
+                      waitForPersonId(id)
+                        .then(() => updateGroup(group.id, { personId: id }))
+                        .catch(() => {});
                       setNewPersonName("");
                       setNewPersonRole("");
                     } else if (selectedPersonId) {
