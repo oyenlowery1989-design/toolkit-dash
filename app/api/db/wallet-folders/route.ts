@@ -52,14 +52,26 @@ export async function POST(req: NextRequest) {
   const trimmedId = (id as string).trim();
   const trimmedName = (name as string).trim();
 
-  if (!isSupabaseOnly()) {
-    try {
-      getDb().prepare(
-        "INSERT INTO wallet_folders (id, name, position) VALUES (?, ?, ?)"
-      ).run(trimmedId, trimmedName, position);
-    } catch {
-      return NextResponse.json({ error: "DB error" }, { status: 500 });
+  if (isSupabaseOnly()) {
+    const { error } = await getSupabase()!.from("wallet_folders").upsert({
+      id: trimmedId,
+      user_id: userId,
+      name: trimmedName,
+      position: position as number,
+    });
+    if (error) {
+      console.error("[wallet-folders] POST failed:", error);
+      return NextResponse.json({ error: error.message }, { status: 500 });
     }
+    return NextResponse.json({ ok: true });
+  }
+
+  try {
+    getDb().prepare(
+      "INSERT INTO wallet_folders (id, name, position) VALUES (?, ?, ?)"
+    ).run(trimmedId, trimmedName, position);
+  } catch {
+    return NextResponse.json({ error: "DB error" }, { status: 500 });
   }
 
   syncToSupabase(() =>
@@ -98,12 +110,23 @@ export async function PATCH(req: NextRequest) {
   const trimmedId = (id as string).trim();
   const trimmedName = (name as string).trim();
 
-  if (!isSupabaseOnly()) {
-    try {
-      getDb().prepare("UPDATE wallet_folders SET name = ? WHERE id = ?").run(trimmedName, trimmedId);
-    } catch {
-      return NextResponse.json({ error: "DB error" }, { status: 500 });
+  if (isSupabaseOnly()) {
+    const { error } = await getSupabase()!
+      .from("wallet_folders")
+      .update({ name: trimmedName })
+      .eq("id", trimmedId)
+      .eq("user_id", userId!);
+    if (error) {
+      console.error("[wallet-folders] PATCH failed:", error);
+      return NextResponse.json({ error: error.message }, { status: 500 });
     }
+    return NextResponse.json({ ok: true });
+  }
+
+  try {
+    getDb().prepare("UPDATE wallet_folders SET name = ? WHERE id = ?").run(trimmedName, trimmedId);
+  } catch {
+    return NextResponse.json({ error: "DB error" }, { status: 500 });
   }
 
   syncToSupabase(() =>
@@ -133,18 +156,29 @@ export async function DELETE(req: NextRequest) {
 
   const trimmedId = (key as string).trim();
 
-  if (!isSupabaseOnly()) {
-    try {
-      getDb().transaction(() => {
-        getDb().prepare("DELETE FROM wallets WHERE folder_id = ?").run(trimmedId);
-        getDb().prepare("DELETE FROM wallet_folders WHERE id = ?").run(trimmedId);
-      })();
-    } catch {
-      return NextResponse.json({ error: "DB error" }, { status: 500 });
+  if (isSupabaseOnly()) {
+    // On Supabase, wallets FK cascades on delete (defined in schema)
+    const { error } = await getSupabase()!
+      .from("wallet_folders")
+      .delete()
+      .eq("id", trimmedId)
+      .eq("user_id", userId!);
+    if (error) {
+      console.error("[wallet-folders] DELETE failed:", error);
+      return NextResponse.json({ error: error.message }, { status: 500 });
     }
+    return NextResponse.json({ ok: true });
   }
 
-  // On Supabase, wallets FK cascades on delete (defined in schema)
+  try {
+    getDb().transaction(() => {
+      getDb().prepare("DELETE FROM wallets WHERE folder_id = ?").run(trimmedId);
+      getDb().prepare("DELETE FROM wallet_folders WHERE id = ?").run(trimmedId);
+    })();
+  } catch {
+    return NextResponse.json({ error: "DB error" }, { status: 500 });
+  }
+
   syncToSupabase(() =>
     getSupabase()!.from("wallet_folders").delete().eq("id", trimmedId).eq("user_id", userId!),
   );

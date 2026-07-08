@@ -45,18 +45,45 @@ export async function POST(req: NextRequest) {
   try { b = await req.json(); } catch { return NextResponse.json({ error: "Invalid JSON" }, { status: 400 }); }
   const now = b.ranAt ?? Date.now();
 
-  if (!isSupabaseOnly()) {
-    const db = getDb();
-    db.prepare(
-      `INSERT OR REPLACE INTO bulk_run_history
-         (id, network, memo, recipient_count, success_count, failed_count, ran_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    ).run(b.id, b.network, b.memo, b.recipientCount, b.successCount, b.failedCount, now);
-    db.prepare(
-      `DELETE FROM bulk_run_history WHERE id NOT IN
-       (SELECT id FROM bulk_run_history ORDER BY ran_at DESC LIMIT ?)`,
-    ).run(MAX);
+  if (isSupabaseOnly()) {
+    const sb = getSupabase()!;
+    const { error: upsertError } = await sb.from("bulk_run_history").upsert({
+      user_id: userId,
+      id: b.id,
+      network: b.network,
+      memo: b.memo,
+      recipient_count: b.recipientCount,
+      success_count: b.successCount,
+      failed_count: b.failedCount,
+      ran_at: now,
+    });
+    if (upsertError) {
+      console.error("[bulk-runs] POST failed:", upsertError);
+      return NextResponse.json({ error: upsertError.message }, { status: 500 });
+    }
+    const { data: oldest } = await sb
+      .from("bulk_run_history")
+      .select("id")
+      .eq("user_id", userId!)
+      .order("ran_at", { ascending: true })
+      .limit(100);
+    if (oldest && oldest.length > MAX) {
+      const toDelete = oldest.slice(0, oldest.length - MAX).map((r) => r.id);
+      await sb.from("bulk_run_history").delete().eq("user_id", userId!).in("id", toDelete);
+    }
+    return NextResponse.json({ ok: true });
   }
+
+  const db = getDb();
+  db.prepare(
+    `INSERT OR REPLACE INTO bulk_run_history
+       (id, network, memo, recipient_count, success_count, failed_count, ran_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+  ).run(b.id, b.network, b.memo, b.recipientCount, b.successCount, b.failedCount, now);
+  db.prepare(
+    `DELETE FROM bulk_run_history WHERE id NOT IN
+     (SELECT id FROM bulk_run_history ORDER BY ran_at DESC LIMIT ?)`,
+  ).run(MAX);
 
   syncToSupabase(async () => {
     const sb = getSupabase()!;

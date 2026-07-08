@@ -44,18 +44,35 @@ export async function POST(req: NextRequest) {
   }
   const now = b.addedAt ?? Date.now();
 
-  if (!isSupabaseOnly()) {
-    getDb()
-      .prepare(
-        `INSERT INTO known_creators (address, name, notes, parent_address, added_at)
-         VALUES (?, ?, ?, ?, ?)
-         ON CONFLICT(address) DO UPDATE SET
-           name = excluded.name,
-           notes = excluded.notes,
-           parent_address = COALESCE(excluded.parent_address, parent_address)`,
-      )
-      .run(b.address, b.name, b.notes ?? null, b.parentAddress ?? null, now);
+  if (isSupabaseOnly()) {
+    const { error } = await getSupabase()!.from("known_creators").upsert(
+      {
+        user_id: userId,
+        address: b.address,
+        name: b.name,
+        notes: b.notes ?? null,
+        parent_address: b.parentAddress ?? null,
+        added_at: now,
+      },
+      { onConflict: "user_id,address" },
+    );
+    if (error) {
+      console.error("[known-creators] POST failed:", error);
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+    return NextResponse.json({ ok: true });
   }
+
+  getDb()
+    .prepare(
+      `INSERT INTO known_creators (address, name, notes, parent_address, added_at)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(address) DO UPDATE SET
+         name = excluded.name,
+         notes = excluded.notes,
+         parent_address = COALESCE(excluded.parent_address, parent_address)`,
+    )
+    .run(b.address, b.name, b.notes ?? null, b.parentAddress ?? null, now);
 
   syncToSupabase(() =>
     getSupabase()!.from("known_creators").upsert(
@@ -82,10 +99,20 @@ export async function DELETE(req: NextRequest) {
   let key: string;
   try { ({ key } = await req.json()); } catch { return NextResponse.json({ error: "Invalid JSON" }, { status: 400 }); }
 
-  if (!isSupabaseOnly()) {
-    getDb().prepare("DELETE FROM known_creators WHERE address = ?").run(key);
+  if (isSupabaseOnly()) {
+    const { error } = await getSupabase()!
+      .from("known_creators")
+      .delete()
+      .eq("user_id", userId!)
+      .eq("address", key);
+    if (error) {
+      console.error("[known-creators] DELETE failed:", error);
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+    return NextResponse.json({ ok: true });
   }
 
+  getDb().prepare("DELETE FROM known_creators WHERE address = ?").run(key);
   syncToSupabase(() =>
     getSupabase()!.from("known_creators").delete().eq("user_id", userId!).eq("address", key),
   );

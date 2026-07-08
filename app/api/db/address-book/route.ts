@@ -45,18 +45,35 @@ export async function POST(req: NextRequest) {
   }
   const now = b.timestamp ?? Date.now();
 
-  if (!isSupabaseOnly()) {
-    getDb()
-      .prepare(
-        `INSERT INTO address_book (public_key, label, notes, color, created_at)
-         VALUES (?, ?, ?, ?, ?)
-         ON CONFLICT(public_key) DO UPDATE SET
-           label = excluded.label,
-           notes = excluded.notes,
-           color = excluded.color`,
-      )
-      .run(b.publicKey, b.label, b.notes ?? null, b.color ?? null, now);
+  if (isSupabaseOnly()) {
+    const { error } = await getSupabase()!.from("address_book").upsert(
+      {
+        user_id: userId,
+        public_key: b.publicKey,
+        label: b.label,
+        notes: b.notes ?? null,
+        color: b.color ?? null,
+        created_at: now,
+      },
+      { onConflict: "user_id,public_key" },
+    );
+    if (error) {
+      console.error("[address-book] POST failed:", error);
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+    return NextResponse.json({ ok: true });
   }
+
+  getDb()
+    .prepare(
+      `INSERT INTO address_book (public_key, label, notes, color, created_at)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(public_key) DO UPDATE SET
+         label = excluded.label,
+         notes = excluded.notes,
+         color = excluded.color`,
+    )
+    .run(b.publicKey, b.label, b.notes ?? null, b.color ?? null, now);
 
   syncToSupabase(() =>
     getSupabase()!.from("address_book").upsert(
@@ -83,10 +100,20 @@ export async function DELETE(req: NextRequest) {
   let key: string;
   try { ({ key } = await req.json()); } catch { return NextResponse.json({ error: "Invalid JSON" }, { status: 400 }); }
 
-  if (!isSupabaseOnly()) {
-    getDb().prepare("DELETE FROM address_book WHERE public_key = ?").run(key);
+  if (isSupabaseOnly()) {
+    const { error } = await getSupabase()!
+      .from("address_book")
+      .delete()
+      .eq("user_id", userId!)
+      .eq("public_key", key);
+    if (error) {
+      console.error("[address-book] DELETE failed:", error);
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+    return NextResponse.json({ ok: true });
   }
 
+  getDb().prepare("DELETE FROM address_book WHERE public_key = ?").run(key);
   syncToSupabase(() =>
     getSupabase()!.from("address_book").delete().eq("user_id", userId!).eq("public_key", key),
   );

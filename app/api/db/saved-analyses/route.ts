@@ -54,30 +54,65 @@ export async function POST(req: NextRequest) {
   try { b = await req.json(); } catch { return NextResponse.json({ error: "Invalid JSON" }, { status: 400 }); }
   const now = b.timestamp ?? Date.now();
 
-  if (!isSupabaseOnly()) {
-    const db = getDb();
-    db.prepare(
-      `INSERT INTO saved_analyses
-         (id, name, asset_code, issuer, distrib_addresses, network, result_json, notes, tags, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(id) DO UPDATE SET
-         name = excluded.name,
-         notes = excluded.notes,
-         tags  = excluded.tags`,
-    ).run(
-      b.id, b.name, b.assetCode, b.issuer,
-      JSON.stringify(b.distribAddresses ?? []),
-      b.network, JSON.stringify(b.result),
-      b.notes ?? null,
-      b.tags ? JSON.stringify(b.tags) : null,
-      now,
-    );
-    // Trim to MAX
-    db.prepare(
-      `DELETE FROM saved_analyses WHERE id NOT IN
-       (SELECT id FROM saved_analyses ORDER BY created_at DESC LIMIT ?)`,
-    ).run(MAX);
+  if (isSupabaseOnly()) {
+    // Supabase IS the primary store here — await it and surface real
+    // failures, instead of the fire-and-forget syncToSupabase() helper
+    // (that helper is only correct for the local dual-write backup path
+    // below, where SQLite already succeeded and Supabase is best-effort).
+    const sb = getSupabase()!;
+    const { error: upsertError } = await sb.from("saved_analyses").upsert({
+      id: b.id,
+      user_id: userId,
+      name: b.name,
+      asset_code: b.assetCode,
+      issuer: b.issuer,
+      distrib_addresses: b.distribAddresses ?? [],
+      network: b.network,
+      result_json: b.result,
+      notes: b.notes ?? null,
+      tags: b.tags ?? null,
+      created_at: now,
+    });
+    if (upsertError) {
+      console.error("[saved-analyses] POST failed:", upsertError);
+      return NextResponse.json({ error: upsertError.message }, { status: 500 });
+    }
+    // Trim to MAX on Supabase side
+    const { data: oldest } = await sb
+      .from("saved_analyses")
+      .select("id")
+      .eq("user_id", userId!)
+      .order("created_at", { ascending: true })
+      .limit(1000);
+    if (oldest && oldest.length > MAX) {
+      const toDelete = oldest.slice(0, oldest.length - MAX).map((r) => r.id);
+      await sb.from("saved_analyses").delete().in("id", toDelete).eq("user_id", userId!);
+    }
+    return NextResponse.json({ ok: true });
   }
+
+  const db = getDb();
+  db.prepare(
+    `INSERT INTO saved_analyses
+       (id, name, asset_code, issuer, distrib_addresses, network, result_json, notes, tags, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET
+       name = excluded.name,
+       notes = excluded.notes,
+       tags  = excluded.tags`,
+  ).run(
+    b.id, b.name, b.assetCode, b.issuer,
+    JSON.stringify(b.distribAddresses ?? []),
+    b.network, JSON.stringify(b.result),
+    b.notes ?? null,
+    b.tags ? JSON.stringify(b.tags) : null,
+    now,
+  );
+  // Trim to MAX
+  db.prepare(
+    `DELETE FROM saved_analyses WHERE id NOT IN
+     (SELECT id FROM saved_analyses ORDER BY created_at DESC LIMIT ?)`,
+  ).run(MAX);
 
   syncToSupabase(async () => {
     const sb = getSupabase()!;
@@ -118,10 +153,20 @@ export async function DELETE(req: NextRequest) {
   let key: string;
   try { ({ key } = await req.json()); } catch { return NextResponse.json({ error: "Invalid JSON" }, { status: 400 }); }
 
-  if (!isSupabaseOnly()) {
-    getDb().prepare("DELETE FROM saved_analyses WHERE id = ?").run(key);
+  if (isSupabaseOnly()) {
+    const { error } = await getSupabase()!
+      .from("saved_analyses")
+      .delete()
+      .eq("id", key)
+      .eq("user_id", userId!);
+    if (error) {
+      console.error("[saved-analyses] DELETE failed:", error);
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+    return NextResponse.json({ ok: true });
   }
 
+  getDb().prepare("DELETE FROM saved_analyses WHERE id = ?").run(key);
   syncToSupabase(() =>
     getSupabase()!.from("saved_analyses").delete().eq("id", key).eq("user_id", userId!),
   );
@@ -138,12 +183,29 @@ export async function PATCH(req: NextRequest) {
   let id: string, name: string | undefined, notes: string | undefined, tags: unknown;
   try { ({ id, name, notes, tags } = await req.json()); } catch { return NextResponse.json({ error: "Invalid JSON" }, { status: 400 }); }
 
-  if (!isSupabaseOnly()) {
-    const db = getDb();
-    if (name !== undefined) db.prepare("UPDATE saved_analyses SET name = ? WHERE id = ?").run(name, id);
-    if (notes !== undefined) db.prepare("UPDATE saved_analyses SET notes = ? WHERE id = ?").run(notes, id);
-    if (tags !== undefined) db.prepare("UPDATE saved_analyses SET tags = ? WHERE id = ?").run(JSON.stringify(tags), id);
+  if (isSupabaseOnly()) {
+    const patch: Record<string, unknown> = {};
+    if (name !== undefined) patch.name = name;
+    if (notes !== undefined) patch.notes = notes;
+    if (tags !== undefined) patch.tags = tags;
+    if (Object.keys(patch).length > 0) {
+      const { error } = await getSupabase()!
+        .from("saved_analyses")
+        .update(patch)
+        .eq("id", id)
+        .eq("user_id", userId!);
+      if (error) {
+        console.error("[saved-analyses] PATCH failed:", error);
+        return NextResponse.json({ error: error.message }, { status: 500 });
+      }
+    }
+    return NextResponse.json({ ok: true });
   }
+
+  const db = getDb();
+  if (name !== undefined) db.prepare("UPDATE saved_analyses SET name = ? WHERE id = ?").run(name, id);
+  if (notes !== undefined) db.prepare("UPDATE saved_analyses SET notes = ? WHERE id = ?").run(notes, id);
+  if (tags !== undefined) db.prepare("UPDATE saved_analyses SET tags = ? WHERE id = ?").run(JSON.stringify(tags), id);
 
   syncToSupabase(async () => {
     const patch: Record<string, unknown> = {};

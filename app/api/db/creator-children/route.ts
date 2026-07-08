@@ -63,41 +63,65 @@ export async function POST(req: NextRequest) {
   try { body = await req.json(); } catch { return NextResponse.json({ error: "Invalid JSON" }, { status: 400 }); }
   const items: CreatorChild[] = Array.isArray(body) ? body : [body];
 
-  if (!isSupabaseOnly()) {
-    const db = getDb();
-    const stmt = db.prepare(`
-      INSERT INTO creator_children
-        (id, creator_address, child_address, network, via_intermediary, created_on_chain,
-         confidence, starting_balance, home_domain, issued_assets, distributed_assets, parent_address, discovered_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(creator_address, child_address, network) DO UPDATE SET
-        via_intermediary   = COALESCE(excluded.via_intermediary, via_intermediary),
-        home_domain        = COALESCE(excluded.home_domain, home_domain),
-        issued_assets      = COALESCE(excluded.issued_assets, issued_assets),
-        distributed_assets = COALESCE(excluded.distributed_assets, distributed_assets),
-        confidence         = COALESCE(excluded.confidence, confidence)
-    `);
-    const insertMany = db.transaction((rows: CreatorChild[]) => {
-      for (const c of rows) {
-        stmt.run(
-          c.id,
-          c.creatorAddress,
-          c.childAddress,
-          c.network,
-          c.viaIntermediary ?? null,
-          c.createdOnChain ?? null,
-          c.confidence ?? null,
-          c.startingBalance ?? null,
-          c.homeDomain ?? null,
-          c.issuedAssets ? JSON.stringify(c.issuedAssets) : null,
-          c.distributedAssets ? JSON.stringify(c.distributedAssets) : null,
-          null,
-          c.discoveredAt,
-        );
+  if (isSupabaseOnly()) {
+    const sb = getSupabase()!;
+    for (const c of items) {
+      const { error } = await sb.from("creator_children").upsert({
+        user_id: userId,
+        id: c.id,
+        creator_address: c.creatorAddress,
+        child_address: c.childAddress,
+        network: c.network,
+        via_intermediary: c.viaIntermediary ?? null,
+        created_on_chain: c.createdOnChain ?? null,
+        confidence: c.confidence ?? null,
+        starting_balance: c.startingBalance ?? null,
+        home_domain: c.homeDomain ?? null,
+        issued_assets: c.issuedAssets ? JSON.stringify(c.issuedAssets) : null,
+        distributed_assets: c.distributedAssets ? JSON.stringify(c.distributedAssets) : null,
+        discovered_at: c.discoveredAt,
+      });
+      if (error) {
+        console.error("[creator-children] POST failed:", error);
+        return NextResponse.json({ error: error.message }, { status: 500 });
       }
-    });
-    insertMany(items);
+    }
+    return NextResponse.json({ ok: true, count: items.length });
   }
+
+  const db = getDb();
+  const stmt = db.prepare(`
+    INSERT INTO creator_children
+      (id, creator_address, child_address, network, via_intermediary, created_on_chain,
+       confidence, starting_balance, home_domain, issued_assets, distributed_assets, parent_address, discovered_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(creator_address, child_address, network) DO UPDATE SET
+      via_intermediary   = COALESCE(excluded.via_intermediary, via_intermediary),
+      home_domain        = COALESCE(excluded.home_domain, home_domain),
+      issued_assets      = COALESCE(excluded.issued_assets, issued_assets),
+      distributed_assets = COALESCE(excluded.distributed_assets, distributed_assets),
+      confidence         = COALESCE(excluded.confidence, confidence)
+  `);
+  const insertMany = db.transaction((rows: CreatorChild[]) => {
+    for (const c of rows) {
+      stmt.run(
+        c.id,
+        c.creatorAddress,
+        c.childAddress,
+        c.network,
+        c.viaIntermediary ?? null,
+        c.createdOnChain ?? null,
+        c.confidence ?? null,
+        c.startingBalance ?? null,
+        c.homeDomain ?? null,
+        c.issuedAssets ? JSON.stringify(c.issuedAssets) : null,
+        c.distributedAssets ? JSON.stringify(c.distributedAssets) : null,
+        null,
+        c.discoveredAt,
+      );
+    }
+  });
+  insertMany(items);
 
   syncToSupabase(async () => {
     const sb = getSupabase()!;
@@ -133,14 +157,33 @@ export async function DELETE(req: NextRequest) {
   let body: any;
   try { body = await req.json(); } catch { return NextResponse.json({ error: "Invalid JSON" }, { status: 400 }); }
 
-  if (!isSupabaseOnly()) {
-    const db = getDb();
+  if (isSupabaseOnly()) {
+    const sb = getSupabase()!;
     if (body.id) {
-      db.prepare("DELETE FROM creator_children WHERE id = ?").run(body.id);
+      const { error } = await sb.from("creator_children").delete().eq("user_id", userId!).eq("id", body.id);
+      if (error) {
+        console.error("[creator-children] DELETE failed:", error);
+        return NextResponse.json({ error: error.message }, { status: 500 });
+      }
     } else if (body.creatorAddress) {
-      db.prepare("DELETE FROM creator_children WHERE creator_address = ? AND network = ?")
-        .run(body.creatorAddress, body.network ?? "public");
+      const { error } = await sb.from("creator_children").delete()
+        .eq("user_id", userId!)
+        .eq("creator_address", body.creatorAddress)
+        .eq("network", body.network ?? "public");
+      if (error) {
+        console.error("[creator-children] DELETE failed:", error);
+        return NextResponse.json({ error: error.message }, { status: 500 });
+      }
     }
+    return NextResponse.json({ ok: true });
+  }
+
+  const db = getDb();
+  if (body.id) {
+    db.prepare("DELETE FROM creator_children WHERE id = ?").run(body.id);
+  } else if (body.creatorAddress) {
+    db.prepare("DELETE FROM creator_children WHERE creator_address = ? AND network = ?")
+      .run(body.creatorAddress, body.network ?? "public");
   }
 
   syncToSupabase(async () => {

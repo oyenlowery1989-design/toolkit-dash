@@ -80,17 +80,33 @@ export async function POST(req: NextRequest) {
   }
   const now = b.addedAt ?? Date.now();
 
-  if (!isSupabaseOnly()) {
-    getDb()
-      .prepare(
-        `INSERT INTO known_intermediaries (address, name, notes, added_at)
-         VALUES (?, ?, ?, ?)
-         ON CONFLICT(address) DO UPDATE SET
-           name = excluded.name,
-           notes = excluded.notes`,
-      )
-      .run(b.address, b.name, b.notes ?? null, now);
+  if (isSupabaseOnly()) {
+    const { error } = await getSupabase()!.from("known_intermediaries").upsert(
+      {
+        user_id: userId,
+        address: b.address,
+        name: b.name,
+        notes: b.notes ?? null,
+        added_at: now,
+      },
+      { onConflict: "user_id,address" },
+    );
+    if (error) {
+      console.error("[known-intermediaries] POST failed:", error);
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+    return NextResponse.json({ ok: true });
   }
+
+  getDb()
+    .prepare(
+      `INSERT INTO known_intermediaries (address, name, notes, added_at)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT(address) DO UPDATE SET
+         name = excluded.name,
+         notes = excluded.notes`,
+    )
+    .run(b.address, b.name, b.notes ?? null, now);
 
   syncToSupabase(() =>
     getSupabase()!.from("known_intermediaries").upsert(
@@ -116,9 +132,20 @@ export async function DELETE(req: NextRequest) {
   let key: string;
   try { ({ key } = await req.json()); } catch { return NextResponse.json({ error: "Invalid JSON" }, { status: 400 }); }
 
-  if (!isSupabaseOnly()) {
-    getDb().prepare("DELETE FROM known_intermediaries WHERE address = ?").run(key);
+  if (isSupabaseOnly()) {
+    const { error } = await getSupabase()!
+      .from("known_intermediaries")
+      .delete()
+      .eq("user_id", userId!)
+      .eq("address", key);
+    if (error) {
+      console.error("[known-intermediaries] DELETE failed:", error);
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+    return NextResponse.json({ ok: true });
   }
+
+  getDb().prepare("DELETE FROM known_intermediaries WHERE address = ?").run(key);
 
   syncToSupabase(() =>
     getSupabase()!.from("known_intermediaries").delete().eq("user_id", userId!).eq("address", key),

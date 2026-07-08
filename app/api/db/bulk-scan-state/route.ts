@@ -52,18 +52,30 @@ export async function POST(req: NextRequest) {
   const interrupted = !!body.interrupted;
   const now = Date.now();
 
-  if (!isSupabaseOnly()) {
-    getDb()
-      .prepare(
-        `INSERT INTO bulk_scan_state (id, rows_json, interrupted, updated_at)
-         VALUES (?, ?, ?, ?)
-         ON CONFLICT(id) DO UPDATE SET
-           rows_json = excluded.rows_json,
-           interrupted = excluded.interrupted,
-           updated_at = excluded.updated_at`,
-      )
-      .run(LOCAL_ID, rowsJson, interrupted ? 1 : 0, now);
+  if (isSupabaseOnly()) {
+    const { error } = await getSupabase()!.from("bulk_scan_state").upsert({
+      user_id: userId,
+      rows_json: rowsJson,
+      interrupted,
+      updated_at: now,
+    });
+    if (error) {
+      console.error("[bulk-scan-state] POST failed:", error);
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+    return NextResponse.json({ ok: true });
   }
+
+  getDb()
+    .prepare(
+      `INSERT INTO bulk_scan_state (id, rows_json, interrupted, updated_at)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET
+         rows_json = excluded.rows_json,
+         interrupted = excluded.interrupted,
+         updated_at = excluded.updated_at`,
+    )
+    .run(LOCAL_ID, rowsJson, interrupted ? 1 : 0, now);
 
   syncToSupabase(() =>
     getSupabase()!.from("bulk_scan_state").upsert({
@@ -82,9 +94,19 @@ export async function DELETE(req: NextRequest) {
   if (!auth.ok) return auth.response;
   const { userId } = auth;
 
-  if (!isSupabaseOnly()) {
-    getDb().prepare("DELETE FROM bulk_scan_state WHERE id = ?").run(LOCAL_ID);
+  if (isSupabaseOnly()) {
+    const { error } = await getSupabase()!
+      .from("bulk_scan_state")
+      .delete()
+      .eq("user_id", userId!);
+    if (error) {
+      console.error("[bulk-scan-state] DELETE failed:", error);
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+    return NextResponse.json({ ok: true });
   }
+
+  getDb().prepare("DELETE FROM bulk_scan_state WHERE id = ?").run(LOCAL_ID);
 
   syncToSupabase(() =>
     getSupabase()!.from("bulk_scan_state").delete().eq("user_id", userId!),
