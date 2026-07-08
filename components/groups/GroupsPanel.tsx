@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useMemo } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
+import Link from "next/link";
 import {
   Layers,
   Plus,
@@ -19,6 +20,7 @@ import {
   Wallet,
   Loader2,
   Send,
+  UserX,
 } from "lucide-react";
 import {
   Card,
@@ -37,7 +39,15 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
 import { useAssetGroups, waitForGroupId } from "@/hooks/use-asset-groups";
+import { usePersons, waitForPersonId } from "@/hooks/use-persons";
 import { useWalletsV2 } from "@/hooks/use-wallets-v2";
 import type { WalletEntry } from "@/hooks/use-wallets-v2";
 import { useActiveWallet } from "@/hooks/use-active-wallet";
@@ -214,11 +224,13 @@ function GroupCard({
   const {
     groups,
     updateGroup,
+    unlinkGroupPerson,
     deleteGroup,
     upsertMember,
     updateMember,
     removeMember,
   } = useAssetGroups();
+  const { persons, createPerson } = usePersons();
   const { settings } = useSettings();
   // ShortAddress accepts any network string and guards explorer links itself —
   // don't narrow to public/testnet or futurenet/local get mislabeled.
@@ -250,9 +262,11 @@ function GroupCard({
   const [telegramChannelVal, setTelegramChannelVal] = useState(group.telegramChannel ?? "");
   const [editingTelegramLink, setEditingTelegramLink] = useState(false);
   const [telegramLinkVal, setTelegramLinkVal] = useState(group.telegramLink ?? "");
-  const [editingPerson, setEditingPerson] = useState(false);
-  const [personNameVal, setPersonNameVal] = useState(group.personName ?? "");
-  const [personRoleVal, setPersonRoleVal] = useState(group.personRole ?? "");
+  const [personDialogOpen, setPersonDialogOpen] = useState(false);
+  const [selectedPersonId, setSelectedPersonId] = useState<string>("");
+  const [newPersonMode, setNewPersonMode] = useState(false);
+  const [newPersonName, setNewPersonName] = useState("");
+  const [newPersonRole, setNewPersonRole] = useState("");
   const [addingMember, setAddingMember] = useState(false);
   const [editingMemberId, setEditingMemberId] = useState<string | null>(null);
 
@@ -614,68 +628,87 @@ function GroupCard({
           {/* Attributed Person */}
           <div className="space-y-1">
             <Label className="text-xs text-muted-foreground">Attributed Person</Label>
-            {editingPerson ? (
-              <div className="flex gap-2">
-                <Input
-                  value={personNameVal}
-                  onChange={(e) => setPersonNameVal(e.target.value)}
-                  className="text-xs"
-                  autoFocus
-                  placeholder="Name"
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      updateGroup(group.id, { personName: personNameVal, personRole: personRoleVal });
-                      setEditingPerson(false);
-                    }
-                    if (e.key === "Escape") {
-                      setPersonNameVal(group.personName ?? "");
-                      setPersonRoleVal(group.personRole ?? "");
-                      setEditingPerson(false);
-                    }
-                  }}
-                />
-                <Input
-                  value={personRoleVal}
-                  onChange={(e) => setPersonRoleVal(e.target.value)}
-                  className="text-xs"
-                  placeholder="Role (e.g. CEO)"
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      updateGroup(group.id, { personName: personNameVal, personRole: personRoleVal });
-                      setEditingPerson(false);
-                    }
-                    if (e.key === "Escape") {
-                      setPersonNameVal(group.personName ?? "");
-                      setPersonRoleVal(group.personRole ?? "");
-                      setEditingPerson(false);
-                    }
-                  }}
-                />
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => {
-                    updateGroup(group.id, { personName: personNameVal, personRole: personRoleVal });
-                    setEditingPerson(false);
-                  }}
-                >
-                  <Check className="h-3.5 w-3.5" />
-                </Button>
-              </div>
+            {group.personId ? (
+              (() => {
+                const person = persons.find((p) => p.id === group.personId);
+                return (
+                  <div className="flex items-center gap-2 text-xs">
+                    <Link href={`/persons?open=${group.personId}`} className="hover:underline">
+                      {person ? [person.name, person.role].filter(Boolean).join(" — ") : "Unknown person"}
+                    </Link>
+                    <Button size="icon" variant="ghost" className="h-5 w-5 text-muted-foreground hover:text-destructive" onClick={() => unlinkGroupPerson(group.id)}>
+                      <UserX className="h-3 w-3" />
+                    </Button>
+                  </div>
+                );
+              })()
             ) : (
               <Button
                 variant="ghost"
                 className="h-auto w-full justify-start text-left text-xs text-muted-foreground hover:text-foreground rounded px-2 py-1 border border-dashed border-border hover:border-muted-foreground transition-colors"
-                onClick={() => setEditingPerson(true)}
+                onClick={() => setPersonDialogOpen(true)}
               >
-                {group.personName || group.personRole ? (
-                  [group.personName, group.personRole].filter(Boolean).join(" — ")
-                ) : (
-                  <span className="italic">Add attributed person…</span>
-                )}
+                <span className="italic">+ Attribute Person</span>
               </Button>
             )}
           </div>
+
+          <Dialog open={personDialogOpen} onOpenChange={(o) => { setPersonDialogOpen(o); if (!o) setNewPersonMode(false); }}>
+            <DialogContent className="max-w-sm">
+              <DialogHeader>
+                <DialogTitle>Attribute Person</DialogTitle>
+              </DialogHeader>
+              {newPersonMode ? (
+                <div className="space-y-2">
+                  <Input value={newPersonName} onChange={(e) => setNewPersonName(e.target.value)} placeholder="Name" autoFocus />
+                  <Input value={newPersonRole} onChange={(e) => setNewPersonRole(e.target.value)} placeholder="Role (e.g. CEO)" />
+                  <Button variant="ghost" size="sm" onClick={() => setNewPersonMode(false)}>
+                    ← Pick existing person instead
+                  </Button>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <Select value={selectedPersonId} onValueChange={setSelectedPersonId}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select a person…" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {persons.map((p) => (
+                        <SelectItem key={p.id} value={p.id}>
+                          {[p.name, p.role].filter(Boolean).join(" — ")}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Button variant="ghost" size="sm" onClick={() => setNewPersonMode(true)}>
+                    + New Person
+                  </Button>
+                </div>
+              )}
+              <DialogFooter>
+                <Button variant="ghost" onClick={() => setPersonDialogOpen(false)}>
+                  Cancel
+                </Button>
+                <Button
+                  onClick={() => {
+                    if (newPersonMode) {
+                      if (!newPersonName.trim()) return;
+                      const id = createPerson({ name: newPersonName, role: newPersonRole || undefined });
+                      waitForPersonId(id).then(() => updateGroup(group.id, { personId: id }));
+                      setNewPersonName("");
+                      setNewPersonRole("");
+                    } else if (selectedPersonId) {
+                      updateGroup(group.id, { personId: selectedPersonId });
+                    }
+                    setNewPersonMode(false);
+                    setPersonDialogOpen(false);
+                  }}
+                >
+                  Save
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
 
           {/* Members table */}
           {group.members.length > 0 && (
