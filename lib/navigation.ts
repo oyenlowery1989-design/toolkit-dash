@@ -21,6 +21,7 @@ import {
   FileCode2,
   ShieldCheck,
   Users,
+  Contact,
   Link2,
   SendHorizonal,
   LayoutList,
@@ -182,6 +183,11 @@ export const menuItems: MenuEntry[] = [
     title: "Asset Groups",
     href: "/groups",
     icon: Layers,
+  },
+  {
+    title: "Persons",
+    href: "/persons",
+    icon: Contact,
   },
   {
     title: "Saved Analyses",
