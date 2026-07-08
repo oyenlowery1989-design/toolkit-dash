@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { usePersons } from "@/hooks/use-persons";
+import { useConfirmClick } from "@/hooks/use-confirm-click";
 import { TelegramChannelClusters } from "@/components/persons/TelegramChannelClusters";
 import { useAssetGroups } from "@/hooks/use-asset-groups";
 import { useSettings } from "@/lib/settings";
@@ -28,6 +29,7 @@ function PersonCard({ person }: { person: Person }) {
   const [newAddressLabel, setNewAddressLabel] = useState("");
 
   const attributedGroups = groups.filter((g) => g.personId === person.id);
+  const { confirming: confirmingDelete, onClick: handleDeleteClick } = useConfirmClick(() => deletePerson(person.id));
 
   function save() {
     updatePerson(person.id, {
@@ -71,16 +73,21 @@ function PersonCard({ person }: { person: Person }) {
             {!editing && person.notes && <p className="text-xs text-muted-foreground mt-1">{person.notes}</p>}
           </div>
           <Button
-            size="icon"
+            size={confirmingDelete ? "sm" : "icon"}
             variant="ghost"
-            className="h-7 w-7 text-destructive hover:text-destructive"
-            onClick={() => {
-              if (window.confirm(`Delete "${person.name}"? This unlinks them from ${attributedGroups.length} asset group(s) and removes their ${person.addresses.length} linked address(es).`)) {
-                deletePerson(person.id);
-              }
-            }}
+            className={
+              confirmingDelete
+                ? "h-8 px-2 text-xs font-semibold whitespace-nowrap bg-destructive/15 text-destructive hover:bg-destructive/25 hover:text-destructive"
+                : "h-7 w-7 text-destructive hover:text-destructive"
+            }
+            title={
+              confirmingDelete
+                ? "Click again to confirm delete"
+                : `Delete — unlinks from ${attributedGroups.length} asset group(s), removes ${person.addresses.length} linked address(es)`
+            }
+            onClick={handleDeleteClick}
           >
-            <Trash2 className="h-3.5 w-3.5" />
+            {confirmingDelete ? "Confirm delete" : <Trash2 className="h-3.5 w-3.5" />}
           </Button>
         </div>
       </CardHeader>

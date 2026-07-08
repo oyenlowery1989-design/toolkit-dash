@@ -44,6 +44,7 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
+  DialogDescription,
   DialogFooter,
 } from "@/components/ui/dialog";
 import { useAssetGroups, waitForGroupId } from "@/hooks/use-asset-groups";
@@ -657,6 +658,7 @@ function GroupCard({
             <DialogContent className="max-w-sm">
               <DialogHeader>
                 <DialogTitle>Attribute Person</DialogTitle>
+                <DialogDescription>Link this asset group to an important person, or create one.</DialogDescription>
               </DialogHeader>
               {newPersonMode ? (
                 <div className="space-y-2">

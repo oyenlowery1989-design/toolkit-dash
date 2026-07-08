@@ -40,6 +40,7 @@ import {
 import { useSavedAnalyses } from "@/hooks/use-saved-analyses";
 import type { SavedAnalysis } from "@/hooks/use-saved-analyses";
 import { useXlmUsdPrice } from "@/hooks/use-xlm-usd-price";
+import { useConfirmClick } from "@/hooks/use-confirm-click";
 import { ShortAddress } from "@/components/shared/ShortAddress";
 import { ProceedsDestinationsTable } from "@/components/shared/proceeds/ProceedsDestinationsTable";
 import { fetchAssetXlmProceeds } from "@/lib/proceeds-investigator/fetchers";
@@ -66,34 +67,6 @@ const SORT_OPTIONS: { value: string; label: string; sort: Sort }[] = [
   { value: "onHand:desc", label: "Highest On Hand", sort: { field: "onHand", dir: "desc" } },
   { value: "assetCode:asc", label: "Asset Code A→Z", sort: { field: "assetCode", dir: "asc" } },
 ];
-
-const CONFIRM_TIMEOUT_MS = 3000;
-
-/** Click-to-confirm instead of window.confirm() — first click arms a 3s
- *  confirm window (button shows destructive styling), second click within
- *  that window fires the action. Times out back to the normal state if the
- *  second click never comes. */
-function useConfirmClick(onConfirm: () => void) {
-  const [confirming, setConfirming] = useState(false);
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  useEffect(() => () => {
-    if (timerRef.current) clearTimeout(timerRef.current);
-  }, []);
-
-  const onClick = () => {
-    if (confirming) {
-      if (timerRef.current) clearTimeout(timerRef.current);
-      setConfirming(false);
-      onConfirm();
-      return;
-    }
-    setConfirming(true);
-    timerRef.current = setTimeout(() => setConfirming(false), CONFIRM_TIMEOUT_MS);
-  };
-
-  return { confirming, onClick };
-}
 
 /** Groups snapshots of the same asset+issuer+network together — re-running an
  *  analysis saves a fresh snapshot (needed for Compare Snapshots), so the
