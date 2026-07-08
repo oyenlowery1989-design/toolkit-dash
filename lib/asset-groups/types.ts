@@ -54,8 +54,7 @@ export interface AssetGroup {
   domain?: string;
   telegramChannel?: string;
   telegramLink?: string;
-  personName?: string;
-  personRole?: string;
+  personId?: string;
   createdAt: number;
   updatedAt: number;
   members: GroupMember[];
