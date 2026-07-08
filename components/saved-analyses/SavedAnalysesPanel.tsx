@@ -9,6 +9,7 @@ import {
   BookmarkCheck,
   ChevronDown,
   ChevronRight,
+  ExternalLink,
   LayoutList,
   Loader2,
   MessageSquare,
@@ -38,10 +39,11 @@ import {
 } from "@/components/ui/select";
 import { useSavedAnalyses } from "@/hooks/use-saved-analyses";
 import type { SavedAnalysis } from "@/hooks/use-saved-analyses";
+import { useXlmUsdPrice } from "@/hooks/use-xlm-usd-price";
 import { ShortAddress } from "@/components/shared/ShortAddress";
 import { ProceedsDestinationsTable } from "@/components/shared/proceeds/ProceedsDestinationsTable";
 import { fetchAssetXlmProceeds } from "@/lib/proceeds-investigator/fetchers";
-import { formatXlm } from "@/lib/format";
+import { formatXlm, formatUsdEstimate } from "@/lib/format";
 import { getErrorMessage, timeAgo } from "@/lib/stellar-helpers";
 import { NETWORK_LABELS, resolveHorizonUrl, useSettings } from "@/lib/settings";
 import type { Network, Settings } from "@/lib/settings";
@@ -64,6 +66,45 @@ const SORT_OPTIONS: { value: string; label: string; sort: Sort }[] = [
   { value: "onHand:desc", label: "Highest On Hand", sort: { field: "onHand", dir: "desc" } },
   { value: "assetCode:asc", label: "Asset Code A→Z", sort: { field: "assetCode", dir: "asc" } },
 ];
+
+/** Groups snapshots of the same asset+issuer+network together — re-running an
+ *  analysis saves a fresh snapshot (needed for Compare Snapshots), so the
+ *  list must group by identity rather than show one row per snapshot. */
+function groupKey(a: SavedAnalysis): string {
+  return `${a.assetCode}:${a.issuer}:${a.network}`;
+}
+
+function groupAnalyses(analyses: SavedAnalysis[]): SavedAnalysis[][] {
+  const map = new Map<string, SavedAnalysis[]>();
+  for (const a of analyses) {
+    const key = groupKey(a);
+    const arr = map.get(key);
+    if (arr) arr.push(a);
+    else map.set(key, [a]);
+  }
+  return [...map.values()].map((arr) => [...arr].sort((a, b) => b.timestamp - a.timestamp));
+}
+
+/** Latest snapshot per asset+issuer+network — use this (not the raw flat
+ *  list) for any aggregate/total, so re-run snapshots don't get double- or
+ *  triple-counted alongside their earlier versions. */
+function latestPerGroup(analyses: SavedAnalysis[]): SavedAnalysis[] {
+  return groupAnalyses(analyses).map((g) => g[0]);
+}
+
+/** Deep-link to Asset Sales, pre-filled + auto-run — same param contract as
+ *  AssetLookupPanel's "View full data in Asset Sales" and Search History's
+ *  "Run Asset Sales" (asset/issuer/account/autorun). Lets you cross-check a
+ *  saved snapshot against a live scan. */
+function assetSalesUrl(analysis: SavedAnalysis): string {
+  const params = new URLSearchParams({
+    asset: analysis.assetCode,
+    issuer: analysis.issuer,
+    account: analysis.distribAddresses.join("\n"),
+    autorun: "1",
+  });
+  return `/asset-sales?${params.toString()}`;
+}
 
 function sortAnalyses(analyses: SavedAnalysis[], sort: Sort): SavedAnalysis[] {
   return [...analyses].sort((a, b) => {
@@ -147,7 +188,9 @@ function useRerun(analysis: SavedAnalysis, saveAnalysis: SaveAnalysisFn) {
 // AnalysisCard — expanded card view
 // ---------------------------------------------------------------------------
 
-function AnalysisCard({ analysis }: { analysis: SavedAnalysis }) {
+function AnalysisCard({ group, xlmUsdPrice }: { group: SavedAnalysis[]; xlmUsdPrice: number | null }) {
+  const analysis = group[0]; // most recent snapshot — drives header, editing, Top Destinations
+  const history = group; // all snapshots for this asset+issuer+network, newest first
   const { updateName, updateNotes, updateTags, remove, saveAnalysis } = useSavedAnalyses();
   const { rerunning, error: rerunError, rerun } = useRerun(analysis, saveAnalysis);
   const [expanded, setExpanded] = useState(false);
@@ -216,6 +259,12 @@ function AnalysisCard({ analysis }: { analysis: SavedAnalysis }) {
             {NETWORK_LABELS[analysis.network as keyof typeof NETWORK_LABELS] ?? analysis.network}
             {" · "}
             {timeAgo(analysis.timestamp)}
+            {history.length > 1 && (
+              <>
+                {" · "}
+                <span className="font-semibold text-foreground">{history.length} snapshots</span>
+              </>
+            )}
           </p>
           {rerunError && (
             <p className="text-xs text-destructive flex items-center gap-1 mt-0.5">
@@ -231,6 +280,11 @@ function AnalysisCard({ analysis }: { analysis: SavedAnalysis }) {
             <p className="font-mono font-semibold text-sm">
               {formatXlm(analysis.result.totalXlmProceeds)}
             </p>
+            {formatUsdEstimate(analysis.result.totalXlmProceeds, xlmUsdPrice) && (
+              <p className="text-[11px] text-muted-foreground font-mono">
+                {formatUsdEstimate(analysis.result.totalXlmProceeds, xlmUsdPrice)}
+              </p>
+            )}
           </div>
           <div>
             <p className="text-xs text-muted-foreground">Asset Sold</p>
@@ -241,6 +295,15 @@ function AnalysisCard({ analysis }: { analysis: SavedAnalysis }) {
         </div>
 
         <div className="flex items-center gap-1 shrink-0">
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8"
+            title="View full data in Asset Sales — cross-check against a live scan"
+            onClick={() => window.open(assetSalesUrl(analysis), "_blank")}
+          >
+            <ExternalLink className="h-4 w-4" />
+          </Button>
           <Button
             variant="ghost"
             size="icon"
@@ -259,9 +322,12 @@ function AnalysisCard({ analysis }: { analysis: SavedAnalysis }) {
             variant="ghost"
             size="icon"
             className="h-8 w-8 text-muted-foreground hover:text-destructive"
-            title="Delete"
+            title={history.length > 1 ? "Delete latest snapshot" : "Delete"}
             onClick={() => {
-              if (window.confirm(`Delete saved analysis "${analysis.name}"? This cannot be undone.`)) {
+              const msg = history.length > 1
+                ? `Delete the latest snapshot of "${analysis.name}"? ${history.length - 1} earlier snapshot(s) remain. This cannot be undone.`
+                : `Delete saved analysis "${analysis.name}"? This cannot be undone.`;
+              if (window.confirm(msg)) {
                 remove(analysis.id);
               }
             }}
@@ -277,6 +343,11 @@ function AnalysisCard({ analysis }: { analysis: SavedAnalysis }) {
             <div>
               <p className="text-xs text-muted-foreground">XLM Proceeds</p>
               <p className="font-mono font-semibold">{formatXlm(analysis.result.totalXlmProceeds)} XLM</p>
+              {formatUsdEstimate(analysis.result.totalXlmProceeds, xlmUsdPrice) && (
+                <p className="text-[11px] text-muted-foreground font-mono">
+                  {formatUsdEstimate(analysis.result.totalXlmProceeds, xlmUsdPrice)}
+                </p>
+              )}
             </div>
             <div>
               <p className="text-xs text-muted-foreground">Asset Sold</p>
@@ -285,10 +356,20 @@ function AnalysisCard({ analysis }: { analysis: SavedAnalysis }) {
             <div>
               <p className="text-xs text-muted-foreground">Outgoing XLM</p>
               <p className="font-mono font-semibold">{formatXlm(analysis.result.totalOutgoingXlm)} XLM</p>
+              {formatUsdEstimate(analysis.result.totalOutgoingXlm, xlmUsdPrice) && (
+                <p className="text-[11px] text-muted-foreground font-mono">
+                  {formatUsdEstimate(analysis.result.totalOutgoingXlm, xlmUsdPrice)}
+                </p>
+              )}
             </div>
             <div>
               <p className="text-xs text-muted-foreground">Est. On Hand</p>
               <p className="font-mono font-semibold">{formatXlm(analysis.result.estimatedOnHandXlm)} XLM</p>
+              {formatUsdEstimate(analysis.result.estimatedOnHandXlm ?? 0, xlmUsdPrice) && (
+                <p className="text-[11px] text-muted-foreground font-mono">
+                  {formatUsdEstimate(analysis.result.estimatedOnHandXlm ?? 0, xlmUsdPrice)}
+                </p>
+              )}
             </div>
           </div>
 
@@ -361,7 +442,68 @@ function AnalysisCard({ analysis }: { analysis: SavedAnalysis }) {
             )}
           </div>
 
-          <h4 className="text-sm font-semibold mt-4 mb-1">Top Destinations</h4>
+          {history.length > 1 && (
+            <div className="mt-4">
+              <h4 className="text-sm font-semibold mb-1">Snapshot History ({history.length})</h4>
+              <div className="overflow-x-auto border rounded-md">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="border-b bg-muted/40 text-muted-foreground">
+                      <th className="px-3 py-2 text-left font-medium">Saved</th>
+                      <th className="px-3 py-2 text-right font-medium">XLM Proceeds</th>
+                      <th className="px-3 py-2 text-right font-medium">Asset Sold</th>
+                      <th className="px-3 py-2 text-right font-medium">Outgoing</th>
+                      <th className="px-3 py-2 text-right font-medium">On Hand</th>
+                      <th className="px-3 py-2 text-right font-medium"></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {history.map((snap) => (
+                      <tr key={snap.id} className="border-b last:border-0">
+                        <td className="px-3 py-2 whitespace-nowrap">
+                          {new Date(snap.timestamp).toLocaleString()}
+                          {snap.id === analysis.id && (
+                            <span className="ml-1.5 text-[9px] uppercase tracking-wide font-semibold px-1 py-px rounded border border-primary/40 bg-primary/10 text-primary">
+                              latest
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-3 py-2 text-right tabular-nums font-mono">
+                          {formatXlm(snap.result.totalXlmProceeds)}
+                        </td>
+                        <td className="px-3 py-2 text-right tabular-nums font-mono">
+                          {formatXlm(snap.result.totalAssetSold)}
+                        </td>
+                        <td className="px-3 py-2 text-right tabular-nums font-mono">
+                          {formatXlm(snap.result.totalOutgoingXlm)}
+                        </td>
+                        <td className="px-3 py-2 text-right tabular-nums font-mono">
+                          {formatXlm(snap.result.estimatedOnHandXlm ?? 0)}
+                        </td>
+                        <td className="px-3 py-2 text-right">
+                          <button
+                            className="text-muted-foreground hover:text-destructive"
+                            title="Delete this snapshot"
+                            onClick={() => {
+                              if (window.confirm(`Delete this snapshot (${new Date(snap.timestamp).toLocaleString()})? This cannot be undone.`)) {
+                                remove(snap.id);
+                              }
+                            }}
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          <h4 className="text-sm font-semibold mt-4 mb-1">
+            Top Destinations{history.length > 1 ? " (latest snapshot)" : ""}
+          </h4>
           <ProceedsDestinationsTable
             destinations={analysis.result.topDestinations}
             totalXlmProceeds={analysis.result.totalXlmProceeds}
@@ -482,6 +624,15 @@ function TableRow({ analysis: a }: { analysis: SavedAnalysis }) {
             variant="ghost"
             size="icon"
             className="h-7 w-7"
+            title="View full data in Asset Sales — cross-check against a live scan"
+            onClick={() => window.open(assetSalesUrl(a), "_blank")}
+          >
+            <ExternalLink className="h-3.5 w-3.5" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7"
             title={rerunError ? `Re-run failed: ${rerunError} — click to retry` : "Re-run analysis"}
             onClick={rerun}
             disabled={rerunning}
@@ -515,7 +666,7 @@ function TableRow({ analysis: a }: { analysis: SavedAnalysis }) {
 // AggregateStats — Phase 3
 // ---------------------------------------------------------------------------
 
-function AggregateStats({ analyses }: { analyses: SavedAnalysis[] }) {
+function AggregateStats({ analyses, xlmUsdPrice }: { analyses: SavedAnalysis[]; xlmUsdPrice: number | null }) {
   if (analyses.length === 0) return null;
 
   const totalXlm = analyses.reduce((s, a) => s + a.result.totalXlmProceeds, 0);
@@ -527,8 +678,16 @@ function AggregateStats({ analyses }: { analyses: SavedAnalysis[] }) {
   return (
     <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
       {[
-        { label: "Total XLM Proceeds", value: formatXlm(totalXlm) + " XLM" },
-        { label: "Total Outgoing XLM", value: formatXlm(totalOutgoing) + " XLM" },
+        {
+          label: "Total XLM Proceeds",
+          value: formatXlm(totalXlm) + " XLM",
+          sub: formatUsdEstimate(totalXlm, xlmUsdPrice) ?? undefined,
+        },
+        {
+          label: "Total Outgoing XLM",
+          value: formatXlm(totalOutgoing) + " XLM",
+          sub: formatUsdEstimate(totalOutgoing, xlmUsdPrice) ?? undefined,
+        },
         { label: "Unique Assets", value: String(uniqueAssets) },
         { label: "Unique Issuers", value: String(uniqueIssuers) },
         { label: "Top Earner", value: top.assetCode, sub: formatXlm(top.result.totalXlmProceeds) + " XLM" },
@@ -645,11 +804,19 @@ function CrossAssetDestinations({ analyses }: { analyses: SavedAnalysis[] }) {
 // SavedAnalysesPanel — main export
 // ---------------------------------------------------------------------------
 
+const PAGE_SIZE = 10;
+
 export function SavedAnalysesPanel() {
-  const { analyses } = useSavedAnalyses();
+  const { analyses, isLoaded, error } = useSavedAnalyses();
+  const { price: xlmUsdPrice, ensure: ensureXlmUsdPrice } = useXlmUsdPrice();
   const [query, setQuery] = useState("");
   const [view, setView] = useState<"cards" | "table">("cards");
   const [sort, setSort] = useState<Sort>({ field: "timestamp", dir: "desc" });
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
+
+  useEffect(() => {
+    ensureXlmUsdPrice();
+  }, [ensureXlmUsdPrice]);
 
   const filtered = useMemo(() => {
     if (!query.trim()) return analyses;
@@ -665,6 +832,21 @@ export function SavedAnalysesPanel() {
   }, [analyses, query]);
 
   const sortedFiltered = useMemo(() => sortAnalyses(filtered, sort), [filtered, sort]);
+  // One group per asset+issuer+network — re-running an analysis adds a new
+  // snapshot to its group instead of a separate top-level row.
+  const groupedFiltered = useMemo(() => groupAnalyses(sortedFiltered), [sortedFiltered]);
+
+  // Reset pagination whenever the underlying list changes shape — otherwise
+  // a search/sort change could leave visibleCount pointing past the new list.
+  useEffect(() => {
+    setVisibleCount(PAGE_SIZE);
+  }, [query, view, sort.field, sort.dir]);
+
+  // Cards paginate by group (one asset = one card); Table paginates by row.
+  const totalItems = view === "table" ? sortedFiltered.length : groupedFiltered.length;
+  const visibleGroups = groupedFiltered.slice(0, visibleCount);
+  const visibleRows = sortedFiltered.slice(0, visibleCount);
+  const hasMore = visibleCount < totalItems;
 
   return (
     <div className="p-6 space-y-6">
@@ -715,8 +897,8 @@ export function SavedAnalysesPanel() {
         )}
       </div>
 
-      {/* Aggregate stats */}
-      <AggregateStats analyses={analyses} />
+      {/* Aggregate stats — latest snapshot per asset, so re-run history doesn't inflate totals */}
+      <AggregateStats analyses={latestPerGroup(analyses)} xlmUsdPrice={xlmUsdPrice} />
 
       {/* Search */}
       {analyses.length > 0 && (
@@ -734,11 +916,26 @@ export function SavedAnalysesPanel() {
       {/* Snapshot compare */}
       {analyses.length > 1 && <SnapshotCompare analyses={filtered} />}
 
-      {/* Cross-asset destinations */}
-      {analyses.length > 1 && <CrossAssetDestinations analyses={filtered} />}
+      {/* Cross-asset destinations — latest snapshot per asset, same double-counting fix as above */}
+      {analyses.length > 1 && <CrossAssetDestinations analyses={latestPerGroup(filtered)} />}
 
       {/* Main content */}
-      {analyses.length === 0 ? (
+      {!isLoaded ? (
+        <div className="flex items-center gap-2 text-sm text-muted-foreground py-12 justify-center">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          Loading saved analyses…
+        </div>
+      ) : error ? (
+        <Card>
+          <CardContent className="py-8 text-center text-sm">
+            <p className="text-destructive flex items-center justify-center gap-1.5">
+              <AlertTriangle className="h-4 w-4" />
+              Failed to load saved analyses: {error}
+            </p>
+            <p className="text-muted-foreground mt-1">Retrying automatically…</p>
+          </CardContent>
+        </Card>
+      ) : analyses.length === 0 ? (
         <Card>
           <CardContent className="py-12 text-center text-muted-foreground">
             No saved analyses yet. Run a Bulk Asset Sales scan — results are saved automatically.
@@ -751,11 +948,37 @@ export function SavedAnalysesPanel() {
           </CardContent>
         </Card>
       ) : view === "table" ? (
-        <TableView analyses={filtered} sort={sort} onSortChange={setSort} />
+        <>
+          <TableView analyses={visibleRows} sort={sort} onSortChange={setSort} />
+          {hasMore && (
+            <div className="flex items-center justify-center gap-2 pt-1">
+              <Button variant="outline" size="sm" onClick={() => setVisibleCount((n) => n + PAGE_SIZE)}>
+                Load 10 More
+              </Button>
+              <Button variant="ghost" size="sm" onClick={() => setVisibleCount(totalItems)}>
+                Load All ({totalItems - visibleCount} more)
+              </Button>
+            </div>
+          )}
+        </>
       ) : (
-        <div className="space-y-3">
-          {sortedFiltered.map((a) => <AnalysisCard key={a.id} analysis={a} />)}
-        </div>
+        <>
+          <div className="space-y-3">
+            {visibleGroups.map((group) => (
+              <AnalysisCard key={groupKey(group[0])} group={group} xlmUsdPrice={xlmUsdPrice} />
+            ))}
+          </div>
+          {hasMore && (
+            <div className="flex items-center justify-center gap-2 pt-1">
+              <Button variant="outline" size="sm" onClick={() => setVisibleCount((n) => n + PAGE_SIZE)}>
+                Load 10 More
+              </Button>
+              <Button variant="ghost" size="sm" onClick={() => setVisibleCount(totalItems)}>
+                Load All ({totalItems - visibleCount} more)
+              </Button>
+            </div>
+          )}
+        </>
       )}
     </div>
   );

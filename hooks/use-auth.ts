@@ -68,7 +68,19 @@ function ensureInitialized() {
     return;
   }
 
-  sb.auth.getSession().then(({ data: { session } }) => applySession(session));
+  sb.auth
+    .getSession()
+    .then(({ data: { session } }) => applySession(session))
+    .catch((e) => {
+      // Unblock waitForAuth() on network failure so DB fetches proceed (and
+      // surface their own error state via createDbCache's retry) instead of
+      // hanging forever with cache stuck at isLoaded()===false. Deliberately
+      // does NOT clear cookies/caches here — this is a fetch failure, not a
+      // confirmed sign-out.
+      console.error("[auth] getSession failed:", e);
+      setDbAuthToken(null);
+      setState({ loading: false });
+    });
   sb.auth.onAuthStateChange((_, session) => applySession(session));
 }
 

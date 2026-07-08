@@ -19,6 +19,18 @@ export function formatXlm(n: number): string {
 }
 
 /**
+ * Live-price USD estimate for an XLM amount, e.g. "~$1,234.56".
+ * Always CURRENT price × amount — Horizon exposes no historical XLM/USD rate,
+ * so this is not "value at the time" for older/saved figures.
+ * Returns null when no price is loaded yet (caller should render nothing).
+ * Pair with `useXlmUsdPrice()` (hooks/use-xlm-usd-price.ts) for the price feed.
+ */
+export function formatUsdEstimate(xlmAmount: number, price: number | null): string | null {
+  if (price === null) return null;
+  return `~$${(xlmAmount * price).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+/**
  * Parse a multiline string of Stellar addresses.
  * - Splits by newline, trims whitespace
  * - Keeps only valid Ed25519 public keys (G...)

@@ -74,5 +74,14 @@ export function useSavedAnalyses() {
     dbDelete(ENDPOINT, id).catch(() => _cache.reload(ENDPOINT));
   }, []);
 
-  return { analyses, saveAnalysis, updateName, updateNotes, updateTags, remove };
+  return {
+    analyses,
+    isLoaded: _cache.isLoaded(),
+    error: _cache.error(),
+    saveAnalysis,
+    updateName,
+    updateNotes,
+    updateTags,
+    remove,
+  };
 }
