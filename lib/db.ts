@@ -119,8 +119,7 @@ function initDb(): Database.Database {
       domain           TEXT,
       telegram_channel TEXT,
       telegram_link    TEXT,
-      person_name      TEXT,
-      person_role      TEXT,
+      person_id        TEXT    REFERENCES persons(id) ON DELETE SET NULL,
       created_at       INTEGER NOT NULL,
       updated_at       INTEGER NOT NULL
     );
@@ -143,6 +142,29 @@ function initDb(): Database.Database {
 
     CREATE INDEX IF NOT EXISTS idx_group_members_group ON asset_group_members(group_id);
     CREATE INDEX IF NOT EXISTS idx_group_members_address ON asset_group_members(address);
+
+    -- ── Persons (important-person registry — CEO, founder, etc) ────────────────
+
+    CREATE TABLE IF NOT EXISTS persons (
+      id          TEXT    PRIMARY KEY,
+      name        TEXT    NOT NULL,
+      role        TEXT,
+      notes       TEXT,
+      created_at  INTEGER NOT NULL,
+      updated_at  INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS person_addresses (
+      id         TEXT    PRIMARY KEY,
+      person_id  TEXT    NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
+      address    TEXT    NOT NULL,
+      label      TEXT,
+      added_at   INTEGER NOT NULL,
+      UNIQUE(person_id, address)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_person_addresses_person ON person_addresses(person_id);
+    CREATE INDEX IF NOT EXISTS idx_person_addresses_address ON person_addresses(address);
 
     -- ── Wallet Manager ────────────────────────────────────────────────────────
 
@@ -503,11 +525,14 @@ function initDb(): Database.Database {
   if (!assetGroupCols.includes("telegram_link")) {
     db.exec(`ALTER TABLE asset_groups ADD COLUMN telegram_link TEXT`);
   }
-  if (!assetGroupCols.includes("person_name")) {
-    db.exec(`ALTER TABLE asset_groups ADD COLUMN person_name TEXT`);
+  if (assetGroupCols.includes("person_name")) {
+    db.exec(`ALTER TABLE asset_groups DROP COLUMN person_name`);
   }
-  if (!assetGroupCols.includes("person_role")) {
-    db.exec(`ALTER TABLE asset_groups ADD COLUMN person_role TEXT`);
+  if (assetGroupCols.includes("person_role")) {
+    db.exec(`ALTER TABLE asset_groups DROP COLUMN person_role`);
+  }
+  if (!assetGroupCols.includes("person_id")) {
+    db.exec(`ALTER TABLE asset_groups ADD COLUMN person_id TEXT REFERENCES persons(id) ON DELETE SET NULL`);
   }
 
   // ── Wallet migration: ensure id + folder_id columns exist ─────────────────

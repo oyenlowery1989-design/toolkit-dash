@@ -12,7 +12,12 @@ CREATE TABLE IF NOT EXISTS saved_searches (id BIGSERIAL PRIMARY KEY, user_id TEX
 CREATE INDEX IF NOT EXISTS idx_saved_searches_user ON saved_searches(user_id);
 CREATE TABLE IF NOT EXISTS bulk_run_history (id TEXT PRIMARY KEY, user_id TEXT NOT NULL DEFAULT '', network TEXT NOT NULL, memo TEXT NOT NULL, recipient_count INTEGER NOT NULL, success_count INTEGER NOT NULL, failed_count INTEGER NOT NULL, ran_at BIGINT NOT NULL);
 CREATE INDEX IF NOT EXISTS idx_bulk_run_history_user ON bulk_run_history(user_id);
-CREATE TABLE IF NOT EXISTS asset_groups (id TEXT PRIMARY KEY, user_id TEXT NOT NULL DEFAULT '', name TEXT NOT NULL, asset_code TEXT, issuer TEXT, network TEXT NOT NULL DEFAULT 'public', notes TEXT, domain TEXT, telegram_channel TEXT, telegram_link TEXT, person_name TEXT, person_role TEXT, created_at BIGINT NOT NULL, updated_at BIGINT NOT NULL);
+CREATE TABLE IF NOT EXISTS persons (id TEXT PRIMARY KEY, user_id TEXT NOT NULL DEFAULT '', name TEXT NOT NULL, role TEXT, notes TEXT, created_at BIGINT NOT NULL, updated_at BIGINT NOT NULL);
+CREATE INDEX IF NOT EXISTS idx_persons_user ON persons(user_id);
+CREATE TABLE IF NOT EXISTS person_addresses (id TEXT PRIMARY KEY, person_id TEXT NOT NULL REFERENCES persons(id) ON DELETE CASCADE, address TEXT NOT NULL, label TEXT, added_at BIGINT NOT NULL, UNIQUE(person_id, address));
+CREATE INDEX IF NOT EXISTS idx_person_addresses_person ON person_addresses(person_id);
+CREATE INDEX IF NOT EXISTS idx_person_addresses_address ON person_addresses(address);
+CREATE TABLE IF NOT EXISTS asset_groups (id TEXT PRIMARY KEY, user_id TEXT NOT NULL DEFAULT '', name TEXT NOT NULL, asset_code TEXT, issuer TEXT, network TEXT NOT NULL DEFAULT 'public', notes TEXT, domain TEXT, telegram_channel TEXT, telegram_link TEXT, person_id TEXT REFERENCES persons(id) ON DELETE SET NULL, created_at BIGINT NOT NULL, updated_at BIGINT NOT NULL);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_asset_groups_identity ON asset_groups(user_id, asset_code, issuer, network) WHERE asset_code IS NOT NULL AND issuer IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_asset_groups_user ON asset_groups(user_id);
 CREATE TABLE IF NOT EXISTS asset_group_members (id TEXT PRIMARY KEY, group_id TEXT NOT NULL REFERENCES asset_groups(id) ON DELETE CASCADE, address TEXT NOT NULL, role TEXT NOT NULL, label TEXT, notes TEXT, home_domain TEXT, added_at BIGINT NOT NULL, UNIQUE(group_id, address));
@@ -40,3 +45,13 @@ CREATE INDEX IF NOT EXISTS idx_tiered_reward_assets_tier ON tiered_reward_assets
 CREATE TABLE IF NOT EXISTS tiered_reward_run_log (id TEXT PRIMARY KEY, user_id TEXT NOT NULL DEFAULT '', config_id TEXT REFERENCES tiered_reward_configs(id) ON DELETE SET NULL, tier_number INTEGER NOT NULL, holder_address TEXT NOT NULL, asset_code TEXT NOT NULL, asset_issuer TEXT, amount_sent DOUBLE PRECISION NOT NULL, status TEXT NOT NULL, tx_hash TEXT, error TEXT, ran_at BIGINT NOT NULL);
 CREATE INDEX IF NOT EXISTS idx_tiered_reward_run_log_user ON tiered_reward_run_log(user_id);
 CREATE INDEX IF NOT EXISTS idx_tiered_reward_run_log_config ON tiered_reward_run_log(config_id, ran_at DESC);
+
+-- Persons module migration (for databases provisioned before this module existed)
+CREATE TABLE IF NOT EXISTS persons (id TEXT PRIMARY KEY, user_id TEXT NOT NULL DEFAULT '', name TEXT NOT NULL, role TEXT, notes TEXT, created_at BIGINT NOT NULL, updated_at BIGINT NOT NULL);
+CREATE INDEX IF NOT EXISTS idx_persons_user ON persons(user_id);
+CREATE TABLE IF NOT EXISTS person_addresses (id TEXT PRIMARY KEY, person_id TEXT NOT NULL REFERENCES persons(id) ON DELETE CASCADE, address TEXT NOT NULL, label TEXT, added_at BIGINT NOT NULL, UNIQUE(person_id, address));
+CREATE INDEX IF NOT EXISTS idx_person_addresses_person ON person_addresses(person_id);
+CREATE INDEX IF NOT EXISTS idx_person_addresses_address ON person_addresses(address);
+ALTER TABLE asset_groups DROP COLUMN IF EXISTS person_name;
+ALTER TABLE asset_groups DROP COLUMN IF EXISTS person_role;
+ALTER TABLE asset_groups ADD COLUMN IF NOT EXISTS person_id TEXT REFERENCES persons(id) ON DELETE SET NULL;
