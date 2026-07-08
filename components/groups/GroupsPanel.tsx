@@ -250,6 +250,9 @@ function GroupCard({
   const [telegramChannelVal, setTelegramChannelVal] = useState(group.telegramChannel ?? "");
   const [editingTelegramLink, setEditingTelegramLink] = useState(false);
   const [telegramLinkVal, setTelegramLinkVal] = useState(group.telegramLink ?? "");
+  const [editingPerson, setEditingPerson] = useState(false);
+  const [personNameVal, setPersonNameVal] = useState(group.personName ?? "");
+  const [personRoleVal, setPersonRoleVal] = useState(group.personRole ?? "");
   const [addingMember, setAddingMember] = useState(false);
   const [editingMemberId, setEditingMemberId] = useState<string | null>(null);
 
@@ -371,9 +374,10 @@ function GroupCard({
                     target="_blank"
                     rel="noopener noreferrer"
                     title={group.telegramChannel || "Telegram"}
-                    className="text-muted-foreground hover:text-foreground transition-colors"
+                    className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
                   >
                     <Send className="h-3.5 w-3.5" />
+                    {group.telegramChannel && <span>@{group.telegramChannel.replace(/^[@/]+/, "")}</span>}
                   </a>
                 )}
               </div>
@@ -603,6 +607,72 @@ function GroupCard({
                 onClick={() => setEditingTelegramLink(true)}
               >
                 {group.telegramLink || <span className="italic">Add Telegram link…</span>}
+              </Button>
+            )}
+          </div>
+
+          {/* Attributed Person */}
+          <div className="space-y-1">
+            <Label className="text-xs text-muted-foreground">Attributed Person</Label>
+            {editingPerson ? (
+              <div className="flex gap-2">
+                <Input
+                  value={personNameVal}
+                  onChange={(e) => setPersonNameVal(e.target.value)}
+                  className="text-xs"
+                  autoFocus
+                  placeholder="Name"
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      updateGroup(group.id, { personName: personNameVal, personRole: personRoleVal });
+                      setEditingPerson(false);
+                    }
+                    if (e.key === "Escape") {
+                      setPersonNameVal(group.personName ?? "");
+                      setPersonRoleVal(group.personRole ?? "");
+                      setEditingPerson(false);
+                    }
+                  }}
+                />
+                <Input
+                  value={personRoleVal}
+                  onChange={(e) => setPersonRoleVal(e.target.value)}
+                  className="text-xs"
+                  placeholder="Role (e.g. CEO)"
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      updateGroup(group.id, { personName: personNameVal, personRole: personRoleVal });
+                      setEditingPerson(false);
+                    }
+                    if (e.key === "Escape") {
+                      setPersonNameVal(group.personName ?? "");
+                      setPersonRoleVal(group.personRole ?? "");
+                      setEditingPerson(false);
+                    }
+                  }}
+                />
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => {
+                    updateGroup(group.id, { personName: personNameVal, personRole: personRoleVal });
+                    setEditingPerson(false);
+                  }}
+                >
+                  <Check className="h-3.5 w-3.5" />
+                </Button>
+              </div>
+            ) : (
+              <Button
+                variant="ghost"
+                className="h-auto w-full justify-start text-left text-xs text-muted-foreground hover:text-foreground rounded px-2 py-1 border border-dashed border-border hover:border-muted-foreground transition-colors"
+                onClick={() => setEditingPerson(true)}
+              >
+                {group.personName || group.personRole ? (
+                  [group.personName, group.personRole].filter(Boolean).join(" — ")
+                ) : (
+                  <span className="italic">Add attributed person…</span>
+                )}
               </Button>
             )}
           </div>
