@@ -175,7 +175,16 @@ export function useAssetGroups() {
       patch: Partial<
         Pick<
           AssetGroup,
-          "name" | "notes" | "assetCode" | "issuer" | "network" | "domain" | "telegramChannel" | "telegramLink"
+          | "name"
+          | "notes"
+          | "assetCode"
+          | "issuer"
+          | "network"
+          | "domain"
+          | "telegramChannel"
+          | "telegramLink"
+          | "personName"
+          | "personRole"
         >
       >,
     ) => {
