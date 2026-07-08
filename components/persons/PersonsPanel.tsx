@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { usePersons } from "@/hooks/use-persons";
+import { TelegramChannelClusters } from "@/components/persons/TelegramChannelClusters";
 import { useAssetGroups } from "@/hooks/use-asset-groups";
 import { useSettings } from "@/lib/settings";
 import { ShortAddress } from "@/components/shared/ShortAddress";
@@ -175,6 +176,7 @@ export function PersonsPanel() {
           ))}
         </div>
       )}
+      <TelegramChannelClusters />
     </div>
   );
 }
