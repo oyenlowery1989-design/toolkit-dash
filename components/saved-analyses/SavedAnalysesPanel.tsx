@@ -67,6 +67,34 @@ const SORT_OPTIONS: { value: string; label: string; sort: Sort }[] = [
   { value: "assetCode:asc", label: "Asset Code A→Z", sort: { field: "assetCode", dir: "asc" } },
 ];
 
+const CONFIRM_TIMEOUT_MS = 3000;
+
+/** Click-to-confirm instead of window.confirm() — first click arms a 3s
+ *  confirm window (button shows destructive styling), second click within
+ *  that window fires the action. Times out back to the normal state if the
+ *  second click never comes. */
+function useConfirmClick(onConfirm: () => void) {
+  const [confirming, setConfirming] = useState(false);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => () => {
+    if (timerRef.current) clearTimeout(timerRef.current);
+  }, []);
+
+  const onClick = () => {
+    if (confirming) {
+      if (timerRef.current) clearTimeout(timerRef.current);
+      setConfirming(false);
+      onConfirm();
+      return;
+    }
+    setConfirming(true);
+    timerRef.current = setTimeout(() => setConfirming(false), CONFIRM_TIMEOUT_MS);
+  };
+
+  return { confirming, onClick };
+}
+
 /** Groups snapshots of the same asset+issuer+network together — re-running an
  *  analysis saves a fresh snapshot (needed for Compare Snapshots), so the
  *  list must group by identity rather than show one row per snapshot. */
@@ -184,6 +212,36 @@ function useRerun(analysis: SavedAnalysis, saveAnalysis: SaveAnalysisFn) {
   return { rerunning, error, rerun };
 }
 
+/** Click-to-confirm delete for one row (history table / table view) — needs its
+ *  own component since useConfirmClick's per-button state can't live in a
+ *  shared loop-parent without every row sharing one confirm flag. */
+function ConfirmDeleteButton({
+  onDelete,
+  title,
+  className,
+  iconClassName,
+}: {
+  onDelete: () => void;
+  title: string;
+  className?: string;
+  iconClassName?: string;
+}) {
+  const { confirming, onClick } = useConfirmClick(onDelete);
+  return (
+    <button
+      className={
+        confirming
+          ? "text-destructive animate-pulse"
+          : className ?? "text-muted-foreground hover:text-destructive"
+      }
+      title={confirming ? "Click again to confirm delete" : title}
+      onClick={onClick}
+    >
+      <Trash2 className={iconClassName ?? "h-3.5 w-3.5"} />
+    </button>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // AnalysisCard — expanded card view
 // ---------------------------------------------------------------------------
@@ -193,6 +251,7 @@ function AnalysisCard({ group, xlmUsdPrice }: { group: SavedAnalysis[]; xlmUsdPr
   const history = group; // all snapshots for this asset+issuer+network, newest first
   const { updateName, updateNotes, updateTags, remove, saveAnalysis } = useSavedAnalyses();
   const { rerunning, error: rerunError, rerun } = useRerun(analysis, saveAnalysis);
+  const { confirming: confirmingDelete, onClick: handleDeleteClick } = useConfirmClick(() => remove(analysis.id));
   const [expanded, setExpanded] = useState(false);
   const [editing, setEditing] = useState(false);
   const [nameInput, setNameInput] = useState(analysis.name);
@@ -321,16 +380,19 @@ function AnalysisCard({ group, xlmUsdPrice }: { group: SavedAnalysis[]; xlmUsdPr
           <Button
             variant="ghost"
             size="icon"
-            className="h-8 w-8 text-muted-foreground hover:text-destructive"
-            title={history.length > 1 ? "Delete latest snapshot" : "Delete"}
-            onClick={() => {
-              const msg = history.length > 1
-                ? `Delete the latest snapshot of "${analysis.name}"? ${history.length - 1} earlier snapshot(s) remain. This cannot be undone.`
-                : `Delete saved analysis "${analysis.name}"? This cannot be undone.`;
-              if (window.confirm(msg)) {
-                remove(analysis.id);
-              }
-            }}
+            className={
+              confirmingDelete
+                ? "h-8 w-8 bg-destructive/15 text-destructive animate-pulse"
+                : "h-8 w-8 text-muted-foreground hover:text-destructive"
+            }
+            title={
+              confirmingDelete
+                ? "Click again to confirm delete"
+                : history.length > 1
+                  ? "Delete latest snapshot"
+                  : "Delete"
+            }
+            onClick={handleDeleteClick}
           >
             <Trash2 className="h-4 w-4" />
           </Button>
@@ -481,17 +543,10 @@ function AnalysisCard({ group, xlmUsdPrice }: { group: SavedAnalysis[]; xlmUsdPr
                           {formatXlm(snap.result.estimatedOnHandXlm ?? 0)}
                         </td>
                         <td className="px-3 py-2 text-right">
-                          <button
-                            className="text-muted-foreground hover:text-destructive"
+                          <ConfirmDeleteButton
                             title="Delete this snapshot"
-                            onClick={() => {
-                              if (window.confirm(`Delete this snapshot (${new Date(snap.timestamp).toLocaleString()})? This cannot be undone.`)) {
-                                remove(snap.id);
-                              }
-                            }}
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </button>
+                            onDelete={() => remove(snap.id)}
+                          />
                         </td>
                       </tr>
                     ))}
@@ -587,6 +642,7 @@ function TableView({
 function TableRow({ analysis: a }: { analysis: SavedAnalysis }) {
   const { remove, saveAnalysis } = useSavedAnalyses();
   const { rerunning, error: rerunError, rerun } = useRerun(a, saveAnalysis);
+  const { confirming: confirmingDelete, onClick: handleDeleteClick } = useConfirmClick(() => remove(a.id));
 
   return (
     <tr className="border-b last:border-0 hover:bg-muted/20 transition-colors">
@@ -646,13 +702,13 @@ function TableRow({ analysis: a }: { analysis: SavedAnalysis }) {
           <Button
             variant="ghost"
             size="icon"
-            className="h-7 w-7 text-muted-foreground hover:text-destructive"
-            title="Delete"
-            onClick={() => {
-              if (window.confirm(`Delete saved analysis "${a.name}"? This cannot be undone.`)) {
-                remove(a.id);
-              }
-            }}
+            className={
+              confirmingDelete
+                ? "h-7 w-7 bg-destructive/15 text-destructive animate-pulse"
+                : "h-7 w-7 text-muted-foreground hover:text-destructive"
+            }
+            title={confirmingDelete ? "Click again to confirm delete" : "Delete"}
+            onClick={handleDeleteClick}
           >
             <Trash2 className="h-3.5 w-3.5" />
           </Button>
