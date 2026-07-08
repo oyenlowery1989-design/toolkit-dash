@@ -83,7 +83,15 @@ export async function POST(req: NextRequest) {
     const nameTrimmed = (name ?? "").trim();
 
     if (isSupabaseOnly()) {
-      const { error } = await getSupabase()!.from("persons").upsert({
+      const sb = getSupabase()!;
+      // IDOR guard: a client-supplied id must not let the caller hijack another
+      // user's existing row via upsert — only allow upsert onto a row that either
+      // doesn't exist yet, or is already owned by this caller.
+      const { data: existing } = await sb.from("persons").select("user_id").eq("id", id).maybeSingle();
+      if (existing && existing.user_id !== userId) {
+        return NextResponse.json({ ok: false, error: "Not authorized" }, { status: 403 });
+      }
+      const { error } = await sb.from("persons").upsert({
         id,
         user_id: userId,
         name: nameTrimmed,
