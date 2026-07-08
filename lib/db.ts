@@ -119,6 +119,8 @@ function initDb(): Database.Database {
       domain           TEXT,
       telegram_channel TEXT,
       telegram_link    TEXT,
+      person_name      TEXT,
+      person_role      TEXT,
       created_at       INTEGER NOT NULL,
       updated_at       INTEGER NOT NULL
     );
@@ -500,6 +502,12 @@ function initDb(): Database.Database {
   }
   if (!assetGroupCols.includes("telegram_link")) {
     db.exec(`ALTER TABLE asset_groups ADD COLUMN telegram_link TEXT`);
+  }
+  if (!assetGroupCols.includes("person_name")) {
+    db.exec(`ALTER TABLE asset_groups ADD COLUMN person_name TEXT`);
+  }
+  if (!assetGroupCols.includes("person_role")) {
+    db.exec(`ALTER TABLE asset_groups ADD COLUMN person_role TEXT`);
   }
 
   // ── Wallet migration: ensure id + folder_id columns exist ─────────────────
