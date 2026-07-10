@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Database, UserSearch, X, Clock, TrendingDown, Search, GitFork, ScanSearch } from "lucide-react";
+import { Database, UserSearch, X, Clock, TrendingDown, Search, GitFork, ScanSearch, Wallet } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -26,6 +26,8 @@ export default function SearchHistoryPage() {
       router.push(`/intermediary-tracer?address=${encodeURIComponent(entry.value)}&tab=trace`);
     } else if (entry.type === "intermediary-scan") {
       router.push(`/intermediary-tracer?address=${encodeURIComponent(entry.value)}&tab=scan`);
+    } else if (entry.type === "address-balances") {
+      router.push(`/address-balances?addresses=${encodeURIComponent(entry.value)}`);
     }
   };
 
@@ -89,7 +91,16 @@ export default function SearchHistoryPage() {
                 const isAsset = entry.type === "asset";
                 const isTrace = entry.type === "intermediary-trace";
                 const isScan = entry.type === "intermediary-scan";
-                const Icon = isAddress ? UserSearch : isAsset ? Database : isTrace ? GitFork : ScanSearch;
+                const isBalances = entry.type === "address-balances";
+                const Icon = isAddress
+                  ? UserSearch
+                  : isAsset
+                    ? Database
+                    : isTrace
+                      ? GitFork
+                      : isBalances
+                        ? Wallet
+                        : ScanSearch;
                 const assetCode = isAsset ? entry.value.split(":")[0] : null;
                 const issuerFull = isAsset ? entry.value.split(":")[1] : null;
 
@@ -107,7 +118,9 @@ export default function SearchHistoryPage() {
                     >
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className="font-mono text-sm font-medium">
-                          {isAddress ? (
+                          {isBalances ? (
+                            entry.label ?? `${entry.value.split(",").length} addresses`
+                          ) : isAddress ? (
                             <>
                               {entry.value.slice(0, 8)}…{entry.value.slice(-6)}
                             </>
@@ -116,7 +129,15 @@ export default function SearchHistoryPage() {
                           )}
                         </span>
                         <span className="text-xs px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
-                          {isAddress ? "Address" : entry.type === "asset" ? "Asset" : entry.type === "intermediary-trace" ? "Trace" : "Scan"}
+                          {isAddress
+                            ? "Address"
+                            : entry.type === "asset"
+                              ? "Asset"
+                              : entry.type === "intermediary-trace"
+                                ? "Trace"
+                                : entry.type === "intermediary-scan"
+                                  ? "Scan"
+                                  : "Balances"}
                         </span>
                         {entry.network && (
                           <span className="text-xs px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
@@ -172,7 +193,7 @@ export default function SearchHistoryPage() {
                         </p>
                       )}
 
-                      {entry.label && (
+                      {entry.label && !isBalances && (
                         <p className="text-xs text-foreground/70 mt-0.5 italic">
                           {entry.label}
                         </p>
