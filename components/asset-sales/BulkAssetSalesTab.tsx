@@ -18,6 +18,7 @@ import {
   BookmarkCheck,
   ChevronDown,
   ChevronRight,
+  Clock,
   Loader2,
   RefreshCw,
   Save,
@@ -25,7 +26,8 @@ import {
   TrendingDown,
   X,
 } from "lucide-react";
-import { useSettings, resolveHorizonUrl } from "@/lib/settings";
+import { useSettings, resolveHorizonUrl, type Network } from "@/lib/settings";
+import { useBulkProceedsHistory } from "./useBulkProceedsHistory";
 import { getErrorMessage } from "@/lib/stellar-helpers";
 import { ShortAddress } from "@/components/shared/ShortAddress";
 import { inferDistribLite } from "@/lib/asset-lookup/fetchers";
@@ -102,9 +104,14 @@ async function runConcurrent<T>(
 
 export function BulkAssetSalesPanel() {
   const router = useRouter();
-  const { settings } = useSettings();
+  const { settings, updateSettings } = useSettings();
   const { upsert: upsertSearch } = useSavedSearches();
   const { saveAnalysis } = useSavedAnalyses();
+  const {
+    history: bulkSearchHistory,
+    upsert: upsertBulkHistory,
+    remove: removeBulkHistory,
+  } = useBulkProceedsHistory();
   const [assetsText, setAssetsText] = useState("");
   const [rows, setRows] = useState<AssetRow[]>([]);
   const [running, setRunning] = useState(false);
@@ -179,6 +186,11 @@ export function BulkAssetSalesPanel() {
     setParseError(null);
     setInterrupted(false);
     setAllSaved(false);
+    upsertBulkHistory({
+      assetsText: assetsText.trim(),
+      network: settings.network,
+      assetCount: pairs.length,
+    });
     abortRef.current?.abort();
     abortRef.current = new AbortController();
     const signal = abortRef.current.signal;
@@ -359,6 +371,45 @@ export function BulkAssetSalesPanel() {
           >
             <X className="h-3.5 w-3.5" />
           </Button>
+        </div>
+      )}
+
+      {bulkSearchHistory.length > 0 && (
+        <div className="space-y-2">
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <Clock className="h-3.5 w-3.5" />
+            Recent bulk searches
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {bulkSearchHistory.map((entry) => (
+              <div
+                key={entry.timestamp}
+                className="flex items-center gap-1 rounded-md border border-border bg-muted/40 pl-2 pr-1 py-1 text-xs"
+              >
+                <button
+                  className="flex items-center gap-1.5 hover:text-foreground text-muted-foreground transition-colors"
+                  onClick={() => {
+                    setAssetsText(entry.assetsText);
+                    updateSettings({ network: entry.network as Network });
+                  }}
+                  disabled={running}
+                  title={entry.assetsText}
+                >
+                  <span className="font-mono font-semibold text-foreground">
+                    {entry.assetCount} asset{entry.assetCount === 1 ? "" : "s"}
+                  </span>
+                  <span className="opacity-50">{entry.network}</span>
+                </button>
+                <button
+                  className="ml-1 text-muted-foreground hover:text-destructive transition-colors p-0.5 rounded"
+                  onClick={() => removeBulkHistory(entry.timestamp)}
+                  aria-label="Remove"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 
