@@ -2259,6 +2259,7 @@ export function AssetLookupPanel({
                           assetCode={distribSales.assetCode}
                           issuer={distribSales.issuer}
                           showGroupAction
+                          undistributedXlm={distribSales.estimatedOnHandXlm}
                         />
                       </div>
                     )}

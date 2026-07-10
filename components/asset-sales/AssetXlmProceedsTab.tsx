@@ -711,6 +711,7 @@ export function AssetXlmProceedsTab() {
                 assetCode={result.assetCode}
                 issuer={result.issuer}
                 showProgressBar
+                undistributedXlm={result.estimatedOnHandXlm}
                 onDownloadCsv={(address) =>
                   exportOutgoingCsv(
                     `outgoing-${address.slice(0, 8)}.csv`,

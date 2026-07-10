@@ -538,6 +538,7 @@ function AnalysisCard({ group, xlmUsdPrice }: { group: SavedAnalysis[]; xlmUsdPr
             network={analysis.network}
             showProgressBar
             emptyMessage="No outgoing XLM transfers found."
+            undistributedXlm={analysis.result.estimatedOnHandXlm}
           />
         </div>
       )}

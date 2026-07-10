@@ -41,6 +41,10 @@ interface ProceedsDestinationsTableProps {
   emptyMessage?: string;
   /** Show the live "Holds Now" balance-check column. Default true. */
   showBalanceColumn?: boolean;
+  /** Proceeds still sitting on the source address, never sent to any destination
+   *  (e.g. AssetProceedsResult.estimatedOnHandXlm). Rendered as a synthetic final
+   *  row so the percent column visibly accounts for the full totalXlmProceeds. */
+  undistributedXlm?: number;
 }
 
 /** Standard table for a list of counterparty/destination address summaries
@@ -62,6 +66,7 @@ export function ProceedsDestinationsTable({
   onAddToGroup,
   emptyMessage = "No destination outflows found.",
   showBalanceColumn = true,
+  undistributedXlm,
 }: ProceedsDestinationsTableProps) {
   const hasActions = !!onDownloadCsv || !!onInvestigate || showGroupAction || !!onAddToGroup;
   const colSpan =
@@ -258,11 +263,32 @@ export function ProceedsDestinationsTable({
               </tr>
             );
           })}
-          {destinations.length === 0 && (
+          {destinations.length === 0 && !undistributedXlm && (
             <tr>
               <td colSpan={colSpan} className="px-3 py-4 text-center text-sm text-muted-foreground">
                 {emptyMessage}
               </td>
+            </tr>
+          )}
+          {undistributedXlm != null && undistributedXlm > 0 && (
+            <tr className="border-t-2 border-dashed bg-muted/20">
+              <td className="px-3 py-2 text-xs text-muted-foreground italic">
+                Undistributed — still on source address
+              </td>
+              <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">
+                {formatXlm(undistributedXlm)}
+              </td>
+              {showPercentColumn && (
+                <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">
+                  {totalXlmProceeds > 0
+                    ? ((undistributedXlm / totalXlmProceeds) * 100).toFixed(2)
+                    : "0.00"}
+                  %
+                </td>
+              )}
+              {showBalanceColumn && <td className="px-3 py-2" />}
+              <td className="px-3 py-2" />
+              {hasActions && <td className="px-3 py-2" />}
             </tr>
           )}
         </tbody>

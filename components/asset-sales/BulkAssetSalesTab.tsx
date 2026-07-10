@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import {
   AlertTriangle,
   BookmarkCheck,
@@ -110,6 +111,7 @@ export function BulkAssetSalesPanel() {
   const [parseError, setParseError] = useState<string | null>(null);
   const [interrupted, setInterrupted] = useState(false);
   const [allSaved, setAllSaved] = useState(false);
+  const [sequential, setSequential] = useState(false);
   const { price: xlmUsdPrice, ensure: ensureXlmUsdPrice } = useXlmUsdPrice();
   const abortRef = useRef<AbortController | null>(null);
   const bulkScanState = useBulkScanState<AssetRow>();
@@ -173,7 +175,7 @@ export function BulkAssetSalesPanel() {
     const initial: AssetRow[] = pairs.map((p) => ({
       ...p,
       status: "pending",
-      expanded: false,
+      expanded: true,
     }));
     setRows(initial);
     bulkScanState.saveImmediate(initial, false);
@@ -186,7 +188,7 @@ export function BulkAssetSalesPanel() {
 
     await runConcurrent(
       pairs,
-      CONCURRENCY,
+      sequential ? 1 : CONCURRENCY,
       async (i, { assetCode, issuer }) => {
         // Step 1: infer distribution address
         updateRow(i, { status: "inferring" });
@@ -383,6 +385,22 @@ export function BulkAssetSalesPanel() {
                 {parseError}
               </p>
             )}
+          </div>
+          <div className="flex items-center gap-2">
+            <Switch
+              id="sequential-scan"
+              checked={sequential}
+              onCheckedChange={setSequential}
+              disabled={running}
+            />
+            <Label htmlFor="sequential-scan" className="text-sm font-normal">
+              Scan one at a time
+            </Label>
+            <span className="text-xs text-muted-foreground">
+              {sequential
+                ? "1 asset at a time"
+                : `${CONCURRENCY} assets in parallel`}
+            </span>
           </div>
         </CardContent>
         <CardFooter className="flex gap-2 flex-wrap">
@@ -620,6 +638,7 @@ export function BulkAssetSalesPanel() {
                     issuer={row.result.issuer}
                     showProgressBar
                     showGroupAction
+                    undistributedXlm={row.result.estimatedOnHandXlm}
                   />
                 </div>
               )}
