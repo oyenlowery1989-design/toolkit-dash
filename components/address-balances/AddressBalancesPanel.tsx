@@ -152,7 +152,7 @@ export function AddressBalancesPanel() {
     const totalLines = addressesText.split("\n").filter((l) => l.trim().length > 0).length;
     setParseError(
       addresses.length < totalLines
-        ? `${totalLines - addresses.length} invalid line(s) skipped.`
+        ? `${totalLines - addresses.length} line(s) skipped (invalid or duplicate).`
         : null,
     );
     setInterrupted(false);
@@ -198,6 +198,15 @@ export function AddressBalancesPanel() {
   const handleCancel = () => {
     abortRef.current?.abort();
     setRunning(false);
+    setRows((prev) => {
+      const next = prev.map((r) =>
+        r.status === "pending" || r.status === "loading"
+          ? { ...r, status: "error" as AddressRowStatus, error: "Cancelled." }
+          : r,
+      );
+      scanState.saveImmediate(next, false);
+      return next;
+    });
   };
 
   const handleClear = () => {
@@ -347,10 +356,7 @@ export function AddressBalancesPanel() {
               {rows.map((row) => (
                 <TableRow key={row.address}>
                   <TableCell>
-                    <ShortAddress
-                      address={row.address}
-                      network={settings.network as "public" | "testnet"}
-                    />
+                    <ShortAddress address={row.address} network={settings.network} />
                   </TableCell>
                   <TableCell>
                     <StatusBadge status={row.status} />
