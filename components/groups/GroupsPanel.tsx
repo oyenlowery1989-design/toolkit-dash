@@ -21,6 +21,9 @@ import {
   Loader2,
   Send,
   UserX,
+  Coins,
+  Clock,
+  RefreshCw,
 } from "lucide-react";
 import {
   Card,
@@ -64,7 +67,10 @@ import type {
   GroupMemberRole,
 } from "@/lib/asset-groups/types";
 import { ShortAddress } from "@/components/shared/ShortAddress";
-import { shortAddr } from "@/lib/format";
+import { shortAddr, formatXlm } from "@/lib/format";
+import { fetchXlmBalance, type XlmBalanceValue } from "@/lib/horizon-balance";
+import { fetchAccountCreation } from "@/lib/intermediary-tracer/fetchers";
+import { timeAgo } from "@/lib/stellar-helpers";
 
 const ALL_ROLES = Object.keys(ROLE_LABELS) as GroupMemberRole[];
 
@@ -270,6 +276,47 @@ function GroupCard({
   const [newPersonRole, setNewPersonRole] = useState("");
   const [addingMember, setAddingMember] = useState(false);
   const [editingMemberId, setEditingMemberId] = useState<string | null>(null);
+
+  // Live balance + account-age checks — on-demand per row, not auto-fetched.
+  const [memberBalances, setMemberBalances] = useState<Record<string, XlmBalanceValue | "loading">>({});
+  const [memberCreation, setMemberCreation] = useState<Record<string, { createdAt: string } | "loading" | "error">>({});
+  const checkAbortRef = useRef<AbortController | null>(null);
+  useEffect(() => {
+    const controller = new AbortController();
+    checkAbortRef.current = controller;
+    return () => controller.abort();
+  }, []);
+
+  // Uses the GROUP's own saved network, not the global network selector —
+  // a saved group's addresses live on whatever network it was created under,
+  // which can easily differ from whatever the sidebar is currently set to.
+  function groupHorizonUrl(): string {
+    return resolveHorizonUrl({
+      network: (group.network as Network) || "public",
+      localHorizonUrl: settings.localHorizonUrl,
+    });
+  }
+
+  async function checkMemberBalance(address: string) {
+    setMemberBalances((prev) => ({ ...prev, [address]: "loading" }));
+    const horizonUrl = groupHorizonUrl();
+    const result = await fetchXlmBalance(horizonUrl, address, checkAbortRef.current?.signal);
+    if (checkAbortRef.current?.signal.aborted) return;
+    setMemberBalances((prev) => ({ ...prev, [address]: result }));
+  }
+
+  async function checkMemberAge(address: string) {
+    setMemberCreation((prev) => ({ ...prev, [address]: "loading" }));
+    const horizonUrl = groupHorizonUrl();
+    try {
+      const result = await fetchAccountCreation(horizonUrl, address, checkAbortRef.current!.signal);
+      if (checkAbortRef.current?.signal.aborted) return;
+      setMemberCreation((prev) => ({ ...prev, [address]: result ? { createdAt: result.createdAt } : "error" }));
+    } catch {
+      if (checkAbortRef.current?.signal.aborted) return;
+      setMemberCreation((prev) => ({ ...prev, [address]: "error" }));
+    }
+  }
 
   // State for inline member editing
   const [memberEdit, setMemberEdit] = useState<{
@@ -717,11 +764,13 @@ function GroupCard({
           {/* Members table */}
           {group.members.length > 0 && (
             <div className="rounded-md border border-border overflow-x-auto">
-              <table className="w-full text-xs min-w-[560px]">
+              <table className="w-full text-xs min-w-[760px]">
                 <thead>
                   <tr className="border-b border-border bg-muted/40 text-muted-foreground">
                     <th className="text-left px-3 py-2 font-medium">Role</th>
                     <th className="text-left px-3 py-2 font-medium">Address</th>
+                    <th className="text-left px-3 py-2 font-medium">Balance</th>
+                    <th className="text-left px-3 py-2 font-medium">Created</th>
                     <th className="text-left px-3 py-2 font-medium">Label</th>
                     <th className="text-left px-3 py-2 font-medium">
                       Home Domain
@@ -766,6 +815,8 @@ function GroupCard({
                         <td className="px-2 py-1.5 font-mono text-muted-foreground">
                           {shortAddr(m.address)}
                         </td>
+                        <td className="px-2 py-1.5 text-muted-foreground">—</td>
+                        <td className="px-2 py-1.5 text-muted-foreground">—</td>
                         <td className="px-2 py-1.5">
                           <Input
                             value={memberEdit.label}
@@ -838,6 +889,83 @@ function GroupCard({
                         </td>
                         <td className="px-3 py-2 font-mono">
                           <ShortAddress address={m.address} network={network} />
+                        </td>
+                        <td className="px-3 py-2">
+                          {(() => {
+                            const bal = memberBalances[m.address];
+                            if (bal === undefined) {
+                              return (
+                                <Button
+                                  size="icon"
+                                  variant="ghost"
+                                  className="h-6 w-6 text-muted-foreground hover:text-foreground"
+                                  title="Check balance"
+                                  onClick={() => checkMemberBalance(m.address)}
+                                >
+                                  <Coins className="h-3.5 w-3.5" />
+                                </Button>
+                              );
+                            }
+                            if (bal === "loading") {
+                              return <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />;
+                            }
+                            if (bal === "unfunded") {
+                              return <span className="text-muted-foreground">closed</span>;
+                            }
+                            if (bal === "error") {
+                              return (
+                                <Button
+                                  size="icon"
+                                  variant="ghost"
+                                  className="h-6 w-6 text-destructive hover:text-destructive"
+                                  title="Retry"
+                                  onClick={() => checkMemberBalance(m.address)}
+                                >
+                                  <RefreshCw className="h-3.5 w-3.5" />
+                                </Button>
+                              );
+                            }
+                            return (
+                              <span className="font-mono" title={`${bal} XLM`}>
+                                {formatXlm(bal)} XLM
+                              </span>
+                            );
+                          })()}
+                        </td>
+                        <td className="px-3 py-2 text-muted-foreground">
+                          {(() => {
+                            const c = memberCreation[m.address];
+                            if (c === undefined) {
+                              return (
+                                <Button
+                                  size="icon"
+                                  variant="ghost"
+                                  className="h-6 w-6 text-muted-foreground hover:text-foreground"
+                                  title="Check creation date"
+                                  onClick={() => checkMemberAge(m.address)}
+                                >
+                                  <Clock className="h-3.5 w-3.5" />
+                                </Button>
+                              );
+                            }
+                            if (c === "loading") {
+                              return <Loader2 className="h-3.5 w-3.5 animate-spin" />;
+                            }
+                            if (c === "error") {
+                              return (
+                                <Button
+                                  size="icon"
+                                  variant="ghost"
+                                  className="h-6 w-6 text-destructive hover:text-destructive"
+                                  title="Retry"
+                                  onClick={() => checkMemberAge(m.address)}
+                                >
+                                  <RefreshCw className="h-3.5 w-3.5" />
+                                </Button>
+                              );
+                            }
+                            return <span title={new Date(c.createdAt).toLocaleString()}>{timeAgo(c.createdAt)}</span>;
+                          })()}
                         </td>
                         <td className="px-3 py-2 text-muted-foreground">
                           {m.label ?? "—"}
