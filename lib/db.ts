@@ -194,6 +194,7 @@ function initDb(): Database.Database {
 
     CREATE TABLE IF NOT EXISTS bulk_scan_state (
       id          TEXT    PRIMARY KEY,
+      scan_key    TEXT    NOT NULL DEFAULT 'default',
       rows_json   TEXT    NOT NULL,
       interrupted INTEGER NOT NULL DEFAULT 0,
       updated_at  INTEGER NOT NULL
@@ -593,6 +594,18 @@ function initDb(): Database.Database {
     db.prepare("INSERT INTO schema_version (version) VALUES (?)").run(1);
   }
 
+  // ── Versioned migration: bulk_scan_state.scan_key (v1 -> v2) ───────────────
+  {
+    const v = (db.prepare("SELECT version FROM schema_version LIMIT 1").get() as { version: number }).version;
+    if (v < 2) {
+      const cols = db.prepare("PRAGMA table_info(bulk_scan_state)").all() as { name: string }[];
+      if (!cols.some((c) => c.name === "scan_key")) {
+        db.exec(`ALTER TABLE bulk_scan_state ADD COLUMN scan_key TEXT NOT NULL DEFAULT 'default'`);
+      }
+      db.prepare("UPDATE schema_version SET version = 2").run();
+    }
+  }
+
   return db;
 }
 
@@ -602,7 +615,7 @@ function initDb(): Database.Database {
  *   const v = (db.prepare("SELECT version FROM schema_version LIMIT 1").get() as {version:number}).version;
  *   if (v < 2) { db.exec(`ALTER TABLE ...`); db.prepare("UPDATE schema_version SET version=2").run(); }
  */
-export const CURRENT_SCHEMA_VERSION = 1;
+export const CURRENT_SCHEMA_VERSION = 2;
 
 export function getDb(): Database.Database {
   if (!global._stellarDb) {
