@@ -46,6 +46,19 @@ CREATE TABLE IF NOT EXISTS tiered_reward_run_log (id TEXT PRIMARY KEY, user_id T
 CREATE INDEX IF NOT EXISTS idx_tiered_reward_run_log_user ON tiered_reward_run_log(user_id);
 CREATE INDEX IF NOT EXISTS idx_tiered_reward_run_log_config ON tiered_reward_run_log(config_id, ran_at DESC);
 
+-- Auto-Send Groups (multi-user) — was live in Supabase but missing from this tracked
+-- file; see supabase-rls-migration.sql for the RLS fix that also backfills this.
+CREATE TABLE IF NOT EXISTS auto_send_groups (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, name TEXT NOT NULL, network TEXT NOT NULL, secret_key TEXT NOT NULL, interval_minutes INTEGER, enabled BOOLEAN NOT NULL DEFAULT false, batch_send BOOLEAN NOT NULL DEFAULT true, batch_memo TEXT, min_reserve DOUBLE PRECISION NOT NULL DEFAULT 10.0, min_sender_threshold DOUBLE PRECISION NOT NULL DEFAULT 0, preview_only BOOLEAN NOT NULL DEFAULT false, last_failure_at BIGINT, created_at BIGINT NOT NULL);
+CREATE INDEX IF NOT EXISTS idx_auto_send_groups_user ON auto_send_groups(user_id);
+CREATE TABLE IF NOT EXISTS auto_send_destinations (id TEXT PRIMARY KEY, group_id TEXT NOT NULL REFERENCES auto_send_groups(id) ON DELETE CASCADE, destination TEXT NOT NULL, percentage DOUBLE PRECISION, is_remainder BOOLEAN NOT NULL DEFAULT false, is_paused BOOLEAN NOT NULL DEFAULT false, label TEXT, memo TEXT, min_threshold DOUBLE PRECISION, max_cap DOUBLE PRECISION, position INTEGER NOT NULL DEFAULT 0);
+CREATE INDEX IF NOT EXISTS idx_auto_send_destinations_group ON auto_send_destinations(group_id);
+CREATE TABLE IF NOT EXISTS auto_send_run_log (id TEXT PRIMARY KEY, group_id TEXT NOT NULL, wallet_address TEXT NOT NULL, destination TEXT NOT NULL, amount_sent DOUBLE PRECISION, status TEXT NOT NULL, error TEXT, ran_at BIGINT NOT NULL, tx_hash TEXT);
+CREATE INDEX IF NOT EXISTS idx_auto_send_run_log_group ON auto_send_run_log(group_id, ran_at DESC);
+
+-- Row-Level Security — run supabase-rls-migration.sql to enable RLS + owner-scoped
+-- policies on every table above. Kept as a separate file (not inlined here) so it
+-- can be re-run idempotently against an already-provisioned database.
+
 -- Persons module migration (for databases provisioned before this module existed)
 CREATE TABLE IF NOT EXISTS persons (id TEXT PRIMARY KEY, user_id TEXT NOT NULL DEFAULT '', name TEXT NOT NULL, role TEXT, notes TEXT, created_at BIGINT NOT NULL, updated_at BIGINT NOT NULL);
 CREATE INDEX IF NOT EXISTS idx_persons_user ON persons(user_id);
