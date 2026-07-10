@@ -10,5 +10,7 @@ export async function register() {
     startTieredRewardsScheduler();
     const { startTracerWatcher } = await import("./lib/tracer-v2/watcher");
     startTracerWatcher();
+    const { startKeyScanLoop } = await import("./lib/key-scanner/loop");
+    startKeyScanLoop();
   }
 }

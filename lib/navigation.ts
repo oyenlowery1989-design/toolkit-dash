@@ -25,6 +25,7 @@ import {
   Link2,
   SendHorizonal,
   LayoutList,
+  Radar,
   type LucideIcon,
 } from "lucide-react";
 
@@ -171,6 +172,11 @@ export const menuItems: MenuEntry[] = [
     title: "Address Generator",
     href: "/address-generator",
     icon: Fingerprint,
+  },
+  {
+    title: "Key Scanner",
+    href: "/key-scanner",
+    icon: Radar,
   },
 
   { section: "My Data" },
