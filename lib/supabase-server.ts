@@ -121,12 +121,31 @@ export async function requireAuth(req: NextRequest): Promise<AuthResult> {
 
   const token = authHeader.slice(7);
   const sb = getSupabase()!;
-  const {
-    data: { user },
-    error,
-  } = await sb.auth.getUser(token);
 
-  if (error || !user) {
+  let user: { id: string } | null = null;
+  try {
+    const { data, error } = await sb.auth.getUser(token);
+    if (error) {
+      return {
+        ok: false,
+        response: NextResponse.json({ error: "Unauthorized" }, { status: 401 }),
+      };
+    }
+    user = data.user;
+  } catch (e) {
+    // Network/timeout reaching Supabase Auth itself — distinct from an
+    // invalid/expired token, so callers can tell "retry" from "log in again".
+    console.error("[auth] Supabase getUser request failed:", e);
+    return {
+      ok: false,
+      response: NextResponse.json(
+        { error: "Auth service unavailable — please retry" },
+        { status: 503 },
+      ),
+    };
+  }
+
+  if (!user) {
     return {
       ok: false,
       response: NextResponse.json({ error: "Unauthorized" }, { status: 401 }),

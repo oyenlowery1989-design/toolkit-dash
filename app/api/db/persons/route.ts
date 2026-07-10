@@ -46,15 +46,23 @@ export async function GET(req: NextRequest) {
 
   if (isSupabaseOnly()) {
     const sb = getSupabase()!;
-    const { data: persons } = await sb
+    const { data: persons, error: personsError } = await sb
       .from("persons")
       .select("*")
       .eq("user_id", userId!)
       .order("updated_at", { ascending: false });
+    if (personsError) {
+      console.error("[persons] GET failed:", personsError);
+      return NextResponse.json({ error: personsError.message }, { status: 500 });
+    }
     const personIds = (persons ?? []).map((p) => p.id as string);
-    const { data: allAddresses } = personIds.length > 0
+    const { data: allAddresses, error: addressesError } = personIds.length > 0
       ? await sb.from("person_addresses").select("*").in("person_id", personIds).order("added_at", { ascending: true })
-      : { data: [] };
+      : { data: [], error: null };
+    if (addressesError) {
+      console.error("[persons] GET (addresses) failed:", addressesError);
+      return NextResponse.json({ error: addressesError.message }, { status: 500 });
+    }
     return NextResponse.json(buildPersonsFromRows(persons ?? [], allAddresses ?? []));
   }
 
