@@ -36,15 +36,9 @@ const TAIL_CAP = 50;
 const CHECKPOINT_DEBOUNCE_MS = 1500;
 const MIN_PACED_RPS = 0.5;
 
-// Inlined (not imported from @/lib/settings) — settings.ts pulls in a client-only
-// `useSyncExternalStore` hook, and this module runs server-side via instrumentation.ts,
-// so importing it would drag the client hook into the server bundle (RSC build error).
-// Keep in sync with HORIZON_URLS in lib/settings.ts.
-const HORIZON_BASE: Record<KeyScanNetwork, string> = {
-  public: "https://horizon.stellar.org",
-  testnet: "https://horizon-testnet.stellar.org",
-  futurenet: "https://horizon-futurenet.stellar.org",
-};
+// Mainnet only — checking for an existing balance only means something against
+// the real ledger, so testnet/futurenet were deliberately never exposed here.
+const HORIZON_BASE = "https://horizon.stellar.org";
 
 function getSingleton(): KeyScanLoopSingleton {
   if (!global._keyScanLoop) {
@@ -173,7 +167,7 @@ async function worker(s: KeyScanLoopSingleton, index: number, generation: number
     try {
       await acquireSlot(s);
       const { publicKey, secretKey } = generateKeypair();
-      const result = await checkAccount(HORIZON_BASE[s.network], publicKey, signal);
+      const result = await checkAccount(HORIZON_BASE, publicKey, signal);
       s.lastActivityAt = Date.now();
 
       if (result.status === "exists") {
@@ -242,10 +236,9 @@ export function stopKeyScanLoopRun(): void {
   flushCheckpoint(s);
 }
 
-export function updateKeyScanConfig(patch: { network?: KeyScanNetwork; pacedRps?: number; concurrency?: number; resumeOnBoot?: boolean }): void {
+export function updateKeyScanConfig(patch: { pacedRps?: number; concurrency?: number; resumeOnBoot?: boolean }): void {
   const s = getSingleton();
   const growingConcurrency = patch.concurrency !== undefined && patch.concurrency > s.concurrency;
-  if (patch.network !== undefined) s.network = patch.network;
   if (patch.pacedRps !== undefined) s.pacedRps = Math.max(MIN_PACED_RPS, patch.pacedRps);
   if (patch.concurrency !== undefined) s.concurrency = Math.max(1, patch.concurrency);
   if (patch.resumeOnBoot !== undefined) {

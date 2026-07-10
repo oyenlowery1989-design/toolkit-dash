@@ -6,7 +6,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   Play,
   Square,
@@ -20,7 +19,7 @@ import {
 } from "lucide-react";
 import { useKeyScan } from "@/hooks/use-key-scan";
 import { HitsTable } from "./HitsTable";
-import type { KeyScanNetwork, KeyScanTailEntry } from "@/lib/key-scanner/types";
+import type { KeyScanTailEntry } from "@/lib/key-scanner/types";
 
 function StatCard({ label, value, accent }: { label: string; value: React.ReactNode; accent?: string }) {
   return (
@@ -100,7 +99,6 @@ function LiveTail({ tail, running }: { tail: KeyScanTailEntry[]; running: boolea
 
 export function KeyScannerPanel() {
   const { state, hits, loaded, disabled, start, stop, configure, purgeHit } = useKeyScan();
-  const [network, setNetwork] = useState<KeyScanNetwork>("testnet");
   const [pacedRps, setPacedRps] = useState(5);
   const [concurrency, setConcurrency] = useState(3);
   const [resumeOnBoot, setResumeOnBoot] = useState(true);
@@ -113,7 +111,6 @@ export function KeyScannerPanel() {
   // fighting the user's in-progress edits on every poll tick.
   useEffect(() => {
     if (!state) return;
-    setNetwork(state.network);
     setPacedRps(state.pacedRps);
     setConcurrency(state.concurrency);
     setResumeOnBoot(state.resumeOnBoot);
@@ -200,7 +197,7 @@ export function KeyScannerPanel() {
               {throttled ? "Throttled" : running ? "Running" : "Stopped"}
             </span>
           </CardTitle>
-          <CardDescription>Continuously generates random keypairs and checks each for an existing on-ledger balance.</CardDescription>
+          <CardDescription>Continuously generates random keypairs and checks each for an existing on-ledger balance on Public (mainnet).</CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -222,24 +219,7 @@ export function KeyScannerPanel() {
             <StatCard label="Concurrency" value={state?.concurrency ?? concurrency} />
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-            <div className="space-y-2">
-              <Label>Network</Label>
-              <Select
-                value={network}
-                onValueChange={(v: KeyScanNetwork) => setNetwork(v)}
-                disabled={running}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="testnet">Testnet</SelectItem>
-                  <SelectItem value="public">Public (mainnet)</SelectItem>
-                  <SelectItem value="futurenet">Futurenet</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div className="space-y-2">
               <Label>Pace (req/s)</Label>
               <Input
@@ -293,7 +273,7 @@ export function KeyScannerPanel() {
 
           <div className="flex gap-3">
             {!running ? (
-              <Button onClick={() => start({ network, pacedRps, concurrency, resumeOnBoot })} className="flex-1">
+              <Button onClick={() => start({ pacedRps, concurrency, resumeOnBoot })} className="flex-1">
                 <Play className="mr-2 h-4 w-4" />
                 Start
               </Button>

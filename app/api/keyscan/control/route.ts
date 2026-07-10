@@ -23,9 +23,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, error: "Invalid JSON" }, { status: 400 });
   }
 
-  const { action, network, pacedRps, concurrency, resumeOnBoot } = b ?? {};
-  if (network !== undefined || pacedRps !== undefined || concurrency !== undefined || resumeOnBoot !== undefined) {
-    updateKeyScanConfig({ network, pacedRps, concurrency, resumeOnBoot });
+  const { action, pacedRps, concurrency, resumeOnBoot } = b ?? {};
+  if (pacedRps !== undefined || concurrency !== undefined || resumeOnBoot !== undefined) {
+    updateKeyScanConfig({ pacedRps, concurrency, resumeOnBoot });
   }
 
   if (action === "start") startKeyScanLoopRun();

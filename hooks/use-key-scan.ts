@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { waitForAuth, authHeaders, dbPost, dbDelete } from "@/lib/db-client";
 import { notifyIfHidden } from "@/lib/notifications";
-import type { KeyScanHit, KeyScanNetwork, KeyScanState } from "@/lib/key-scanner/types";
+import type { KeyScanHit, KeyScanState } from "@/lib/key-scanner/types";
 
 // Deliberately NOT the createDbCache optimistic-write pattern used by every other
 // DB-backed hook in this app — that pattern is built for user-driven CRUD with
@@ -16,7 +16,6 @@ const RUNNING_POLL_MS = 1500;
 const IDLE_POLL_MS = 5000;
 
 interface KeyScanControlOpts {
-  network?: KeyScanNetwork;
   pacedRps?: number;
   concurrency?: number;
   resumeOnBoot?: boolean;

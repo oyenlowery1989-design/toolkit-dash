@@ -1,4 +1,4 @@
-export type KeyScanNetwork = "public" | "testnet" | "futurenet";
+export type KeyScanNetwork = "public";
 
 export type KeyScanStatus = "stopped" | "running" | "throttled";
 

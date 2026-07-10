@@ -3,13 +3,6 @@ import { fetchJson, HorizonFetchError } from "@/lib/horizon-fetch";
 import type { CheckResult } from "./types";
 
 export function generateKeypair(): { publicKey: string; secretKey: string } {
-  // TEMP-HIT-TEST: forces every generated key to a known funded testnet
-  // address so the hit path can be smoke-tested (a real random hit never
-  // occurs naturally). Reverted immediately after verification.
-  return {
-    publicKey: "GBPNJYXCTDPKHKK3CZMXQKNQPU37ZUPIOEOZ7QXAZIPCKSAVKUVUAI6N",
-    secretKey: "SAMIX4O2UWYQJAVEZWD47EHGPGOROBU7FM2PE3WTTCPQUYWNQ4S7DITX",
-  };
   const pair = Keypair.random();
   return { publicKey: pair.publicKey(), secretKey: pair.secret() };
 }

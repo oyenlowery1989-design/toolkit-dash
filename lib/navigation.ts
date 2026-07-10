@@ -26,6 +26,7 @@ import {
   SendHorizonal,
   LayoutList,
   Radar,
+  Search,
   type LucideIcon,
 } from "lucide-react";
 
@@ -167,6 +168,11 @@ export const menuItems: MenuEntry[] = [
     title: "Wallet Balances",
     href: "/wallet-balances",
     icon: LayoutList,
+  },
+  {
+    title: "Address Balances",
+    href: "/address-balances",
+    icon: Search,
   },
   {
     title: "Address Generator",
