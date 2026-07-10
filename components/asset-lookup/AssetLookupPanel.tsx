@@ -1380,6 +1380,7 @@ export function AssetLookupPanel({
                           ?.homeDomain
                       : undefined;
                   })()}
+                  topDestinations={distribSales?.topDestinations}
                 />
 
                 {/* TOML button */}
@@ -2273,6 +2274,7 @@ export function AssetLookupPanel({
                         issuer={issuer}
                         network={settings.network}
                         distribAddress={distribCandidates[0].address}
+                        topDestinations={distribSales?.topDestinations}
                       />
                     )}
                     <Button

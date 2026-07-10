@@ -692,6 +692,7 @@ export function AssetXlmProceedsTab() {
                     issuer={result.issuer}
                     network={settings.network}
                     distribAddress={result.accounts[0]}
+                    topDestinations={result.topDestinations}
                   />
                 )}
                 <Button

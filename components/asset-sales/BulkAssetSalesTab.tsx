@@ -120,6 +120,16 @@ export function BulkAssetSalesPanel() {
     requestNotificationPermission();
   }, []);
 
+  // Abort any in-flight scan on unmount — without this, navigating away
+  // mid-scan leaves runConcurrent's worker pool running invisibly in the
+  // background (no UI to cancel it), which then compounds with whatever
+  // scan-heavy module the user opens next.
+  useEffect(() => {
+    return () => {
+      abortRef.current?.abort();
+    };
+  }, []);
+
   // SSR output must be empty state; apply any persisted rows after mount.
   useEffect(() => {
     let cancelled = false;
@@ -131,17 +141,18 @@ export function BulkAssetSalesPanel() {
           r.status === "inferring" ||
           r.status === "scanning",
       );
-      const rows = persisted.rows.map((r) =>
-        r.status === "pending" ||
+      const rows = persisted.rows.map((r) => ({
+        ...r,
+        expanded: true,
+        ...(r.status === "pending" ||
         r.status === "inferring" ||
         r.status === "scanning"
           ? {
-              ...r,
               status: "error" as AssetRowStatus,
               error: "Scan was interrupted (page refresh).",
             }
-          : r,
-      );
+          : {}),
+      }));
       setRows(rows);
       setInterrupted(wasInterrupted);
     });
@@ -581,6 +592,7 @@ export function BulkAssetSalesPanel() {
                       network={settings.network}
                       distribAddress={row.distribAddress}
                       homeDomain={row.homeDomain}
+                      topDestinations={row.result?.topDestinations}
                       size="sm"
                     />
                   )}
