@@ -2,6 +2,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import {
   Card,
   CardContent,
@@ -16,6 +17,7 @@ import {
   Table,
   TableBody,
   TableCell,
+  TableFooter,
   TableHead,
   TableHeader,
   TableRow,
@@ -32,7 +34,16 @@ import { useSettings, resolveHorizonUrl } from "@/lib/settings";
 import { ShortAddress } from "@/components/shared/ShortAddress";
 import { formatXlm, parseAddresses } from "@/lib/format";
 import { useBulkScanState } from "@/hooks/use-bulk-scan-state";
+import { useXlmUsdPrice } from "@/hooks/use-xlm-usd-price";
+import { useSavedSearches } from "@/hooks/use-saved-searches";
 import { fetchAddressBalance } from "@/lib/address-balances/fetchers";
+
+function formatUsd(xlm: number, price: number): string {
+  return (xlm * price).toLocaleString("en-US", {
+    style: "currency",
+    currency: "USD",
+  });
+}
 
 // ---------------------------------------------------------------------------
 // Types
@@ -50,6 +61,7 @@ interface AddressRow {
 
 const SCAN_KEY = "address-balances";
 const CONCURRENCY = 5;
+const MIN_USD_OPTIONS = [10, 20, 50, 100] as const;
 
 // ---------------------------------------------------------------------------
 // Concurrency helper (same pattern as BulkAssetSalesTab.tsx)
@@ -111,8 +123,35 @@ export function AddressBalancesPanel() {
   const [running, setRunning] = useState(false);
   const [parseError, setParseError] = useState<string | null>(null);
   const [interrupted, setInterrupted] = useState(false);
+  const [minUsdFilter, setMinUsdFilter] = useState<number | null>(null);
+  const [sortOrder, setSortOrder] = useState<"none" | "desc" | "asc">("none");
   const abortRef = useRef<AbortController | null>(null);
   const scanState = useBulkScanState<AddressRow>(SCAN_KEY);
+  const { price: xlmUsdPrice, ensure: ensureXlmUsdPrice } = useXlmUsdPrice();
+  const { upsert: upsertSearch } = useSavedSearches();
+  const searchParams = useSearchParams();
+
+  useEffect(() => {
+    ensureXlmUsdPrice();
+  }, [ensureXlmUsdPrice]);
+
+  useEffect(() => {
+    const fromHistory = searchParams.get("addresses");
+    if (fromHistory) {
+      setAddressesText(fromHistory.split(",").join("\n"));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Abort any in-flight scan on unmount — without this, navigating away
+  // mid-scan leaves the worker pool running invisibly in the background
+  // (no UI to cancel it), which then compounds with whatever scan-heavy
+  // module the user opens next.
+  useEffect(() => {
+    return () => {
+      abortRef.current?.abort();
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -159,6 +198,14 @@ export function AddressBalancesPanel() {
     abortRef.current?.abort();
     abortRef.current = new AbortController();
     const signal = abortRef.current.signal;
+
+    upsertSearch({
+      type: "address-balances",
+      value: addresses.join(","),
+      label: `${addresses.length} address${addresses.length === 1 ? "" : "es"}`,
+      network: settings.network,
+      accountsFound: addresses.length,
+    });
 
     const initial: AddressRow[] = addresses.map((address) => ({
       address,
@@ -220,6 +267,37 @@ export function AddressBalancesPanel() {
   const doneCount = rows.filter((r) => r.status === "done" || r.status === "unfunded").length;
   const errorCount = rows.filter((r) => r.status === "error").length;
   const pendingCount = rows.filter((r) => r.status === "pending" || r.status === "loading").length;
+
+  const filteredRows =
+    minUsdFilter === null || xlmUsdPrice === null
+      ? rows
+      : rows.filter(
+          (r) =>
+            r.status === "done" &&
+            r.total !== undefined &&
+            r.total * xlmUsdPrice >= minUsdFilter,
+        );
+
+  const totalBalance = filteredRows.reduce(
+    (sum, r) => sum + (r.status === "done" && r.total !== undefined ? r.total : 0),
+    0,
+  );
+  const totalAvailable = filteredRows.reduce(
+    (sum, r) => sum + (r.status === "done" && r.available !== undefined ? r.available : 0),
+    0,
+  );
+  const filteredDoneCount = filteredRows.filter(
+    (r) => r.status === "done" || r.status === "unfunded",
+  ).length;
+
+  const sortedRows =
+    sortOrder === "none"
+      ? filteredRows
+      : [...filteredRows].sort((a, b) => {
+          const av = a.status === "done" && a.total !== undefined ? a.total : -1;
+          const bv = b.status === "done" && b.total !== undefined ? b.total : -1;
+          return sortOrder === "desc" ? bv - av : av - bv;
+        });
 
   // Watchdog: if running but all rows reached a terminal state, stop the spinner.
   useEffect(() => {
@@ -341,19 +419,65 @@ export function AddressBalancesPanel() {
         </div>
       )}
 
+      {doneCount > 0 && (
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-xs text-muted-foreground">Filter:</span>
+          <Button
+            variant={minUsdFilter === null ? "default" : "outline"}
+            size="sm"
+            onClick={() => setMinUsdFilter(null)}
+          >
+            All
+          </Button>
+          {MIN_USD_OPTIONS.map((amount) => (
+            <Button
+              key={amount}
+              variant={minUsdFilter === amount ? "default" : "outline"}
+              size="sm"
+              disabled={xlmUsdPrice === null}
+              onClick={() => setMinUsdFilter(amount)}
+            >
+              ≥ ${amount}
+            </Button>
+          ))}
+          {xlmUsdPrice === null && (
+            <span className="text-xs text-muted-foreground">
+              (loading USD price…)
+            </span>
+          )}
+          <span className="text-xs text-muted-foreground ml-4">Sort:</span>
+          <Button
+            variant={sortOrder === "desc" ? "default" : "outline"}
+            size="sm"
+            onClick={() => setSortOrder(sortOrder === "desc" ? "none" : "desc")}
+          >
+            High → Low
+          </Button>
+          <Button
+            variant={sortOrder === "asc" ? "default" : "outline"}
+            size="sm"
+            onClick={() => setSortOrder(sortOrder === "asc" ? "none" : "asc")}
+          >
+            Low → High
+          </Button>
+        </div>
+      )}
+
       {rows.length > 0 && (
-        <Card>
-          <Table>
+        <Card className="overflow-x-auto">
+          <Table className="min-w-[720px]">
             <TableHeader>
               <TableRow>
                 <TableHead>Address</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead className="text-right">Balance (XLM)</TableHead>
+                <TableHead className="text-right">Balance (USD)</TableHead>
                 <TableHead className="text-right">Available (XLM)</TableHead>
+                <TableHead className="text-right">Available (USD)</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {rows.map((row) => (
+              {sortedRows.map((row) => (
                 <TableRow key={row.address}>
                   <TableCell>
                     <ShortAddress address={row.address} network={settings.network} />
@@ -369,14 +493,43 @@ export function AddressBalancesPanel() {
                       ? formatXlm(row.total)
                       : "—"}
                   </TableCell>
+                  <TableCell className="text-right font-mono text-sm text-muted-foreground">
+                    {row.status === "done" && row.total !== undefined && xlmUsdPrice !== null
+                      ? formatUsd(row.total, xlmUsdPrice)
+                      : "—"}
+                  </TableCell>
                   <TableCell className="text-right font-mono text-sm">
                     {row.status === "done" && row.available !== undefined
                       ? formatXlm(row.available)
                       : "—"}
                   </TableCell>
+                  <TableCell className="text-right font-mono text-sm text-muted-foreground">
+                    {row.status === "done" && row.available !== undefined && xlmUsdPrice !== null
+                      ? formatUsd(row.available, xlmUsdPrice)
+                      : "—"}
+                  </TableCell>
                 </TableRow>
               ))}
             </TableBody>
+            {filteredDoneCount > 0 && (
+              <TableFooter>
+                <TableRow>
+                  <TableCell colSpan={2}>Total ({filteredDoneCount})</TableCell>
+                  <TableCell className="text-right font-mono text-sm">
+                    {formatXlm(totalBalance)}
+                  </TableCell>
+                  <TableCell className="text-right font-mono text-sm">
+                    {xlmUsdPrice !== null ? formatUsd(totalBalance, xlmUsdPrice) : "—"}
+                  </TableCell>
+                  <TableCell className="text-right font-mono text-sm">
+                    {formatXlm(totalAvailable)}
+                  </TableCell>
+                  <TableCell className="text-right font-mono text-sm">
+                    {xlmUsdPrice !== null ? formatUsd(totalAvailable, xlmUsdPrice) : "—"}
+                  </TableCell>
+                </TableRow>
+              </TableFooter>
+            )}
           </Table>
         </Card>
       )}

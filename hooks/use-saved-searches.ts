@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { createDbCache, dbPost, authHeaders, waitForAuth, debounce } from "@/lib/db-client";
 
-export type SavedSearchType = "address" | "asset" | "intermediary-trace" | "intermediary-scan";
+export type SavedSearchType = "address" | "asset" | "intermediary-trace" | "intermediary-scan" | "address-balances";
 
 export interface SavedSearch {
   /** Row id — present once the entry has round-tripped through the server (GET response). Absent on freshly-optimistic entries. */
