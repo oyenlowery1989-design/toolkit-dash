@@ -239,7 +239,7 @@ git commit -m "feat(persons): add groupsForAddress helper"
 
 **Interfaces:**
 - Consumes: `groupsForAddress` (Task 2), `normalizeChannel` (Task 1), `Person` type (Task 1)
-- Produces: `PersonTelegramChannel { key: string; raw: string }`, `telegramChannelsForPerson(person: Person, groups: AssetGroup[]): PersonTelegramChannel[]`
+- Produces: `PersonTelegramChannel { key: string; raw: string; link?: string }`, `telegramChannelsForPerson(person: Person, groups: AssetGroup[]): PersonTelegramChannel[]`
 
 - [ ] **Step 1: Write the failing test**
 
@@ -304,6 +304,16 @@ describe("telegramChannelsForPerson", () => {
     const groups = [makeGroup("g1", { personId: "p1" })];
     expect(telegramChannelsForPerson(person, groups)).toEqual([]);
   });
+
+  it("carries the group's explicit telegramLink alongside the derived channel", () => {
+    const person = makePerson();
+    const groups = [
+      makeGroup("g1", { personId: "p1", telegramChannel: "chan", telegramLink: "https://t.me/joinchat/xyz" }),
+    ];
+    expect(telegramChannelsForPerson(person, groups)).toEqual([
+      { key: "chan", raw: "chan", link: "https://t.me/joinchat/xyz" },
+    ]);
+  });
 });
 ```
 
@@ -325,13 +335,17 @@ import { groupsForAddress } from "@/lib/persons/address-groups";
 export interface PersonTelegramChannel {
   key: string;
   raw: string;
+  link?: string;
 }
 
 /** Every distinct Telegram channel connected to this person: channels on
  *  groups they're attributed to, plus channels on groups any of their
- *  linked addresses belong to. Deduped by normalized channel name. */
+ *  linked addresses belong to. Deduped by normalized channel name. Carries
+ *  the originating group's explicit telegramLink (if set) so callers can
+ *  defer to resolveTelegramUrl's "explicit link wins" contract instead of
+ *  always deriving a t.me URL from the channel name. */
 export function telegramChannelsForPerson(person: Person, groups: AssetGroup[]): PersonTelegramChannel[] {
-  const seen = new Map<string, string>();
+  const seen = new Map<string, { raw: string; link?: string }>();
 
   const attributedGroups = groups.filter((g) => g.personId === person.id);
   const addressGroups = person.addresses.flatMap((a) => groupsForAddress(a.address, groups));
@@ -340,17 +354,17 @@ export function telegramChannelsForPerson(person: Person, groups: AssetGroup[]):
     if (!g.telegramChannel) continue;
     const key = normalizeChannel(g.telegramChannel);
     if (!key || seen.has(key)) continue;
-    seen.set(key, g.telegramChannel);
+    seen.set(key, { raw: g.telegramChannel, link: g.telegramLink });
   }
 
-  return [...seen.entries()].map(([key, raw]) => ({ key, raw }));
+  return [...seen.entries()].map(([key, v]) => ({ key, raw: v.raw, link: v.link }));
 }
 ```
 
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `npx vitest run tests/lib/persons/telegram-channels.test.ts`
-Expected: PASS (5 tests)
+Expected: PASS (6 tests)
 
 - [ ] **Step 5: Commit**
 
@@ -682,23 +696,16 @@ CREATE INDEX IF NOT EXISTS idx_person_relationships_b ON person_relationships(pe
 
 - [ ] **Step 5: Verify the SQLite migration runs cleanly**
 
-The local `stellar-toolkit.db` already has a `persons` table without `telegram_username` — this step proves the migration path works before the API route (which depends on the new column/table) is built.
-
-Run:
-```bash
-node -e "
-const { getDb } = require('./lib/db.ts');
-" 2>&1 | head -5
-```
-
-This will fail because `lib/db.ts` is TypeScript — instead, start the dev server briefly (migrations run on first `getDb()` call, which happens on any `/api/db/*` request) and check the schema directly:
+The local `stellar-toolkit.db` already has a `persons` table without `telegram_username` — this step proves the migration path works before the API route (which depends on the new column/table) is built. Migrations run on the first `getDb()` call, which happens on any `/api/db/*` request — start the dev server briefly, hit one such route, stop it, then check the schema directly:
 
 ```bash
+npm run dev &
+sleep 3
+curl -s -o /dev/null http://localhost:3000/persons
+kill %1
 sqlite3 stellar-toolkit.db "PRAGMA table_info(persons);" | grep telegram_username
 sqlite3 stellar-toolkit.db "PRAGMA table_info(person_relationships);"
 ```
-
-If `sqlite3` CLI isn't available, instead run `npm run dev`, hit `http://localhost:3000/persons` once in a browser to trigger a `getDb()` call, stop the server, then re-run the two `sqlite3` commands above.
 
 Expected: `telegram_username` appears in the `persons` columns; `person_relationships` shows all 5 columns (`id`, `person_a_id`, `person_b_id`, `type`, `created_at`).
 
@@ -1695,7 +1702,7 @@ Add this block right before the final closing `</CardContent>` (i.e. right after
                 {channels.map((c) => (
                   <a
                     key={c.key}
-                    href={resolveTelegramUrl(c.raw)}
+                    href={resolveTelegramUrl(c.raw, c.link)}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="text-xs px-2 py-0.5 rounded-full bg-blue-400/10 text-blue-400 hover:bg-blue-400/20 transition-colors"
@@ -1927,7 +1934,16 @@ Add this block right after the "Related Telegram channels" block added in Task 9
                 variant="ghost"
                 onClick={() => {
                   if (relationshipTargetId) {
-                    createRelationship(person.id, relationshipTargetId, relationshipType);
+                    // "Invited by" read from THIS card means the OTHER
+                    // person did the inviting — so they are person_a
+                    // (inviter) and this card's person is person_b
+                    // (invitee). friend/colleague are symmetric, so the
+                    // argument order doesn't matter for those.
+                    if (relationshipType === "invited_by") {
+                      createRelationship(relationshipTargetId, person.id, relationshipType);
+                    } else {
+                      createRelationship(person.id, relationshipTargetId, relationshipType);
+                    }
                   }
                   setRelationshipTargetId("");
                   setRelationshipType("friend");
@@ -1945,7 +1961,7 @@ Add this block right after the "Related Telegram channels" block added in Task 9
         </div>
 ```
 
-Note: for `type === "invited_by"` picked here, `person` (the card this form lives on) is always `personAId` — the inviter — since `createRelationship(person.id, relationshipTargetId, relationshipType)` passes `person.id` first. That matches the "Invited by" label reading naturally as "this card's person invited the target" when read from `person`'s own card; the target's card will show "Invited by {this person}" via the `direction: "invitee"` ref. This is a deliberate simplification (no separate "I was invited by X" option in the form) — acceptable since the same edge is visible and editable from either person's card.
+Note: picking "Invited by" + Bob on Alice's card means Bob invited Alice — so the call passes Bob as `personAId` (inviter) and Alice (`person.id`) as `personBId` (invitee). Alice's card then correctly shows "Invited by Bob" (via her `direction: "invitee"` ref) and Bob's card shows "Invited Alice" (via his `direction: "inviter"` ref) — matching the dropdown label read from the card it's opened on.
 
 - [ ] **Step 5: Typecheck**
 
@@ -2016,8 +2032,8 @@ export function RelationshipClusters() {
                 </tr>
               </thead>
               <tbody>
-                {clusters.map((c, i) => (
-                  <tr key={i} className="border-b last:border-0">
+                {clusters.map((c) => (
+                  <tr key={c.personIds.slice().sort().join(",")} className="border-b last:border-0">
                     <td className="px-3 py-2">
                       {c.personIds
                         .map((id) => persons.find((p) => p.id === id)?.name ?? "Unknown person")
