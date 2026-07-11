@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
 import { getSupabase, isSupabaseOnly, syncToSupabase, requireAuth } from "@/lib/supabase-server";
-import type { Person, PersonAddress } from "@/lib/persons/types";
+import type { Person, PersonAddress, PersonRelationshipRef, PersonRelationshipType } from "@/lib/persons/types";
 
 type PersonRow = Record<string, unknown>;
 type AddressRow = Record<string, unknown>;
+type RelationshipRow = Record<string, unknown>;
 
 function rowToAddress(r: AddressRow): PersonAddress {
   return {
@@ -16,29 +17,69 @@ function rowToAddress(r: AddressRow): PersonAddress {
   };
 }
 
-function rowToPerson(r: PersonRow, addresses: PersonAddress[]): Person {
+/** Each relationship row produces two refs — one attached to each side. For
+ *  "invited_by", person_a_id is the inviter. */
+function relationshipRefsFromRow(
+  r: RelationshipRow,
+): { aId: string; bId: string; forA: PersonRelationshipRef; forB: PersonRelationshipRef } {
+  const type = r.type as PersonRelationshipType;
+  const isInvite = type === "invited_by";
+  return {
+    aId: r.person_a_id as string,
+    bId: r.person_b_id as string,
+    forA: { id: r.id as string, personId: r.person_b_id as string, type, direction: isInvite ? "inviter" : undefined },
+    forB: { id: r.id as string, personId: r.person_a_id as string, type, direction: isInvite ? "invitee" : undefined },
+  };
+}
+
+function buildRelationshipsByPerson(rows: RelationshipRow[]): Map<string, PersonRelationshipRef[]> {
+  const map = new Map<string, PersonRelationshipRef[]>();
+  for (const row of rows) {
+    const { aId, bId, forA, forB } = relationshipRefsFromRow(row);
+    if (!map.has(aId)) map.set(aId, []);
+    map.get(aId)!.push(forA);
+    if (!map.has(bId)) map.set(bId, []);
+    map.get(bId)!.push(forB);
+  }
+  return map;
+}
+
+function rowToPerson(r: PersonRow, addresses: PersonAddress[], relationships: PersonRelationshipRef[]): Person {
   return {
     id: r.id as string,
     name: r.name as string,
     role: (r.role as string) ?? undefined,
     notes: (r.notes as string) ?? undefined,
+    telegramUsername: (r.telegram_username as string) ?? undefined,
     addresses,
+    relationships,
     createdAt: r.created_at as number,
     updatedAt: r.updated_at as number,
   };
 }
 
-function buildPersonsFromRows(persons: PersonRow[], allAddresses: AddressRow[]): Person[] {
+function buildPersonsFromRows(
+  persons: PersonRow[],
+  allAddresses: AddressRow[],
+  allRelationships: RelationshipRow[],
+): Person[] {
   const addressesByPerson = new Map<string, PersonAddress[]>();
   for (const a of allAddresses) {
     const pid = a.person_id as string;
     if (!addressesByPerson.has(pid)) addressesByPerson.set(pid, []);
     addressesByPerson.get(pid)!.push(rowToAddress(a));
   }
-  return persons.map((p) => rowToPerson(p, addressesByPerson.get(p.id as string) ?? []));
+  const relationshipsByPerson = buildRelationshipsByPerson(allRelationships);
+  return persons.map((p) =>
+    rowToPerson(
+      p,
+      addressesByPerson.get(p.id as string) ?? [],
+      relationshipsByPerson.get(p.id as string) ?? [],
+    ),
+  );
 }
 
-/** GET /api/db/persons — all persons with their addresses */
+/** GET /api/db/persons — all persons with their addresses and relationships */
 export async function GET(req: NextRequest) {
   const auth = await requireAuth(req);
   if (!auth.ok) return auth.response;
@@ -63,7 +104,16 @@ export async function GET(req: NextRequest) {
       console.error("[persons] GET (addresses) failed:", addressesError);
       return NextResponse.json({ error: addressesError.message }, { status: 500 });
     }
-    return NextResponse.json(buildPersonsFromRows(persons ?? [], allAddresses ?? []));
+    // person_a_id ∈ personIds already implies person_b_id ∈ personIds too —
+    // both sides of a relationship are always created under the same caller.
+    const { data: allRelationships, error: relationshipsError } = personIds.length > 0
+      ? await sb.from("person_relationships").select("*").in("person_a_id", personIds)
+      : { data: [], error: null };
+    if (relationshipsError) {
+      console.error("[persons] GET (relationships) failed:", relationshipsError);
+      return NextResponse.json({ error: relationshipsError.message }, { status: 500 });
+    }
+    return NextResponse.json(buildPersonsFromRows(persons ?? [], allAddresses ?? [], allRelationships ?? []));
   }
 
   const db = getDb();
@@ -73,10 +123,13 @@ export async function GET(req: NextRequest) {
   const allAddresses = db
     .prepare("SELECT * FROM person_addresses ORDER BY added_at ASC")
     .all() as AddressRow[];
-  return NextResponse.json(buildPersonsFromRows(persons, allAddresses));
+  const allRelationships = db
+    .prepare("SELECT * FROM person_relationships")
+    .all() as RelationshipRow[];
+  return NextResponse.json(buildPersonsFromRows(persons, allAddresses, allRelationships));
 }
 
-/** POST /api/db/persons — create person or add address */
+/** POST /api/db/persons — create person, add address, or add relationship */
 export async function POST(req: NextRequest) {
   const auth = await requireAuth(req);
   if (!auth.ok) return auth.response;
@@ -87,7 +140,7 @@ export async function POST(req: NextRequest) {
   const now = Date.now();
 
   if (body.type === "person") {
-    const { id, name, role, notes } = body;
+    const { id, name, role, notes, telegramUsername } = body;
     const nameTrimmed = (name ?? "").trim();
 
     if (isSupabaseOnly()) {
@@ -105,6 +158,7 @@ export async function POST(req: NextRequest) {
         name: nameTrimmed,
         role: role ?? null,
         notes: notes ?? null,
+        telegram_username: telegramUsername ?? null,
         created_at: now,
         updated_at: now,
       });
@@ -114,15 +168,16 @@ export async function POST(req: NextRequest) {
 
     getDb()
       .prepare(
-        `INSERT INTO persons (id, name, role, notes, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?)
+        `INSERT INTO persons (id, name, role, notes, telegram_username, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
-           name       = excluded.name,
-           role       = excluded.role,
-           notes      = excluded.notes,
-           updated_at = excluded.updated_at`,
+           name              = excluded.name,
+           role              = excluded.role,
+           notes             = excluded.notes,
+           telegram_username = excluded.telegram_username,
+           updated_at        = excluded.updated_at`,
       )
-      .run(id, nameTrimmed, role ?? null, notes ?? null, now, now);
+      .run(id, nameTrimmed, role ?? null, notes ?? null, telegramUsername ?? null, now, now);
 
     syncToSupabase(async () => {
       await getSupabase()!.from("persons").upsert({
@@ -131,6 +186,7 @@ export async function POST(req: NextRequest) {
         name: nameTrimmed,
         role: role ?? null,
         notes: notes ?? null,
+        telegram_username: telegramUsername ?? null,
         created_at: now,
         updated_at: now,
       });
@@ -195,6 +251,61 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true });
   }
 
+  if (body.type === "relationship") {
+    const { id, personAId, personBId, relationshipType } = body;
+
+    if (isSupabaseOnly()) {
+      const sb = getSupabase()!;
+      // IDOR guard: both ends of the relationship must belong to the caller.
+      const { data: owned } = await sb
+        .from("persons")
+        .select("id")
+        .in("id", [personAId, personBId])
+        .eq("user_id", userId!);
+      if (!owned || owned.length !== 2) {
+        return NextResponse.json({ ok: false, error: "Not authorized" }, { status: 403 });
+      }
+      const { error } = await sb.from("person_relationships").insert({
+        id,
+        person_a_id: personAId,
+        person_b_id: personBId,
+        type: relationshipType,
+        created_at: now,
+      });
+      if (error) {
+        if (error.code === "23503") return NextResponse.json({ ok: false, error: "person_not_found" }, { status: 409 });
+        return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
+      }
+      return NextResponse.json({ ok: true });
+    }
+
+    const db = getDb();
+    try {
+      db.prepare(
+        `INSERT INTO person_relationships (id, person_a_id, person_b_id, type, created_at)
+         VALUES (?, ?, ?, ?, ?)`,
+      ).run(id, personAId, personBId, relationshipType, now);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message.toLowerCase().includes("foreign key")) {
+        return NextResponse.json({ ok: false, error: "person_not_found" }, { status: 409 });
+      }
+      throw error;
+    }
+
+    syncToSupabase(async () => {
+      await getSupabase()!.from("person_relationships").insert({
+        id,
+        person_a_id: personAId,
+        person_b_id: personBId,
+        type: relationshipType,
+        created_at: now,
+      });
+    });
+
+    return NextResponse.json({ ok: true });
+  }
+
   return NextResponse.json({ error: "unknown type" }, { status: 400 });
 }
 
@@ -212,13 +323,14 @@ export async function PATCH(req: NextRequest) {
     return NextResponse.json({ error: "unknown type" }, { status: 400 });
   }
 
-  const { id, name, role, notes } = body;
+  const { id, name, role, notes, telegramUsername } = body;
 
   if (isSupabaseOnly()) {
     const patch: Record<string, unknown> = { updated_at: now };
     if (name !== undefined) patch.name = name;
     if (role !== undefined) patch.role = role;
     if (notes !== undefined) patch.notes = notes;
+    if (telegramUsername !== undefined) patch.telegram_username = telegramUsername;
     const { error } = await getSupabase()!.from("persons").update(patch).eq("id", id).eq("user_id", userId!);
     if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
     return NextResponse.json({ ok: true });
@@ -227,26 +339,28 @@ export async function PATCH(req: NextRequest) {
   getDb()
     .prepare(
       `UPDATE persons SET
-         name       = COALESCE(?, name),
-         role       = COALESCE(?, role),
-         notes      = COALESCE(?, notes),
-         updated_at = ?
+         name              = COALESCE(?, name),
+         role              = COALESCE(?, role),
+         notes             = COALESCE(?, notes),
+         telegram_username = COALESCE(?, telegram_username),
+         updated_at        = ?
        WHERE id = ?`,
     )
-    .run(name ?? null, role ?? null, notes ?? null, now, id);
+    .run(name ?? null, role ?? null, notes ?? null, telegramUsername ?? null, now, id);
 
   syncToSupabase(async () => {
     const patch: Record<string, unknown> = { updated_at: now };
     if (name !== undefined) patch.name = name;
     if (role !== undefined) patch.role = role;
     if (notes !== undefined) patch.notes = notes;
+    if (telegramUsername !== undefined) patch.telegram_username = telegramUsername;
     await getSupabase()!.from("persons").update(patch).eq("id", id).eq("user_id", userId!);
   });
 
   return NextResponse.json({ ok: true });
 }
 
-/** DELETE /api/db/persons — delete person or address */
+/** DELETE /api/db/persons — delete person, address, or relationship */
 export async function DELETE(req: NextRequest) {
   const auth = await requireAuth(req);
   if (!auth.ok) return auth.response;
@@ -260,6 +374,16 @@ export async function DELETE(req: NextRequest) {
     if (type === "person") {
       const { error } = await sb.from("persons").delete().eq("id", key).eq("user_id", userId!);
       if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
+    } else if (type === "relationship") {
+      // person_relationships has no user_id — scope via person_a_id's owner
+      const { data: rel } = await sb.from("person_relationships").select("person_a_id").eq("id", key).single();
+      if (rel) {
+        const { data: parentPerson } = await sb.from("persons").select("id").eq("id", rel.person_a_id).eq("user_id", userId!).single();
+        if (parentPerson) {
+          const { error } = await sb.from("person_relationships").delete().eq("id", key);
+          if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
+        }
+      }
     } else {
       // person_addresses has no user_id — scope via parent person ownership
       const { data: addr } = await sb.from("person_addresses").select("person_id").eq("id", key).single();
@@ -279,12 +403,20 @@ export async function DELETE(req: NextRequest) {
     db.prepare("DELETE FROM persons WHERE id = ?").run(key);
   } else if (type === "address") {
     db.prepare("DELETE FROM person_addresses WHERE id = ?").run(key);
+  } else if (type === "relationship") {
+    db.prepare("DELETE FROM person_relationships WHERE id = ?").run(key);
   }
 
   syncToSupabase(async () => {
     const sb = getSupabase()!;
     if (type === "person") {
       return sb.from("persons").delete().eq("id", key).eq("user_id", userId!);
+    } else if (type === "relationship") {
+      const { data: rel } = await sb.from("person_relationships").select("person_a_id").eq("id", key).single();
+      if (!rel) return;
+      const { data: parentPerson } = await sb.from("persons").select("id").eq("id", rel.person_a_id).eq("user_id", userId!).single();
+      if (!parentPerson) return;
+      return sb.from("person_relationships").delete().eq("id", key);
     } else {
       const { data: addr } = await sb.from("person_addresses").select("person_id").eq("id", key).single();
       if (!addr) return;
