@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { usePersons } from "@/hooks/use-persons";
 import { PersonCard } from "@/components/persons/PersonCard";
 import { TelegramChannelClusters } from "@/components/persons/TelegramChannelClusters";
+import { RelationshipClusters } from "@/components/persons/RelationshipClusters";
 
 export function PersonsPanel() {
   const { persons, isLoaded, createPerson } = usePersons();
@@ -46,6 +47,7 @@ export function PersonsPanel() {
         </div>
       )}
       <TelegramChannelClusters />
+      <RelationshipClusters />
     </div>
   );
 }
