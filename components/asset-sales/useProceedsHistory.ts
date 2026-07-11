@@ -4,25 +4,20 @@ import { createSearchHistory } from "@/hooks/use-search-history";
 import type { Network } from "@/lib/settings";
 
 export interface ProceedsSearchEntry {
-  assetCode: string;
-  issuer: string;
+  assetsText: string;
   network: Network;
-  accountsText: string;
+  assetCount: number;
   timestamp: number;
 }
 
 const { useHistory, getSnapshot } = createSearchHistory<ProceedsSearchEntry>({
-  storageKey: "stellar-toolkit-proceeds-history",
-  eventName: "stellar-toolkit-proceeds-history-changed",
+  storageKey: "stellar-toolkit-bulk-proceeds-history",
+  eventName: "stellar-toolkit-bulk-proceeds-history-changed",
   maxEntries: 20,
-  isDuplicate: (a, b) =>
-    a.assetCode === b.assetCode &&
-    a.issuer === b.issuer &&
-    a.network === b.network &&
-    a.accountsText === b.accountsText,
+  isDuplicate: (a, b) => a.assetsText === b.assetsText && a.network === b.network,
 });
 
-/** Read the current proceeds history without subscribing to updates. */
+/** Read the current asset-sales search history without subscribing to updates. */
 export const proceedsHistoryGetSnapshot = getSnapshot;
 
 export const useProceedsHistory = useHistory;

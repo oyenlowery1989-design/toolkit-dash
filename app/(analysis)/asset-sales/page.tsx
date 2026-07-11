@@ -1,6 +1,6 @@
 import { Suspense } from "react";
 import { Loader2 } from "lucide-react";
-import { AssetSalesPanel } from "@/components/asset-sales/AssetSalesPanel";
+import { AssetSalesTab } from "@/components/asset-sales/AssetSalesTab";
 
 export default function AssetSalesPage() {
   return (
@@ -8,7 +8,7 @@ export default function AssetSalesPage() {
       <div>
         <h1 className="text-3xl font-bold tracking-tight">Asset Sales</h1>
         <p className="text-muted-foreground mt-2">
-          Calculate all-time XLM proceeds for one asset, or scan a bulk list — see total sold, total outgoing, on-hand balance, and top destination addresses. Bulk auto-saves each result to Saved Analyses.
+          Calculate all-time XLM proceeds for one or many assets — see total sold, total outgoing, on-hand balance, and top destination addresses. Auto-saves each result to Saved Analyses.
         </p>
       </div>
 
@@ -20,7 +20,7 @@ export default function AssetSalesPage() {
           </div>
         }
       >
-        <AssetSalesPanel />
+        <AssetSalesTab />
       </Suspense>
     </div>
   );

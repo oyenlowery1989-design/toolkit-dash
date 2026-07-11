@@ -22,7 +22,7 @@ import { formatXlm } from "@/lib/format";
 import { comparableGroups, diffSnapshots, type DestinationDeltaKind } from "@/lib/saved-analyses/diff";
 import type { SavedAnalysis } from "@/hooks/use-saved-analyses";
 
-function DeltaBadge({ kind }: { kind: DestinationDeltaKind }) {
+export function DeltaBadge({ kind }: { kind: DestinationDeltaKind }) {
   const map: Record<DestinationDeltaKind, { label: string; className: string }> = {
     new: { label: "NEW", className: "bg-green-500/15 text-green-500 border-green-500/30" },
     increased: { label: "↑ increased", className: "bg-green-500/10 text-green-500 border-green-500/20" },
@@ -37,7 +37,7 @@ function DeltaBadge({ kind }: { kind: DestinationDeltaKind }) {
   );
 }
 
-function FieldDeltaCard({ label, before, after, delta }: { label: string; before: number; after: number; delta: number }) {
+export function FieldDeltaCard({ label, before, after, delta }: { label: string; before: number; after: number; delta: number }) {
   const sign = delta > 0 ? "+" : delta < 0 ? "" : "±";
   const color = delta > 0 ? "text-green-500" : delta < 0 ? "text-red-500" : "text-muted-foreground";
   return (

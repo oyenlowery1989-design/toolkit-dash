@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
 
 export default function BulkAssetSalesRedirect() {
-  redirect("/asset-sales?tab=bulk");
+  redirect("/asset-sales");
 }

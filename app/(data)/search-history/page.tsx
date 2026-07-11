@@ -29,7 +29,7 @@ export default function SearchHistoryPage() {
     } else if (entry.type === "address-balances") {
       router.push(`/address-balances?addresses=${encodeURIComponent(entry.value)}`);
     } else if (entry.type === "asset-sales-bulk") {
-      router.push(`/asset-sales?tab=bulk&bulkAssets=${encodeURIComponent(entry.value)}`);
+      router.push(`/asset-sales?bulkAssets=${encodeURIComponent(entry.value)}`);
     }
   };
 

@@ -22,7 +22,6 @@ import {
   Megaphone,
   Wallet,
   BarChart3,
-  TrendingDown,
   GitFork,
   ArrowDownUp,
   CreditCard,
@@ -100,15 +99,7 @@ const MODULE_SECTIONS: ModuleSection[] = [
         href: "/asset-sales",
         icon: Coins,
         description:
-          "Analyze XLM proceeds and distribution for a single asset. Auto-infers the distributor and streams results live.",
-        added: "2026-03-10",
-      },
-      {
-        title: "Bulk Asset Sales",
-        href: "/asset-sales?tab=bulk",
-        icon: TrendingDown,
-        description:
-          "Run Asset Sales analysis across many assets at once. Accepts Lobstr URLs. Auto-saves results to Saved Analyses.",
+          "Analyze XLM proceeds and distribution for one or many assets. Auto-infers the distributor, accepts Lobstr URLs, auto-saves results to Saved Analyses.",
         added: "2026-03-10",
       },
       {
