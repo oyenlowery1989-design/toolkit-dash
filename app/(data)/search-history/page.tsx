@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Database, UserSearch, X, Clock, TrendingDown, Search, GitFork, ScanSearch, Wallet } from "lucide-react";
+import { Database, UserSearch, X, Clock, TrendingDown, Search, GitFork, ScanSearch, Wallet, ListChecks } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -28,6 +28,8 @@ export default function SearchHistoryPage() {
       router.push(`/intermediary-tracer?address=${encodeURIComponent(entry.value)}&tab=scan`);
     } else if (entry.type === "address-balances") {
       router.push(`/address-balances?addresses=${encodeURIComponent(entry.value)}`);
+    } else if (entry.type === "asset-sales-bulk") {
+      router.push(`/asset-sales?tab=bulk&bulkAssets=${encodeURIComponent(entry.value)}`);
     }
   };
 
@@ -92,6 +94,7 @@ export default function SearchHistoryPage() {
                 const isTrace = entry.type === "intermediary-trace";
                 const isScan = entry.type === "intermediary-scan";
                 const isBalances = entry.type === "address-balances";
+                const isBulkSales = entry.type === "asset-sales-bulk";
                 const Icon = isAddress
                   ? UserSearch
                   : isAsset
@@ -100,7 +103,9 @@ export default function SearchHistoryPage() {
                       ? GitFork
                       : isBalances
                         ? Wallet
-                        : ScanSearch;
+                        : isBulkSales
+                          ? ListChecks
+                          : ScanSearch;
                 const assetCode = isAsset ? entry.value.split(":")[0] : null;
                 const issuerFull = isAsset ? entry.value.split(":")[1] : null;
 
@@ -120,6 +125,8 @@ export default function SearchHistoryPage() {
                         <span className="font-mono text-sm font-medium">
                           {isBalances ? (
                             entry.label ?? `${entry.value.split(",").length} addresses`
+                          ) : isBulkSales ? (
+                            entry.label ?? `${entry.value.split("\n").length} assets`
                           ) : isAddress ? (
                             <>
                               {entry.value.slice(0, 8)}…{entry.value.slice(-6)}
@@ -137,7 +144,9 @@ export default function SearchHistoryPage() {
                                 ? "Trace"
                                 : entry.type === "intermediary-scan"
                                   ? "Scan"
-                                  : "Balances"}
+                                  : entry.type === "address-balances"
+                                    ? "Balances"
+                                    : "Bulk"}
                         </span>
                         {entry.network && (
                           <span className="text-xs px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
@@ -193,7 +202,7 @@ export default function SearchHistoryPage() {
                         </p>
                       )}
 
-                      {entry.label && !isBalances && (
+                      {entry.label && !isBalances && !isBulkSales && (
                         <p className="text-xs text-foreground/70 mt-0.5 italic">
                           {entry.label}
                         </p>

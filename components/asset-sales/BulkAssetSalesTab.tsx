@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   Card,
   CardContent,
@@ -122,10 +122,24 @@ export function BulkAssetSalesPanel() {
   const { price: xlmUsdPrice, ensure: ensureXlmUsdPrice } = useXlmUsdPrice();
   const abortRef = useRef<AbortController | null>(null);
   const bulkScanState = useBulkScanState<AssetRow>();
+  const searchParams = useSearchParams();
+  const prefilledRef = useRef(false);
 
   useEffect(() => {
     requestNotificationPermission();
   }, []);
+
+  // Deep-link prefill from Search History ("Bulk" entry) — fill the textarea
+  // once from ?bulkAssets=, never re-firing on subsequent renders.
+  useEffect(() => {
+    if (prefilledRef.current) return;
+    const raw = searchParams.get("bulkAssets");
+    if (raw) {
+      prefilledRef.current = true;
+      setAssetsText(raw);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
 
   // Abort any in-flight scan on unmount — without this, navigating away
   // mid-scan leaves runConcurrent's worker pool running invisibly in the
@@ -190,6 +204,13 @@ export function BulkAssetSalesPanel() {
       assetsText: assetsText.trim(),
       network: settings.network,
       assetCount: pairs.length,
+    });
+    upsertSearch({
+      type: "asset-sales-bulk",
+      value: assetsText.trim(),
+      label: `${pairs.length} asset${pairs.length === 1 ? "" : "s"}`,
+      network: settings.network,
+      accountsFound: pairs.length,
     });
     abortRef.current?.abort();
     abortRef.current = new AbortController();
@@ -386,8 +407,9 @@ export function BulkAssetSalesPanel() {
                 key={entry.timestamp}
                 className="flex items-center gap-1 rounded-md border border-border bg-muted/40 pl-2 pr-1 py-1 text-xs"
               >
-                <button
-                  className="flex items-center gap-1.5 hover:text-foreground text-muted-foreground transition-colors"
+                <Button
+                  variant="ghost"
+                  className="h-auto gap-1.5 p-0 text-xs font-normal text-muted-foreground hover:bg-transparent hover:text-foreground"
                   onClick={() => {
                     setAssetsText(entry.assetsText);
                     updateSettings({ network: entry.network as Network });
@@ -399,14 +421,16 @@ export function BulkAssetSalesPanel() {
                     {entry.assetCount} asset{entry.assetCount === 1 ? "" : "s"}
                   </span>
                   <span className="opacity-50">{entry.network}</span>
-                </button>
-                <button
-                  className="ml-1 text-muted-foreground hover:text-destructive transition-colors p-0.5 rounded"
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="ml-1 h-auto w-auto rounded p-0.5 text-muted-foreground hover:bg-transparent hover:text-destructive"
                   onClick={() => removeBulkHistory(entry.timestamp)}
                   aria-label="Remove"
                 >
                   <X className="h-3 w-3" />
-                </button>
+                </Button>
               </div>
             ))}
           </div>
