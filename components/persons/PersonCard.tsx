@@ -15,6 +15,8 @@ import { ShortAddress } from "@/components/shared/ShortAddress";
 import type { Person } from "@/lib/persons/types";
 import { telegramChannelsForPerson } from "@/lib/persons/telegram-channels";
 import { resolveTelegramUrl } from "@/lib/asset-groups/links";
+import { groupsForAddress } from "@/lib/persons/address-groups";
+import { ROLE_LABELS, ROLE_COLORS } from "@/lib/asset-groups/types";
 
 export function PersonCard({ person }: { person: Person }) {
   const { updatePerson, deletePerson, addPersonAddress, removePersonAddress } = usePersons();
@@ -109,15 +111,36 @@ export function PersonCard({ person }: { person: Person }) {
         <div className="space-y-1">
           <Label className="text-xs text-muted-foreground">Addresses</Label>
           <div className="space-y-1">
-            {person.addresses.map((a) => (
-              <div key={a.id} className="flex items-center gap-2 text-xs">
-                <ShortAddress address={a.address} network={settings.network} />
-                {a.label && <span className="text-muted-foreground">{a.label}</span>}
-                <Button size="icon" variant="ghost" className="h-5 w-5 ml-auto" onClick={() => removePersonAddress(person.id, a.id)}>
-                  <X className="h-3 w-3" />
-                </Button>
-              </div>
-            ))}
+            {person.addresses.map((a) => {
+              const addressGroups = groupsForAddress(a.address, groups);
+              return (
+                <div key={a.id} className="space-y-1">
+                  <div className="flex items-center gap-2 text-xs">
+                    <ShortAddress address={a.address} network={settings.network} />
+                    {a.label && <span className="text-muted-foreground">{a.label}</span>}
+                    <Button size="icon" variant="ghost" className="h-5 w-5 ml-auto" onClick={() => removePersonAddress(person.id, a.id)}>
+                      <X className="h-3 w-3" />
+                    </Button>
+                  </div>
+                  {addressGroups.length > 0 && (
+                    <div className="flex flex-wrap gap-1 pl-1">
+                      {addressGroups.map((g) => {
+                        const member = g.members.find((m) => m.address === a.address)!;
+                        return (
+                          <Link
+                            key={g.id}
+                            href={`/groups?open=${g.id}`}
+                            className={`text-[10px] px-1.5 py-0.5 rounded-full hover:opacity-80 transition-opacity ${ROLE_COLORS[member.role]}`}
+                          >
+                            {g.name} · {ROLE_LABELS[member.role]}
+                          </Link>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
           {addingAddress ? (
             <div className="flex gap-2">
