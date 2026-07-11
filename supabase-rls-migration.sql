@@ -79,6 +79,9 @@ ALTER TABLE saved_searches ENABLE ROW LEVEL SECURITY;
 ALTER TABLE bulk_run_history ENABLE ROW LEVEL SECURITY;
 ALTER TABLE asset_groups ENABLE ROW LEVEL SECURITY;
 ALTER TABLE asset_group_members ENABLE ROW LEVEL SECURITY;
+ALTER TABLE persons ENABLE ROW LEVEL SECURITY;
+ALTER TABLE person_addresses ENABLE ROW LEVEL SECURITY;
+ALTER TABLE person_relationships ENABLE ROW LEVEL SECURITY;
 ALTER TABLE wallet_folders ENABLE ROW LEVEL SECURITY;
 ALTER TABLE wallets ENABLE ROW LEVEL SECURITY;
 ALTER TABLE app_state ENABLE ROW LEVEL SECURITY;
@@ -129,6 +132,10 @@ DROP POLICY IF EXISTS owner_all ON asset_groups;
 CREATE POLICY owner_all ON asset_groups FOR ALL TO authenticated
   USING (auth.uid()::text = user_id) WITH CHECK (auth.uid()::text = user_id);
 
+DROP POLICY IF EXISTS owner_all ON persons;
+CREATE POLICY owner_all ON persons FOR ALL TO authenticated
+  USING (auth.uid()::text = user_id) WITH CHECK (auth.uid()::text = user_id);
+
 DROP POLICY IF EXISTS owner_all ON wallet_folders;
 CREATE POLICY owner_all ON wallet_folders FOR ALL TO authenticated
   USING (auth.uid()::text = user_id) WITH CHECK (auth.uid()::text = user_id);
@@ -166,6 +173,20 @@ DROP POLICY IF EXISTS owner_all ON asset_group_members;
 CREATE POLICY owner_all ON asset_group_members FOR ALL TO authenticated
   USING (EXISTS (SELECT 1 FROM asset_groups g WHERE g.id = group_id AND auth.uid()::text = g.user_id))
   WITH CHECK (EXISTS (SELECT 1 FROM asset_groups g WHERE g.id = group_id AND auth.uid()::text = g.user_id));
+
+DROP POLICY IF EXISTS owner_all ON person_addresses;
+CREATE POLICY owner_all ON person_addresses FOR ALL TO authenticated
+  USING (EXISTS (SELECT 1 FROM persons p WHERE p.id = person_id AND auth.uid()::text = p.user_id))
+  WITH CHECK (EXISTS (SELECT 1 FROM persons p WHERE p.id = person_id AND auth.uid()::text = p.user_id));
+
+-- person_relationships has no user_id and two person FKs (person_a_id, person_b_id).
+-- Scoped through person_a_id only, matching app/api/db/persons/route.ts's DELETE
+-- ownership check — both sides of a relationship are always the same user's
+-- persons (enforced at creation time by that route's IDOR guard).
+DROP POLICY IF EXISTS owner_all ON person_relationships;
+CREATE POLICY owner_all ON person_relationships FOR ALL TO authenticated
+  USING (EXISTS (SELECT 1 FROM persons p WHERE p.id = person_a_id AND auth.uid()::text = p.user_id))
+  WITH CHECK (EXISTS (SELECT 1 FROM persons p WHERE p.id = person_a_id AND auth.uid()::text = p.user_id));
 
 DROP POLICY IF EXISTS owner_all ON tiered_reward_tiers;
 CREATE POLICY owner_all ON tiered_reward_tiers FOR ALL TO authenticated
