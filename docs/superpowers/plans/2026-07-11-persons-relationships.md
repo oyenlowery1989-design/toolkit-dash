@@ -1895,14 +1895,15 @@ Add this block right after the "Related Telegram channels" block added in Task 9
                   className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-accent"
                 >
                   {relationshipLabel(r)}
-                  <button
-                    type="button"
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    className="h-4 w-4 text-muted-foreground hover:text-destructive"
                     onClick={() => deleteRelationship(r.id)}
-                    className="text-muted-foreground hover:text-destructive"
                     aria-label="Remove relationship"
                   >
                     <X className="h-3 w-3" />
-                  </button>
+                  </Button>
                 </span>
               ))}
             </div>
