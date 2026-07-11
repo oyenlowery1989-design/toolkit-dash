@@ -13,6 +13,8 @@ import { useAssetGroups } from "@/hooks/use-asset-groups";
 import { useSettings } from "@/lib/settings";
 import { ShortAddress } from "@/components/shared/ShortAddress";
 import type { Person } from "@/lib/persons/types";
+import { telegramChannelsForPerson } from "@/lib/persons/telegram-channels";
+import { resolveTelegramUrl } from "@/lib/asset-groups/links";
 
 export function PersonCard({ person }: { person: Person }) {
   const { updatePerson, deletePerson, addPersonAddress, removePersonAddress } = usePersons();
@@ -23,6 +25,7 @@ export function PersonCard({ person }: { person: Person }) {
   const [nameVal, setNameVal] = useState(person.name);
   const [roleVal, setRoleVal] = useState(person.role ?? "");
   const [notesVal, setNotesVal] = useState(person.notes ?? "");
+  const [telegramVal, setTelegramVal] = useState(person.telegramUsername ?? "");
   const [addingAddress, setAddingAddress] = useState(false);
   const [newAddress, setNewAddress] = useState("");
   const [newAddressLabel, setNewAddressLabel] = useState("");
@@ -35,6 +38,7 @@ export function PersonCard({ person }: { person: Person }) {
       name: nameVal.trim() || person.name,
       role: roleVal.trim() || undefined,
       notes: notesVal.trim() || undefined,
+      telegramUsername: telegramVal.trim() || undefined,
     });
     setEditing(false);
   }
@@ -49,6 +53,7 @@ export function PersonCard({ person }: { person: Person }) {
                 <Input value={nameVal} onChange={(e) => setNameVal(e.target.value)} className="h-7 text-sm font-semibold" autoFocus />
                 <Input value={roleVal} onChange={(e) => setRoleVal(e.target.value)} className="h-7 text-xs" placeholder="Role (e.g. CEO)" />
                 <Input value={notesVal} onChange={(e) => setNotesVal(e.target.value)} className="h-7 text-xs" placeholder="Notes" />
+                <Input value={telegramVal} onChange={(e) => setTelegramVal(e.target.value)} className="h-7 text-xs" placeholder="Telegram username (e.g. @alice)" />
                 <div className="flex gap-2">
                   <Button size="sm" onClick={save}>
                     <Check className="h-3.5 w-3.5" />
@@ -70,6 +75,16 @@ export function PersonCard({ person }: { person: Person }) {
               </div>
             )}
             {!editing && person.notes && <p className="text-xs text-muted-foreground mt-1">{person.notes}</p>}
+            {!editing && person.telegramUsername && (
+              <a
+                href={resolveTelegramUrl(person.telegramUsername)}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-xs text-blue-400 hover:underline mt-0.5 inline-block"
+              >
+                @{person.telegramUsername.replace(/^@/, "")}
+              </a>
+            )}
           </div>
           <Button
             size={confirmingDelete ? "sm" : "icon"}
@@ -141,6 +156,28 @@ export function PersonCard({ person }: { person: Person }) {
             </div>
           )}
         </div>
+        {(() => {
+          const channels = telegramChannelsForPerson(person, groups);
+          if (channels.length === 0) return null;
+          return (
+            <div className="space-y-1">
+              <Label className="text-xs text-muted-foreground">Related Telegram channels</Label>
+              <div className="flex flex-wrap gap-1.5">
+                {channels.map((c) => (
+                  <a
+                    key={c.key}
+                    href={resolveTelegramUrl(c.raw, c.link)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs px-2 py-0.5 rounded-full bg-blue-400/10 text-blue-400 hover:bg-blue-400/20 transition-colors"
+                  >
+                    @{c.key}
+                  </a>
+                ))}
+              </div>
+            </div>
+          );
+        })()}
       </CardContent>
     </Card>
   );
