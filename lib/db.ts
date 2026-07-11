@@ -146,12 +146,13 @@ function initDb(): Database.Database {
     -- ── Persons (important-person registry — CEO, founder, etc) ────────────────
 
     CREATE TABLE IF NOT EXISTS persons (
-      id          TEXT    PRIMARY KEY,
-      name        TEXT    NOT NULL,
-      role        TEXT,
-      notes       TEXT,
-      created_at  INTEGER NOT NULL,
-      updated_at  INTEGER NOT NULL
+      id                 TEXT    PRIMARY KEY,
+      name               TEXT    NOT NULL,
+      role               TEXT,
+      notes              TEXT,
+      telegram_username  TEXT,
+      created_at         INTEGER NOT NULL,
+      updated_at         INTEGER NOT NULL
     );
 
     CREATE TABLE IF NOT EXISTS person_addresses (
@@ -165,6 +166,17 @@ function initDb(): Database.Database {
 
     CREATE INDEX IF NOT EXISTS idx_person_addresses_person ON person_addresses(person_id);
     CREATE INDEX IF NOT EXISTS idx_person_addresses_address ON person_addresses(address);
+
+    CREATE TABLE IF NOT EXISTS person_relationships (
+      id            TEXT    PRIMARY KEY,
+      person_a_id   TEXT    NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
+      person_b_id   TEXT    NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
+      type          TEXT    NOT NULL,
+      created_at    INTEGER NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_person_relationships_a ON person_relationships(person_a_id);
+    CREATE INDEX IF NOT EXISTS idx_person_relationships_b ON person_relationships(person_b_id);
 
     -- ── Wallet Manager ────────────────────────────────────────────────────────
 
@@ -545,6 +557,12 @@ function initDb(): Database.Database {
   const creatorCols = (db.pragma("table_info(known_creators)") as { name: string }[]).map((c) => c.name);
   if (!creatorCols.includes("parent_address")) {
     db.exec(`ALTER TABLE known_creators ADD COLUMN parent_address TEXT`);
+  }
+
+  // ── Persons migration: add telegram_username column if missing ────────────
+  const personCols = (db.pragma("table_info(persons)") as { name: string }[]).map((c) => c.name);
+  if (!personCols.includes("telegram_username")) {
+    db.exec(`ALTER TABLE persons ADD COLUMN telegram_username TEXT`);
   }
 
   // ── Asset groups migration: add domain/telegram columns if missing ────────
