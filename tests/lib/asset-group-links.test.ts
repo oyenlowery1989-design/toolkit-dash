@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { normalizeExternalUrl, resolveTelegramUrl } from "@/lib/asset-groups/links";
+import { normalizeExternalUrl, resolveTelegramUrl, normalizeChannel } from "@/lib/asset-groups/links";
 
 describe("normalizeExternalUrl", () => {
   it("prefixes https:// when no scheme is present", () => {
@@ -42,5 +42,23 @@ describe("resolveTelegramUrl", () => {
 
   it("normalizes a scheme-less explicit link", () => {
     expect(resolveTelegramUrl(undefined, "t.me/mychannel")).toBe("https://t.me/mychannel");
+  });
+});
+
+describe("normalizeChannel", () => {
+  it("lowercases the channel name", () => {
+    expect(normalizeChannel("MyChannel")).toBe("mychannel");
+  });
+
+  it("strips a leading @", () => {
+    expect(normalizeChannel("@mychannel")).toBe("mychannel");
+  });
+
+  it("strips a leading /", () => {
+    expect(normalizeChannel("/mychannel")).toBe("mychannel");
+  });
+
+  it("trims whitespace", () => {
+    expect(normalizeChannel("  mychannel  ")).toBe("mychannel");
   });
 });
