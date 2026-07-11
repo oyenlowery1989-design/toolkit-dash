@@ -17,9 +17,17 @@ import { telegramChannelsForPerson } from "@/lib/persons/telegram-channels";
 import { resolveTelegramUrl } from "@/lib/asset-groups/links";
 import { groupsForAddress } from "@/lib/persons/address-groups";
 import { ROLE_LABELS, ROLE_COLORS } from "@/lib/asset-groups/types";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import type { PersonRelationshipType } from "@/lib/persons/types";
+
+const RELATIONSHIP_LABELS: Record<PersonRelationshipType, string> = {
+  friend: "Friend",
+  colleague: "Colleague",
+  invited_by: "Invited by",
+};
 
 export function PersonCard({ person }: { person: Person }) {
-  const { updatePerson, deletePerson, addPersonAddress, removePersonAddress } = usePersons();
+  const { persons, updatePerson, deletePerson, addPersonAddress, removePersonAddress, createRelationship, deleteRelationship } = usePersons();
   const { groups } = useAssetGroups();
   const { settings } = useSettings();
 
@@ -31,6 +39,9 @@ export function PersonCard({ person }: { person: Person }) {
   const [addingAddress, setAddingAddress] = useState(false);
   const [newAddress, setNewAddress] = useState("");
   const [newAddressLabel, setNewAddressLabel] = useState("");
+  const [addingRelationship, setAddingRelationship] = useState(false);
+  const [relationshipTargetId, setRelationshipTargetId] = useState("");
+  const [relationshipType, setRelationshipType] = useState<PersonRelationshipType>("friend");
 
   const attributedGroups = groups.filter((g) => g.personId === person.id);
   const { confirming: confirmingDelete, onClick: handleDeleteClick } = useConfirmClick(() => deletePerson(person.id));
@@ -43,6 +54,14 @@ export function PersonCard({ person }: { person: Person }) {
       telegramUsername: telegramVal.trim() || undefined,
     });
     setEditing(false);
+  }
+
+  function relationshipLabel(r: Person["relationships"][number]): string {
+    const other = persons.find((p) => p.id === r.personId)?.name ?? "Unknown person";
+    if (r.type === "invited_by") {
+      return r.direction === "inviter" ? `Invited ${other}` : `Invited by ${other}`;
+    }
+    return `${RELATIONSHIP_LABELS[r.type]}: ${other}`;
   }
 
   return (
@@ -201,6 +220,81 @@ export function PersonCard({ person }: { person: Person }) {
             </div>
           );
         })()}
+        <div className="space-y-1">
+          <Label className="text-xs text-muted-foreground">Relationships</Label>
+          {person.relationships.length > 0 && (
+            <div className="flex flex-wrap gap-1.5">
+              {person.relationships.map((r) => (
+                <span
+                  key={r.id}
+                  className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-accent"
+                >
+                  {relationshipLabel(r)}
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    className="h-4 w-4 text-muted-foreground hover:text-destructive"
+                    onClick={() => deleteRelationship(r.id)}
+                    aria-label="Remove relationship"
+                  >
+                    <X className="h-3 w-3" />
+                  </Button>
+                </span>
+              ))}
+            </div>
+          )}
+          {addingRelationship ? (
+            <div className="flex flex-wrap gap-2 items-center">
+              <Select value={relationshipTargetId} onValueChange={setRelationshipTargetId}>
+                <SelectTrigger className="h-7 text-xs w-40">
+                  <SelectValue placeholder="Person" />
+                </SelectTrigger>
+                <SelectContent>
+                  {persons.filter((p) => p.id !== person.id).map((p) => (
+                    <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select value={relationshipType} onValueChange={(v) => setRelationshipType(v as PersonRelationshipType)}>
+                <SelectTrigger className="h-7 text-xs w-36">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="friend">Friend</SelectItem>
+                  <SelectItem value="colleague">Colleague</SelectItem>
+                  <SelectItem value="invited_by">Invited by</SelectItem>
+                </SelectContent>
+              </Select>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => {
+                  if (relationshipTargetId) {
+                    // "Invited by" read from THIS card means the OTHER
+                    // person did the inviting — so they are person_a
+                    // (inviter) and this card's person is person_b
+                    // (invitee). friend/colleague are symmetric, so the
+                    // argument order doesn't matter for those.
+                    if (relationshipType === "invited_by") {
+                      createRelationship(relationshipTargetId, person.id, relationshipType);
+                    } else {
+                      createRelationship(person.id, relationshipTargetId, relationshipType);
+                    }
+                  }
+                  setRelationshipTargetId("");
+                  setRelationshipType("friend");
+                  setAddingRelationship(false);
+                }}
+              >
+                <Check className="h-3.5 w-3.5" />
+              </Button>
+            </div>
+          ) : (
+            <Button variant="ghost" size="sm" className="text-xs text-muted-foreground" onClick={() => setAddingRelationship(true)}>
+              <Plus className="h-3 w-3 mr-1" /> Add relationship
+            </Button>
+          )}
+        </div>
       </CardContent>
     </Card>
   );
