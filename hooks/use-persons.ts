@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { createDbCache, dbPost, dbPatch, authHeaders, debounce } from "@/lib/db-client";
-import type { Person, PersonAddress } from "@/lib/persons/types";
+import type { Person, PersonAddress, PersonRelationshipType } from "@/lib/persons/types";
 
 const ENDPOINT = "/api/db/persons";
 
@@ -18,6 +18,13 @@ function dbDeleteAddress(id: string) {
     method: "DELETE",
     headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify({ key: id, type: "address" }),
+  }).catch(() => {});
+}
+function dbDeleteRelationship(id: string) {
+  fetch(ENDPOINT, {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ key: id, type: "relationship" }),
   }).catch(() => {});
 }
 const _cache = createDbCache<Person>();
@@ -68,6 +75,7 @@ export function usePersons() {
       role: entry.role?.trim() || undefined,
       notes: entry.notes?.trim() || undefined,
       addresses: [],
+      relationships: [],
       createdAt: now,
       updatedAt: now,
     };
@@ -83,7 +91,7 @@ export function usePersons() {
   }, []);
 
   const updatePerson = useCallback(
-    (id: string, patch: Partial<Pick<Person, "name" | "role" | "notes">>) => {
+    (id: string, patch: Partial<Pick<Person, "name" | "role" | "notes" | "telegramUsername">>) => {
       _cache.set(
         _cache.get().map((p) => (p.id === id ? { ...p, ...patch, updatedAt: Date.now() } : p)),
       );
@@ -127,6 +135,53 @@ export function usePersons() {
     dbDeleteAddress(addressId);
   }, []);
 
+  const createRelationship = useCallback(
+    (personAId: string, personBId: string, relType: PersonRelationshipType) => {
+      const id = `rel-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+      const now = Date.now();
+      const isInvite = relType === "invited_by";
+      _cache.set(
+        _cache.get().map((p) => {
+          if (p.id === personAId) {
+            return {
+              ...p,
+              relationships: [
+                ...p.relationships,
+                { id, personId: personBId, type: relType, direction: isInvite ? ("inviter" as const) : undefined },
+              ],
+              updatedAt: now,
+            };
+          }
+          if (p.id === personBId) {
+            return {
+              ...p,
+              relationships: [
+                ...p.relationships,
+                { id, personId: personAId, type: relType, direction: isInvite ? ("invitee" as const) : undefined },
+              ],
+              updatedAt: now,
+            };
+          }
+          return p;
+        }),
+      );
+      dbPost(ENDPOINT, { type: "relationship", id, personAId, personBId, relationshipType: relType }).catch(() =>
+        _cache.reload(ENDPOINT),
+      );
+    },
+    [],
+  );
+
+  const deleteRelationship = useCallback((id: string) => {
+    _cache.set(
+      _cache.get().map((p) => ({
+        ...p,
+        relationships: p.relationships.filter((r) => r.id !== id),
+      })),
+    );
+    dbDeleteRelationship(id);
+  }, []);
+
   return {
     persons,
     isLoaded: _cache.isLoaded(),
@@ -135,5 +190,7 @@ export function usePersons() {
     deletePerson,
     addPersonAddress,
     removePersonAddress,
+    createRelationship,
+    deleteRelationship,
   };
 }
