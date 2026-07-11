@@ -2,13 +2,14 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { UserPlus, Trash2, Pencil, Check, X, Plus } from "lucide-react";
+import { UserPlus, Trash2, Pencil, Check, X, Plus, Send } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { usePersons } from "@/hooks/use-persons";
 import { useConfirmClick } from "@/hooks/use-confirm-click";
+import { resolveTelegramUrl } from "@/lib/asset-groups/links";
 import { TelegramChannelClusters } from "@/components/persons/TelegramChannelClusters";
 import { useAssetGroups } from "@/hooks/use-asset-groups";
 import { useSettings } from "@/lib/settings";
@@ -24,6 +25,8 @@ function PersonCard({ person }: { person: Person }) {
   const [nameVal, setNameVal] = useState(person.name);
   const [roleVal, setRoleVal] = useState(person.role ?? "");
   const [notesVal, setNotesVal] = useState(person.notes ?? "");
+  const [telegramChannelVal, setTelegramChannelVal] = useState(person.telegramChannel ?? "");
+  const [telegramLinkVal, setTelegramLinkVal] = useState(person.telegramLink ?? "");
   const [addingAddress, setAddingAddress] = useState(false);
   const [newAddress, setNewAddress] = useState("");
   const [newAddressLabel, setNewAddressLabel] = useState("");
@@ -36,6 +39,8 @@ function PersonCard({ person }: { person: Person }) {
       name: nameVal.trim() || person.name,
       role: roleVal.trim() || undefined,
       notes: notesVal.trim() || undefined,
+      telegramChannel: telegramChannelVal.trim() || undefined,
+      telegramLink: telegramLinkVal.trim() || undefined,
     });
     setEditing(false);
   }
@@ -50,6 +55,8 @@ function PersonCard({ person }: { person: Person }) {
                 <Input value={nameVal} onChange={(e) => setNameVal(e.target.value)} className="h-7 text-sm font-semibold" autoFocus />
                 <Input value={roleVal} onChange={(e) => setRoleVal(e.target.value)} className="h-7 text-xs" placeholder="Role (e.g. CEO)" />
                 <Input value={notesVal} onChange={(e) => setNotesVal(e.target.value)} className="h-7 text-xs" placeholder="Notes" />
+                <Input value={telegramChannelVal} onChange={(e) => setTelegramChannelVal(e.target.value)} className="h-7 text-xs" placeholder="Telegram channel (e.g. @name)" />
+                <Input value={telegramLinkVal} onChange={(e) => setTelegramLinkVal(e.target.value)} className="h-7 text-xs" placeholder="Telegram link (optional, overrides channel)" />
                 <div className="flex gap-2">
                   <Button size="sm" onClick={save}>
                     <Check className="h-3.5 w-3.5" />
@@ -68,6 +75,18 @@ function PersonCard({ person }: { person: Person }) {
                 <Button size="icon" variant="ghost" className="h-6 w-6 text-muted-foreground hover:text-foreground" onClick={() => setEditing(true)}>
                   <Pencil className="h-3.5 w-3.5" />
                 </Button>
+                {resolveTelegramUrl(person.telegramChannel, person.telegramLink) && (
+                  <a
+                    href={resolveTelegramUrl(person.telegramChannel, person.telegramLink)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    title={person.telegramChannel || "Telegram"}
+                    className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+                  >
+                    <Send className="h-3.5 w-3.5" />
+                    {person.telegramChannel && <span>@{person.telegramChannel.replace(/^[@/]+/, "")}</span>}
+                  </a>
+                )}
               </div>
             )}
             {!editing && person.notes && <p className="text-xs text-muted-foreground mt-1">{person.notes}</p>}

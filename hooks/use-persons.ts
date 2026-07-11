@@ -83,7 +83,10 @@ export function usePersons() {
   }, []);
 
   const updatePerson = useCallback(
-    (id: string, patch: Partial<Pick<Person, "name" | "role" | "notes">>) => {
+    (
+      id: string,
+      patch: Partial<Pick<Person, "name" | "role" | "notes" | "telegramChannel" | "telegramLink">>,
+    ) => {
       _cache.set(
         _cache.get().map((p) => (p.id === id ? { ...p, ...patch, updatedAt: Date.now() } : p)),
       );

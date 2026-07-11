@@ -22,6 +22,8 @@ function rowToPerson(r: PersonRow, addresses: PersonAddress[]): Person {
     name: r.name as string,
     role: (r.role as string) ?? undefined,
     notes: (r.notes as string) ?? undefined,
+    telegramChannel: (r.telegram_channel as string) ?? undefined,
+    telegramLink: (r.telegram_link as string) ?? undefined,
     addresses,
     createdAt: r.created_at as number,
     updatedAt: r.updated_at as number,
@@ -87,7 +89,7 @@ export async function POST(req: NextRequest) {
   const now = Date.now();
 
   if (body.type === "person") {
-    const { id, name, role, notes } = body;
+    const { id, name, role, notes, telegramChannel, telegramLink } = body;
     const nameTrimmed = (name ?? "").trim();
 
     if (isSupabaseOnly()) {
@@ -105,6 +107,8 @@ export async function POST(req: NextRequest) {
         name: nameTrimmed,
         role: role ?? null,
         notes: notes ?? null,
+        telegram_channel: telegramChannel ?? null,
+        telegram_link: telegramLink ?? null,
         created_at: now,
         updated_at: now,
       });
@@ -114,15 +118,17 @@ export async function POST(req: NextRequest) {
 
     getDb()
       .prepare(
-        `INSERT INTO persons (id, name, role, notes, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?)
+        `INSERT INTO persons (id, name, role, notes, telegram_channel, telegram_link, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
-           name       = excluded.name,
-           role       = excluded.role,
-           notes      = excluded.notes,
-           updated_at = excluded.updated_at`,
+           name             = excluded.name,
+           role             = excluded.role,
+           notes            = excluded.notes,
+           telegram_channel = excluded.telegram_channel,
+           telegram_link    = excluded.telegram_link,
+           updated_at       = excluded.updated_at`,
       )
-      .run(id, nameTrimmed, role ?? null, notes ?? null, now, now);
+      .run(id, nameTrimmed, role ?? null, notes ?? null, telegramChannel ?? null, telegramLink ?? null, now, now);
 
     syncToSupabase(async () => {
       await getSupabase()!.from("persons").upsert({
@@ -131,6 +137,8 @@ export async function POST(req: NextRequest) {
         name: nameTrimmed,
         role: role ?? null,
         notes: notes ?? null,
+        telegram_channel: telegramChannel ?? null,
+        telegram_link: telegramLink ?? null,
         created_at: now,
         updated_at: now,
       });
@@ -212,13 +220,15 @@ export async function PATCH(req: NextRequest) {
     return NextResponse.json({ error: "unknown type" }, { status: 400 });
   }
 
-  const { id, name, role, notes } = body;
+  const { id, name, role, notes, telegramChannel, telegramLink } = body;
 
   if (isSupabaseOnly()) {
     const patch: Record<string, unknown> = { updated_at: now };
     if (name !== undefined) patch.name = name;
     if (role !== undefined) patch.role = role;
     if (notes !== undefined) patch.notes = notes;
+    if (telegramChannel !== undefined) patch.telegram_channel = telegramChannel;
+    if (telegramLink !== undefined) patch.telegram_link = telegramLink;
     const { error } = await getSupabase()!.from("persons").update(patch).eq("id", id).eq("user_id", userId!);
     if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
     return NextResponse.json({ ok: true });
@@ -227,19 +237,23 @@ export async function PATCH(req: NextRequest) {
   getDb()
     .prepare(
       `UPDATE persons SET
-         name       = COALESCE(?, name),
-         role       = COALESCE(?, role),
-         notes      = COALESCE(?, notes),
-         updated_at = ?
+         name             = COALESCE(?, name),
+         role             = COALESCE(?, role),
+         notes            = COALESCE(?, notes),
+         telegram_channel = COALESCE(?, telegram_channel),
+         telegram_link    = COALESCE(?, telegram_link),
+         updated_at       = ?
        WHERE id = ?`,
     )
-    .run(name ?? null, role ?? null, notes ?? null, now, id);
+    .run(name ?? null, role ?? null, notes ?? null, telegramChannel ?? null, telegramLink ?? null, now, id);
 
   syncToSupabase(async () => {
     const patch: Record<string, unknown> = { updated_at: now };
     if (name !== undefined) patch.name = name;
     if (role !== undefined) patch.role = role;
     if (notes !== undefined) patch.notes = notes;
+    if (telegramChannel !== undefined) patch.telegram_channel = telegramChannel;
+    if (telegramLink !== undefined) patch.telegram_link = telegramLink;
     await getSupabase()!.from("persons").update(patch).eq("id", id).eq("user_id", userId!);
   });
 

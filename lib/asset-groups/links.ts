@@ -1,8 +1,13 @@
-/** Prefixes a bare domain/URL with https:// if it has no scheme. */
+/**
+ * Prefixes a bare domain/URL with https:// if it has no scheme. Rejects any
+ * scheme other than http/https (e.g. javascript:) — those are treated as a
+ * bare host and get the https:// prefix forced on instead of being honored.
+ */
 export function normalizeExternalUrl(raw: string): string {
   const trimmed = raw.trim();
   if (/^https?:\/\//i.test(trimmed)) return trimmed;
-  return `https://${trimmed}`;
+  const bareHost = trimmed.replace(/^[a-z][a-z0-9+.-]*:\/*/i, "");
+  return `https://${bareHost}`;
 }
 
 /**

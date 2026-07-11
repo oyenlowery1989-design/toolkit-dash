@@ -12,7 +12,7 @@ CREATE TABLE IF NOT EXISTS saved_searches (id BIGSERIAL PRIMARY KEY, user_id TEX
 CREATE INDEX IF NOT EXISTS idx_saved_searches_user ON saved_searches(user_id);
 CREATE TABLE IF NOT EXISTS bulk_run_history (id TEXT PRIMARY KEY, user_id TEXT NOT NULL DEFAULT '', network TEXT NOT NULL, memo TEXT NOT NULL, recipient_count INTEGER NOT NULL, success_count INTEGER NOT NULL, failed_count INTEGER NOT NULL, ran_at BIGINT NOT NULL);
 CREATE INDEX IF NOT EXISTS idx_bulk_run_history_user ON bulk_run_history(user_id);
-CREATE TABLE IF NOT EXISTS persons (id TEXT PRIMARY KEY, user_id TEXT NOT NULL DEFAULT '', name TEXT NOT NULL, role TEXT, notes TEXT, created_at BIGINT NOT NULL, updated_at BIGINT NOT NULL);
+CREATE TABLE IF NOT EXISTS persons (id TEXT PRIMARY KEY, user_id TEXT NOT NULL DEFAULT '', name TEXT NOT NULL, role TEXT, notes TEXT, telegram_channel TEXT, telegram_link TEXT, created_at BIGINT NOT NULL, updated_at BIGINT NOT NULL);
 CREATE INDEX IF NOT EXISTS idx_persons_user ON persons(user_id);
 CREATE TABLE IF NOT EXISTS person_addresses (id TEXT PRIMARY KEY, person_id TEXT NOT NULL REFERENCES persons(id) ON DELETE CASCADE, address TEXT NOT NULL, label TEXT, added_at BIGINT NOT NULL, UNIQUE(person_id, address));
 CREATE INDEX IF NOT EXISTS idx_person_addresses_person ON person_addresses(person_id);
@@ -68,3 +68,8 @@ CREATE INDEX IF NOT EXISTS idx_person_addresses_address ON person_addresses(addr
 ALTER TABLE asset_groups DROP COLUMN IF EXISTS person_name;
 ALTER TABLE asset_groups DROP COLUMN IF EXISTS person_role;
 ALTER TABLE asset_groups ADD COLUMN IF NOT EXISTS person_id TEXT REFERENCES persons(id) ON DELETE SET NULL;
+ALTER TABLE asset_groups ADD COLUMN IF NOT EXISTS domain TEXT;
+ALTER TABLE asset_groups ADD COLUMN IF NOT EXISTS telegram_channel TEXT;
+ALTER TABLE asset_groups ADD COLUMN IF NOT EXISTS telegram_link TEXT;
+ALTER TABLE persons ADD COLUMN IF NOT EXISTS telegram_channel TEXT;
+ALTER TABLE persons ADD COLUMN IF NOT EXISTS telegram_link TEXT;

@@ -11,6 +11,8 @@ export interface Person {
   name: string;
   role?: string;
   notes?: string;
+  telegramChannel?: string;
+  telegramLink?: string;
   addresses: PersonAddress[];
   createdAt: number;
   updatedAt: number;
