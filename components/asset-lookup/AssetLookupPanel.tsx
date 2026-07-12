@@ -87,6 +87,7 @@ import {
   traceChainStep,
 } from "@/components/shared/ChainDisplay";
 import { ProceedsStatsCards } from "@/components/shared/proceeds/ProceedsStatsCards";
+import { WindowedSalesStats } from "@/components/shared/proceeds/WindowedSalesStats";
 import { ProceedsDestinationsTable } from "@/components/shared/proceeds/ProceedsDestinationsTable";
 import { SaveToGroupButton } from "@/components/shared/proceeds/SaveToGroupButton";
 import { parseAssetPair } from "@/lib/asset-pair";
@@ -2243,6 +2244,11 @@ export function AssetLookupPanel({
                     {/* Summary stats */}
                     <ProceedsStatsCards
                       result={distribSales}
+                      assetCode={assetCode}
+                      xlmUsdPrice={xlmUsdPrice}
+                    />
+                    <WindowedSalesStats
+                      ledger={distribSales.proceedsLedger}
                       assetCode={assetCode}
                       xlmUsdPrice={xlmUsdPrice}
                     />

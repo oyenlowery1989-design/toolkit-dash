@@ -54,6 +54,7 @@ import {
   ProceedsDestinationsTable,
   SaveToGroupButton,
   ProceedsStatusBadge,
+  WindowedSalesStats,
 } from "@/components/shared/proceeds";
 
 // ---------------------------------------------------------------------------
@@ -918,6 +919,14 @@ export function AssetSalesTab() {
                     assetCode={row.assetCode}
                     xlmUsdPrice={xlmUsdPrice}
                   />
+
+                  <div className="mt-3">
+                    <WindowedSalesStats
+                      ledger={row.result.proceedsLedger}
+                      assetCode={row.assetCode}
+                      xlmUsdPrice={xlmUsdPrice}
+                    />
+                  </div>
 
                   {row.inferReason && (
                     <p className="text-xs text-muted-foreground mt-3">

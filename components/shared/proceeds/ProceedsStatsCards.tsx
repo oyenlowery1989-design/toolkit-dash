@@ -9,7 +9,17 @@ interface ProceedsStatsCardsProps {
   xlmUsdPrice?: number | null;
 }
 
-function StatCard({ label, value, usdValue }: { label: string; value: string; usdValue?: string }) {
+export function StatCard({
+  label,
+  value,
+  usdValue,
+  subLabel,
+}: {
+  label: string;
+  value: string;
+  usdValue?: string;
+  subLabel?: string;
+}) {
   return (
     <div className="rounded-md border bg-muted/30 p-3">
       <p className="text-[10px] uppercase font-semibold text-muted-foreground tracking-wide">
@@ -17,6 +27,7 @@ function StatCard({ label, value, usdValue }: { label: string; value: string; us
       </p>
       <p className="text-lg font-bold font-mono tabular-nums mt-0.5">{value}</p>
       {usdValue && <p className="text-[11px] text-muted-foreground">≈ ${usdValue}</p>}
+      {subLabel && <p className="text-[11px] text-muted-foreground">{subLabel}</p>}
     </div>
   );
 }

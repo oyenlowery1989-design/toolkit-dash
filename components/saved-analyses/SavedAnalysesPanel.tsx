@@ -43,6 +43,7 @@ import { useXlmUsdPrice } from "@/hooks/use-xlm-usd-price";
 import { useConfirmClick } from "@/hooks/use-confirm-click";
 import { ShortAddress } from "@/components/shared/ShortAddress";
 import { ProceedsDestinationsTable } from "@/components/shared/proceeds/ProceedsDestinationsTable";
+import { WindowedSalesStats } from "@/components/shared/proceeds/WindowedSalesStats";
 import { fetchAssetXlmProceeds } from "@/lib/proceeds-investigator/fetchers";
 import { formatXlm, formatUsdEstimate } from "@/lib/format";
 import { getErrorMessage, timeAgo } from "@/lib/stellar-helpers";
@@ -406,6 +407,17 @@ function AnalysisCard({ group, xlmUsdPrice }: { group: SavedAnalysis[]; xlmUsdPr
                 </p>
               )}
             </div>
+          </div>
+
+          <div className="mt-3">
+            <WindowedSalesStats
+              ledger={analysis.result.proceedsLedger}
+              assetCode={analysis.assetCode}
+              xlmUsdPrice={xlmUsdPrice}
+            />
+            <p className="text-[11px] text-muted-foreground mt-1">
+              Based on this snapshot&apos;s scanned trades — re-run to include sales since {timeAgo(analysis.timestamp)}.
+            </p>
           </div>
 
           <div className="mt-3">
