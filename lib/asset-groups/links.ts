@@ -23,3 +23,8 @@ export function resolveTelegramUrl(channel?: string, link?: string): string | un
   if (!channelTrimmed) return undefined;
   return `https://t.me/${channelTrimmed.replace(/^[@/]+/, "")}`;
 }
+
+/** Normalizes a Telegram channel name for dedup/matching: lowercase, strip a leading @ or /. */
+export function normalizeChannel(raw: string): string {
+  return raw.trim().toLowerCase().replace(/^[@/]+/, "");
+}

@@ -8,10 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Button } from "@/components/ui/button";
 import { useAssetGroups } from "@/hooks/use-asset-groups";
 import { usePersons } from "@/hooks/use-persons";
-
-function normalizeChannel(raw: string): string {
-  return raw.trim().toLowerCase().replace(/^[@/]+/, "");
-}
+import { normalizeChannel } from "@/lib/asset-groups/links";
 
 export function TelegramChannelClusters() {
   const [show, setShow] = useState(false);

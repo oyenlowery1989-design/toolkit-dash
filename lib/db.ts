@@ -146,14 +146,15 @@ function initDb(): Database.Database {
     -- ── Persons (important-person registry — CEO, founder, etc) ────────────────
 
     CREATE TABLE IF NOT EXISTS persons (
-      id               TEXT    PRIMARY KEY,
-      name             TEXT    NOT NULL,
-      role             TEXT,
-      notes            TEXT,
-      telegram_channel TEXT,
-      telegram_link    TEXT,
-      created_at       INTEGER NOT NULL,
-      updated_at       INTEGER NOT NULL
+      id                 TEXT    PRIMARY KEY,
+      name               TEXT    NOT NULL,
+      role               TEXT,
+      notes              TEXT,
+      telegram_channel   TEXT,
+      telegram_link      TEXT,
+      telegram_username  TEXT,
+      created_at         INTEGER NOT NULL,
+      updated_at         INTEGER NOT NULL
     );
 
     CREATE TABLE IF NOT EXISTS person_addresses (
@@ -167,6 +168,17 @@ function initDb(): Database.Database {
 
     CREATE INDEX IF NOT EXISTS idx_person_addresses_person ON person_addresses(person_id);
     CREATE INDEX IF NOT EXISTS idx_person_addresses_address ON person_addresses(address);
+
+    CREATE TABLE IF NOT EXISTS person_relationships (
+      id            TEXT    PRIMARY KEY,
+      person_a_id   TEXT    NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
+      person_b_id   TEXT    NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
+      type          TEXT    NOT NULL,
+      created_at    INTEGER NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_person_relationships_a ON person_relationships(person_a_id);
+    CREATE INDEX IF NOT EXISTS idx_person_relationships_b ON person_relationships(person_b_id);
 
     -- ── Wallet Manager ────────────────────────────────────────────────────────
 
@@ -549,6 +561,18 @@ function initDb(): Database.Database {
     db.exec(`ALTER TABLE known_creators ADD COLUMN parent_address TEXT`);
   }
 
+  // ── Persons migration: add telegram columns if missing ────────────────────
+  const personCols = (db.pragma("table_info(persons)") as { name: string }[]).map((c) => c.name);
+  if (!personCols.includes("telegram_username")) {
+    db.exec(`ALTER TABLE persons ADD COLUMN telegram_username TEXT`);
+  }
+  if (!personCols.includes("telegram_channel")) {
+    db.exec(`ALTER TABLE persons ADD COLUMN telegram_channel TEXT`);
+  }
+  if (!personCols.includes("telegram_link")) {
+    db.exec(`ALTER TABLE persons ADD COLUMN telegram_link TEXT`);
+  }
+
   // ── Asset groups migration: add domain/telegram columns if missing ────────
   const assetGroupCols = (db.pragma("table_info(asset_groups)") as { name: string }[]).map((c) => c.name);
   if (!assetGroupCols.includes("domain")) {
@@ -568,15 +592,6 @@ function initDb(): Database.Database {
   }
   if (!assetGroupCols.includes("person_id")) {
     db.exec(`ALTER TABLE asset_groups ADD COLUMN person_id TEXT REFERENCES persons(id) ON DELETE SET NULL`);
-  }
-
-  // ── Persons migration: add telegram columns if missing ────────────────────
-  const personCols = (db.pragma("table_info(persons)") as { name: string }[]).map((c) => c.name);
-  if (!personCols.includes("telegram_channel")) {
-    db.exec(`ALTER TABLE persons ADD COLUMN telegram_channel TEXT`);
-  }
-  if (!personCols.includes("telegram_link")) {
-    db.exec(`ALTER TABLE persons ADD COLUMN telegram_link TEXT`);
   }
 
   // ── Wallet migration: ensure id + folder_id columns exist ─────────────────
