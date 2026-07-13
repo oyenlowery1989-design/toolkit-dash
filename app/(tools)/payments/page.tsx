@@ -2,7 +2,6 @@
 
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import {
-  Horizon,
   Keypair,
   TransactionBuilder,
   Transaction,
@@ -30,6 +29,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
   Dialog,
@@ -65,18 +65,19 @@ import { toast } from "sonner";
 import {
   useSettings,
   NETWORK_LABELS,
-  resolveHorizonUrl,
   resolveNetworkPassphrase,
 } from "@/lib/settings";
-import type { Network } from "@/lib/settings";
 import { getErrorMessage } from "@/lib/stellar-helpers";
 import { shortAddr } from "@/lib/format";
+import { cn } from "@/lib/utils";
 import { useAddressBook } from "@/hooks/use-address-book";
 import { useActiveWallet } from "@/hooks/use-active-wallet";
 import { useWalletsV2 } from "@/hooks/use-wallets-v2";
 import { useAutoSaveSigningKey } from "@/hooks/use-auto-save-signing-key";
+import { useHorizonServer } from "@/hooks/use-horizon-server";
 import { ShortAddress } from "@/components/shared/ShortAddress";
 import { WalletSelect } from "@/components/ui/wallet-select";
+import { calcAvailableXlm } from "@/lib/stellar-reserve";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -110,6 +111,10 @@ interface AccountBalance {
   assetIssuer: string;
   /** Account's subentry_count (trustlines + offers + signers + data entries) — same for every balance of this account. */
   subentryCount: number;
+  /** Account's num_sponsoring — same for every balance of this account. */
+  numSponsoring: number;
+  /** Account's num_sponsored — same for every balance of this account. */
+  numSponsored: number;
   /** This balance's own selling_liabilities — funds locked in the account's open sell offers for this asset. */
   sellingLiabilities: string;
 }
@@ -182,6 +187,19 @@ function isLegValid(leg: PaymentLeg): boolean {
   );
 }
 
+/** Native-XLM spendable ceiling: reserve+sponsorship-aware (via calcAvailableXlm), minus the tx fee this submission will actually cost, minus any extra reserve the caller needs held back (e.g. claimable-balance entries). */
+function nativeMaxSpendable(bal: AccountBalance, feeStroops: number, estOps: number, extraReserveXlm = 0): string {
+  const { available } = calcAvailableXlm({
+    subentry_count: bal.subentryCount,
+    num_sponsoring: bal.numSponsoring,
+    num_sponsored: bal.numSponsored,
+    balances: [{ asset_type: "native", balance: bal.balance, selling_liabilities: bal.sellingLiabilities }],
+  });
+  const feeCost = (feeStroops * estOps) / 1e7;
+  // ponytail: cancel ops for removeTrustline legs not counted in estOps; worst case leaves account short by fee×cancelCount stroops
+  return Math.max(0, available - feeCost - extraReserveXlm).toFixed(7);
+}
+
 // ---------------------------------------------------------------------------
 // Page
 // ---------------------------------------------------------------------------
@@ -213,6 +231,7 @@ export default function PaymentsPage() {
   const [pathDest, setPathDest] = useState("");
   const [paths, setPaths] = useState<PathRecord[]>([]);
   const [selectedPathIndex, setSelectedPathIndex] = useState<number | null>(null);
+  const [pathsFetchedAt, setPathsFetchedAt] = useState<number | null>(null);
   const [isFindingPaths, setIsFindingPaths] = useState(false);
   const [pathError, setPathError] = useState<string | null>(null);
 
@@ -225,6 +244,7 @@ export default function PaymentsPage() {
   const [innerTxXdr, setInnerTxXdr] = useState("");
   const [parsedInnerTxOps, setParsedInnerTxOps] = useState<number | null>(null);
   const [parsedInnerTxFee, setParsedInnerTxFee] = useState<string | null>(null);
+  const [parsedInnerTxSigs, setParsedInnerTxSigs] = useState<number | null>(null);
   const [innerTxParseError, setInnerTxParseError] = useState<string | null>(null);
   const [feeBumpBaseFee, setFeeBumpBaseFee] = useState("200");
 
@@ -238,6 +258,7 @@ export default function PaymentsPage() {
   // -- Network (global)
   const { settings } = useSettings();
   const network = settings.network;
+  const { server: horizonServer, url: horizonUrl } = useHorizonServer();
 
   // -- Address book
   const { entries: addressBookEntries, setEntries: setAddressBookEntries } = useAddressBook();
@@ -294,6 +315,9 @@ export default function PaymentsPage() {
   // -- Offer cancel counts per leg (for error op-index mapping)
   const legCancelCountsRef = useRef<number[]>([]);
 
+  // -- Guard against a double-invocation race on rapid double-click of Confirm & Submit
+  const submittingRef = useRef(false);
+
   // -- Clipboard feedback
   const [copied, setCopied] = useState(false);
 
@@ -310,6 +334,7 @@ export default function PaymentsPage() {
     if (!xdr) {
       setParsedInnerTxOps(null);
       setParsedInnerTxFee(null);
+      setParsedInnerTxSigs(null);
       setInnerTxParseError(null);
       return;
     }
@@ -318,13 +343,20 @@ export default function PaymentsPage() {
       const tx = new Transaction(xdr, networkPassphrase);
       setParsedInnerTxOps(tx.operations.length);
       setParsedInnerTxFee(tx.fee);
+      setParsedInnerTxSigs(tx.signatures.length);
       setInnerTxParseError(null);
     } catch (e) {
       setParsedInnerTxOps(null);
       setParsedInnerTxFee(null);
+      setParsedInnerTxSigs(null);
       setInnerTxParseError(getErrorMessage(e));
     }
   }, [innerTxXdr, network]);
+
+  const innerPerOpFee = useMemo(() => {
+    if (parsedInnerTxFee === null || !parsedInnerTxOps) return null;
+    return Math.ceil(Number(parsedInnerTxFee) / parsedInnerTxOps);
+  }, [parsedInnerTxFee, parsedInnerTxOps]);
 
   // ---------------------------------------------------------------------------
   // Derive current public key (memoized so effect deps are explicit)
@@ -349,16 +381,16 @@ export default function PaymentsPage() {
   const loadBalancesRef = useRef<string | null>(null);
 
   const loadBalances = useCallback(async (pubKey: string) => {
-    const horizonUrl = resolveHorizonUrl(settings);
     const cacheKey = `${pubKey}:${horizonUrl}`;
     if (loadBalancesRef.current === cacheKey) return;
     loadBalancesRef.current = cacheKey;
     setBalancesLoading(true);
     setBalancesError(null);
     try {
-      const server = new Horizon.Server(horizonUrl);
-      const account = await server.loadAccount(pubKey);
+      const account = await horizonServer.loadAccount(pubKey);
       const subentryCount = account.subentry_count;
+      const numSponsoring = (account as any).num_sponsoring ?? 0;
+      const numSponsored = (account as any).num_sponsored ?? 0;
       const balances: AccountBalance[] = account.balances
         .filter((b) => b.asset_type !== "liquidity_pool_shares")
         .map((b) => {
@@ -369,6 +401,8 @@ export default function PaymentsPage() {
               assetCode: "XLM",
               assetIssuer: "",
               subentryCount,
+              numSponsoring,
+              numSponsored,
               sellingLiabilities: b.selling_liabilities,
             };
           }
@@ -379,6 +413,8 @@ export default function PaymentsPage() {
             assetCode: bal.asset_code,
             assetIssuer: bal.asset_issuer,
             subentryCount,
+            numSponsoring,
+            numSponsored,
             sellingLiabilities: bal.selling_liabilities,
           };
         });
@@ -397,7 +433,7 @@ export default function PaymentsPage() {
     } finally {
       if (pubKey === currentPublicKey) setBalancesLoading(false);
     }
-  }, [settings, currentPublicKey]);
+  }, [horizonUrl, horizonServer, currentPublicKey]);
 
   useEffect(() => {
     if (currentPublicKey) {
@@ -408,6 +444,20 @@ export default function PaymentsPage() {
       loadBalancesRef.current = null;
     }
   }, [currentPublicKey, loadBalances]);
+
+  // Reset stale balance-derived state (amounts/removeTrustline) when the signing
+  // account changes — a leg's amount/Max value was computed against the OLD
+  // account's balances. Destinations are signer-independent user intent, left alone.
+  const prevPublicKeyRef = useRef<string | null>(null);
+  useEffect(() => {
+    const prev = prevPublicKeyRef.current;
+    if (prev !== null && prev !== currentPublicKey) {
+      setLegs((ls) => ls.map((l) => ({ ...l, amount: "", removeTrustline: false })));
+      setClaimAmount("");
+      setClaimAssetKey("native");
+    }
+    prevPublicKeyRef.current = currentPublicKey;
+  }, [currentPublicKey]);
 
   // ---------------------------------------------------------------------------
   // Leg helpers
@@ -472,9 +522,13 @@ export default function PaymentsPage() {
       }
     }
     if (activeTab === "claimable") {
+      const trimmed = claimants.map((c) => c.destination.trim());
+      const noDuplicates = new Set(trimmed).size === trimmed.length;
       return (
         Number(claimAmount) > 0 &&
         claimants.length > 0 &&
+        claimants.length <= 10 &&
+        noDuplicates &&
         claimants.every((c) => StrKey.isValidEd25519PublicKey(c.destination.trim()))
       );
     }
@@ -483,7 +537,8 @@ export default function PaymentsPage() {
         innerTxXdr.trim().length > 0 &&
         innerTxParseError === null &&
         parsedInnerTxOps !== null &&
-        Number(feeBumpBaseFee) >= 100
+        Number(feeBumpBaseFee) >= 100 &&
+        (innerPerOpFee === null || Number(feeBumpBaseFee) >= innerPerOpFee)
       );
     }
     return false;
@@ -534,16 +589,14 @@ export default function PaymentsPage() {
 
     setIsFindingPaths(true);
     try {
-      const server = new Horizon.Server(resolveHorizonUrl(settings));
-
       let records: any[];
       if (pathMode === "strict-receive") {
-        const result = await server
+        const result = await horizonServer
           .strictReceivePaths([srcAsset], dstAsset, destAmount)
           .call();
         records = result.records as any[];
       } else {
-        const result = await server
+        const result = await horizonServer
           .strictSendPaths(srcAsset, exactSendAmount, [dstAsset])
           .call();
         records = result.records as any[];
@@ -563,6 +616,7 @@ export default function PaymentsPage() {
       }));
 
       setPaths(mapped);
+      setPathsFetchedAt(Date.now());
       if (mapped.length === 0) setPathError("No paths found for this pair and amount.");
     } catch (e) {
       setPathError(getErrorMessage(e));
@@ -570,7 +624,7 @@ export default function PaymentsPage() {
       setIsFindingPaths(false);
     }
   }, [
-    settings, pathDest, pathMode,
+    horizonServer, pathDest, pathMode,
     destAmount, exactSendAmount,
     srcIsNative, srcAssetCode, srcAssetIssuer,
     destIsNative, destAssetCode, destAssetIssuer,
@@ -583,12 +637,21 @@ export default function PaymentsPage() {
     setPaths([]);
     setSelectedPathIndex(null);
     setPathError(null);
+    setPathsFetchedAt(null);
   }, [
     pathMode,
     srcIsNative, srcAssetCode, srcAssetIssuer,
     destIsNative, destAssetCode, destAssetIssuer,
     pathDest, destAmount, exactSendAmount,
   ]);
+
+  // Tick to keep the confirm dialog's path-staleness warning live while it's open.
+  const [, forceTick] = useState(0);
+  useEffect(() => {
+    if (!(confirmOpen && activeTab === "path")) return;
+    const interval = setInterval(() => forceTick((t) => t + 1), 15000);
+    return () => clearInterval(interval);
+  }, [confirmOpen, activeTab]);
 
   // ---------------------------------------------------------------------------
   // Address book helpers
@@ -635,6 +698,9 @@ export default function PaymentsPage() {
   }
 
   async function handleSubmit() {
+    if (submittingRef.current) return;
+    submittingRef.current = true;
+    try {
     setConfirmOpen(false);
     setTxStatus("building");
     setTxHash(null);
@@ -661,8 +727,7 @@ export default function PaymentsPage() {
           setShowSecret(false);
         }
         setTxStatus("submitting");
-        const server = new Horizon.Server(resolveHorizonUrl(settings));
-        const result = await server.submitTransaction(feeBumpTx);
+        const result = await horizonServer.submitTransaction(feeBumpTx);
         const hash = (result as any).hash ?? (result as any).id ?? "unknown";
         setTxHash(hash);
         setTxStatus("success");
@@ -675,7 +740,7 @@ export default function PaymentsPage() {
       const publicKey = keypair.publicKey();
 
       // 2. Load account
-      const server = new Horizon.Server(resolveHorizonUrl(settings));
+      const server = horizonServer;
       const account = await server.loadAccount(publicKey);
 
       // 3. Build transaction
@@ -684,6 +749,16 @@ export default function PaymentsPage() {
 
       if (activeTab === "send") {
         const cancelCounts: number[] = [];
+        const needsOffers = legs.some((l) => l.removeTrustline && l.assetKey !== "native");
+        let offers: any[] = [];
+        if (needsOffers) {
+          let page = await server.offers().forAccount(publicKey).limit(200).call();
+          offers = [...page.records];
+          while (page.records.length === 200) {
+            page = await page.next();
+            offers = [...offers, ...page.records];
+          }
+        }
         for (const leg of legs) {
           let cancelCount = 0;
           // If removing trustline, cancel any open offers for this asset first —
@@ -691,8 +766,7 @@ export default function PaymentsPage() {
           // liabilities that block changeTrust(limit: "0").
           if (leg.removeTrustline && leg.assetKey !== "native") {
             const [code, issuer] = leg.assetKey.split(":");
-            const offersResult = await server.offers().forAccount(publicKey).limit(200).call();
-            const sellOffersToCancel = offersResult.records.filter((o: any) => {
+            const sellOffersToCancel = offers.filter((o: any) => {
               const selling = o.selling;
               return selling.asset_type !== "native" && selling.asset_code === code && selling.asset_issuer === issuer;
             });
@@ -711,7 +785,7 @@ export default function PaymentsPage() {
               );
               cancelCount++;
             }
-            const buyOffersToCancel = offersResult.records.filter((o: any) => {
+            const buyOffersToCancel = offers.filter((o: any) => {
               const buying = o.buying;
               return buying.asset_type !== "native" && buying.asset_code === code && buying.asset_issuer === issuer;
             });
@@ -815,6 +889,13 @@ export default function PaymentsPage() {
         const opCodes: string[] =
           submitErr?.response?.data?.extras?.result_codes?.operations ?? [];
         const errMsg: string = getErrorMessage(submitErr);
+
+        if (activeTab === "path" && opCodes.some((c) => ["op_over_source_max", "op_under_dest_min", "op_too_few_offers"].includes(c))) {
+          setTxStatus("error");
+          setTxError(`Path payment failed (${opCodes.join(", ")}) — the order book has likely moved since you quoted. Re-run Find Paths and submit again.`);
+          return;
+        }
+
         const isNoDestination = opCodes.includes("op_no_destination") || errMsg.includes("op_no_destination");
 
         // Build op-index → leg map (each leg emits N cancel ops + 1 payment op + optionally 1 changeTrust op)
@@ -913,6 +994,9 @@ export default function PaymentsPage() {
       setTxStatus("error");
       toast.error("Transaction failed: " + getErrorMessage(e));
     }
+    } finally {
+      submittingRef.current = false;
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -942,6 +1026,7 @@ export default function PaymentsPage() {
     setInnerTxXdr("");
     setParsedInnerTxOps(null);
     setParsedInnerTxFee(null);
+    setParsedInnerTxSigs(null);
     setInnerTxParseError(null);
     setFeeBumpBaseFee("200");
     setMemoType("none");
@@ -976,7 +1061,7 @@ export default function PaymentsPage() {
     setTxError(null);
     setTrustlineStatus("Adding trustlines\u2026");
     try {
-      const server = new Horizon.Server(resolveHorizonUrl(settings));
+      const server = horizonServer;
       const networkPassphrase = resolveNetworkPassphrase(network);
 
       for (let i = 0; i < trustlinePrompt.length; i++) {
@@ -1093,7 +1178,7 @@ export default function PaymentsPage() {
     : secretKeyDisplay.trim().length > 0;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <div>
         <h1 className="text-lg font-semibold">Payments</h1>
       </div>
@@ -1102,13 +1187,10 @@ export default function PaymentsPage() {
       {/* Signing Card — always at top so balances load immediately          */}
       {/* ================================================================== */}
       <Card>
-        <CardHeader className="pb-3 pt-4 px-4">
+        <CardHeader className="pb-2 pt-3 px-4">
           <CardTitle className="text-sm font-medium">Signing Account</CardTitle>
-          <CardDescription className="text-xs">
-            Select your wallet or enter a secret key. Available assets load automatically.
-          </CardDescription>
         </CardHeader>
-        <CardContent className="space-y-2 px-4 pb-4">
+        <CardContent className="space-y-2 px-4 pb-3">
           {/* Wallet picker */}
           {wallets.length > 0 && (
             <div className="flex items-center justify-between">
@@ -1177,10 +1259,10 @@ export default function PaymentsPage() {
       {/* Payment Tabs                                                       */}
       {/* ================================================================== */}
       <Card>
-        <CardHeader className="pb-3 pt-4 px-4">
+        <CardHeader className="pb-2 pt-3 px-4">
           <CardTitle className="text-sm font-medium">New Payment</CardTitle>
         </CardHeader>
-        <CardContent className="px-4 pb-4">
+        <CardContent className="px-4 pb-3">
           <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as PaymentTab)}>
             <TabsList className="w-full grid grid-cols-4">
               <TabsTrigger value="send" className="gap-1.5">
@@ -1202,64 +1284,62 @@ export default function PaymentsPage() {
             </TabsList>
 
             {/* ---- Tab 1: Send (unified XLM + tokens, multi-leg) ---- */}
-            <TabsContent value="send" className="space-y-4 mt-4">
+            <TabsContent value="send" className="space-y-3 mt-3">
 
-              {/* Asset balance status bar */}
-              <div className="flex items-center gap-2 text-xs text-muted-foreground min-h-[20px]">
-                {balancesLoading && (
-                  <>
-                    <Loader2 className="h-3 w-3 animate-spin" />
-                    Loading your account balances…
-                  </>
-                )}
-                {!balancesLoading && balancesError && (
-                  <>
-                    <AlertTriangle className="h-3 w-3 text-destructive shrink-0" />
-                    <span className="text-destructive">{balancesError}</span>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-5 px-1 text-xs"
-                      onClick={() => {
-                        loadBalancesRef.current = null;
-                        if (currentPublicKey) loadBalances(currentPublicKey);
-                      }}
-                    >
-                      <RefreshCw className="h-3 w-3 mr-1" />
-                      Retry
-                    </Button>
-                  </>
-                )}
-                {!balancesLoading && !balancesError && accountBalances.length > 0 && (
-                  <>
-                    <Coins className="h-3 w-3" />
-                    {accountBalances.length} asset{accountBalances.length !== 1 ? "s" : ""} available
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-5 px-1 text-xs"
-                      onClick={() => {
-                        loadBalancesRef.current = null;
-                        if (currentPublicKey) loadBalances(currentPublicKey);
-                      }}
-                    >
-                      <RefreshCw className="h-3 w-3" />
-                    </Button>
-                  </>
-                )}
-                {!balancesLoading && !balancesError && accountBalances.length === 0 && (
-                  <span className="italic">
-                    Connect a wallet or enter your signing key below to load available assets.
-                  </span>
-                )}
-              </div>
+              {/* Asset balance status bar — hidden entirely when there's nothing to report
+                  (the Asset picker below already shows its own "no assets" placeholder) */}
+              {(balancesLoading || balancesError || accountBalances.length > 0) && (
+                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                  {balancesLoading && (
+                    <>
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                      Loading your account balances…
+                    </>
+                  )}
+                  {!balancesLoading && balancesError && (
+                    <>
+                      <AlertTriangle className="h-3 w-3 text-destructive shrink-0" />
+                      <span className="text-destructive">{balancesError}</span>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-5 px-1 text-xs"
+                        onClick={() => {
+                          loadBalancesRef.current = null;
+                          if (currentPublicKey) loadBalances(currentPublicKey);
+                        }}
+                      >
+                        <RefreshCw className="h-3 w-3 mr-1" />
+                        Retry
+                      </Button>
+                    </>
+                  )}
+                  {!balancesLoading && !balancesError && accountBalances.length > 0 && (
+                    <>
+                      <Coins className="h-3 w-3" />
+                      {accountBalances.length} asset{accountBalances.length !== 1 ? "s" : ""} available
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-5 px-1 text-xs"
+                        onClick={() => {
+                          loadBalancesRef.current = null;
+                          if (currentPublicKey) loadBalances(currentPublicKey);
+                        }}
+                      >
+                        <RefreshCw className="h-3 w-3" />
+                      </Button>
+                    </>
+                  )}
+                </div>
+              )}
 
               {/* Payment legs */}
               <div className="space-y-3">
                 {legs.map((leg, idx) => (
                   <div
                     key={leg.id}
-                    className="rounded-md border border-border bg-muted/20 p-4 space-y-3"
+                    className="rounded-md border border-border bg-muted/20 p-3 space-y-2"
                   >
                     {/* Leg header */}
                     <div className="flex items-center justify-between">
@@ -1278,122 +1358,125 @@ export default function PaymentsPage() {
                       )}
                     </div>
 
-                    {/* Asset picker */}
-                    <div className="space-y-2">
-                      <Label className="text-sm">Asset</Label>
-                      {accountBalances.length > 0 ? (
-                        <Select
-                          value={leg.assetKey}
-                          onValueChange={(val) => {
-                            if (val === leg.assetKey) return;
-                            // Switching assets invalidates any amount/removeTrustline state
-                            // computed for the OLD asset's balance — reset to a neutral default.
-                            updateLeg(leg.id, { assetKey: val, removeTrustline: false, amount: "" });
-                          }}
-                        >
-                          <SelectTrigger>
-                            <SelectValue placeholder="Select asset…" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {accountBalances.map((b) => (
-                              <SelectItem key={b.key} value={b.key}>
-                                <div className="flex items-center gap-3">
-                                  <span className="font-medium">{b.assetCode}</span>
-                                  <span className="text-xs text-muted-foreground font-mono">
-                                    {parseFloat(b.balance).toLocaleString(undefined, { maximumFractionDigits: 7 })}
-                                  </span>
-                                </div>
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      ) : (
-                        <div className="flex items-center gap-2 rounded-md border border-dashed border-border px-3 py-2 text-sm text-muted-foreground">
-                          <Coins className="h-4 w-4 shrink-0" />
-                          {balancesLoading ? "Loading assets…" : "No assets loaded — connect a wallet or enter signing key"}
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Amount */}
-                    <div className="space-y-2">
-                      <Label className="text-sm">Amount</Label>
-                      <div className="flex gap-2">
-                        <Input
-                          type="number"
-                          placeholder="0.00"
-                          min="0"
-                          step="any"
-                          value={leg.amount}
-                          onChange={(e) => updateLeg(leg.id, { amount: e.target.value })}
-                          className="flex-1"
-                        />
-                        {(() => {
-                          const bal = accountBalances.find((b) => b.key === leg.assetKey);
-                          if (!bal) return null;
-                          // Real minimum reserve: (2 + subentry_count) * 0.5 XLM base reserve,
-                          // plus whatever's locked in this asset's own open sell offers.
-                          const raw = parseFloat(bal.balance);
-                          const sellingLiab = parseFloat(bal.sellingLiabilities || "0");
-                          const maxAmt = leg.assetKey === "native"
-                            ? Math.max(0, raw - (2 + bal.subentryCount) * 0.5 - sellingLiab).toFixed(7)
-                            : Math.max(0, raw - sellingLiab).toFixed(7);
-                          return (
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              className="h-9 px-2 text-xs shrink-0"
-                              onClick={() => updateLeg(leg.id, { amount: maxAmt })}
-                            >
-                              Max
-                            </Button>
-                          );
-                        })()}
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      {/* Asset picker */}
+                      <div className="space-y-2">
+                        <Label className="text-sm">Asset</Label>
+                        {accountBalances.length > 0 ? (
+                          <Select
+                            value={leg.assetKey}
+                            onValueChange={(val) => {
+                              if (val === leg.assetKey) return;
+                              // Switching assets invalidates any amount/removeTrustline state
+                              // computed for the OLD asset's balance — reset to a neutral default.
+                              updateLeg(leg.id, { assetKey: val, removeTrustline: false, amount: "" });
+                            }}
+                          >
+                            <SelectTrigger>
+                              <SelectValue placeholder="Select asset…" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {accountBalances.map((b) => (
+                                <SelectItem key={b.key} value={b.key}>
+                                  <div className="flex items-center gap-3">
+                                    <span className="font-medium">{b.assetCode}</span>
+                                    <span className="text-xs text-muted-foreground font-mono">
+                                      {parseFloat(b.balance).toLocaleString(undefined, { maximumFractionDigits: 7 })}
+                                    </span>
+                                  </div>
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        ) : (
+                          <div className="flex items-center gap-2 rounded-md border border-dashed border-border px-3 py-2 text-sm text-muted-foreground">
+                            <Coins className="h-4 w-4 shrink-0" />
+                            {balancesLoading ? "Loading assets…" : "No assets loaded — connect a wallet or enter signing key"}
+                          </div>
+                        )}
                       </div>
-                      {leg.amount && Number(leg.amount) <= 0 && (
-                        <p className="text-xs text-destructive flex items-center gap-1">
-                          <AlertTriangle className="h-3 w-3 shrink-0" />
-                          Amount must be greater than 0.
-                        </p>
-                      )}
-                      {/* Remove trustline after sending — only for non-native */}
-                      {leg.assetKey !== "native" && (
-                        <>
-                          <label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer select-none pt-0.5">
-                            <input
-                              type="checkbox"
-                              checked={!!leg.removeTrustline}
-                              onChange={(e) => {
-                                const checked = e.target.checked;
-                                if (checked) {
-                                  const bal = accountBalances.find((b) => b.key === leg.assetKey);
-                                  const maxAmt = bal ? bal.balance : leg.amount;
-                                  updateLeg(leg.id, { removeTrustline: true, amount: maxAmt });
-                                } else {
-                                  updateLeg(leg.id, { removeTrustline: false });
-                                }
-                              }}
-                              className="h-3.5 w-3.5 rounded border-input"
-                            />
-                            Remove trustline after sending
-                            <span className="text-muted-foreground/60">(send full balance first)</span>
-                          </label>
-                          {leg.removeTrustline && (() => {
+
+                      {/* Amount */}
+                      <div className="space-y-2">
+                        <Label className="text-sm">Amount</Label>
+                        <div className="flex gap-2">
+                          <Input
+                            type="number"
+                            placeholder="0.00"
+                            min="0"
+                            step="any"
+                            value={leg.amount}
+                            onChange={(e) => updateLeg(leg.id, { amount: e.target.value })}
+                            className="flex-1"
+                          />
+                          {(() => {
                             const bal = accountBalances.find((b) => b.key === leg.assetKey);
                             if (!bal) return null;
-                            if (parseFloat(leg.amount) < parseFloat(bal.balance)) {
-                              return (
-                                <p className="text-xs text-amber-500 flex items-center gap-1">
-                                  <AlertTriangle className="h-3 w-3 shrink-0" />
-                                  Amount is less than full balance ({bal.balance}). Trustline removal will fail if balance remains.
-                                </p>
-                              );
-                            }
-                            return null;
+                            // Reserve+sponsorship-aware ceiling minus the tx fee this leg's payment
+                            // (+changeTrust op, if any) will actually cost.
+                            const raw = parseFloat(bal.balance);
+                            const sellingLiab = parseFloat(bal.sellingLiabilities || "0");
+                            const estOps = legs.length + legs.filter((l) => l.removeTrustline && l.assetKey !== "native").length;
+                            const maxAmt = leg.assetKey === "native"
+                              ? nativeMaxSpendable(bal, Number(fee) || 100, estOps)
+                              : Math.max(0, raw - sellingLiab).toFixed(7);
+                            return (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="h-9 px-2 text-xs shrink-0"
+                                onClick={() => updateLeg(leg.id, { amount: maxAmt })}
+                              >
+                                Max
+                              </Button>
+                            );
                           })()}
-                        </>
-                      )}
+                        </div>
+                        {leg.amount && Number(leg.amount) <= 0 && (
+                          <p className="text-xs text-destructive flex items-center gap-1">
+                            <AlertTriangle className="h-3 w-3 shrink-0" />
+                            Amount must be greater than 0.
+                          </p>
+                        )}
+                      </div>
                     </div>
+
+                    {/* Remove trustline after sending — only for non-native */}
+                    {leg.assetKey !== "native" && (
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                          <Switch
+                            checked={!!leg.removeTrustline}
+                            onCheckedChange={(checked) => {
+                              if (checked) {
+                                const bal = accountBalances.find((b) => b.key === leg.assetKey);
+                                const maxAmt = bal ? bal.balance : leg.amount;
+                                updateLeg(leg.id, { removeTrustline: true, amount: maxAmt });
+                              } else {
+                                updateLeg(leg.id, { removeTrustline: false });
+                              }
+                            }}
+                          />
+                          <span>
+                            Remove trustline after sending{" "}
+                            <span className="text-muted-foreground/60">(send full balance first)</span>
+                          </span>
+                        </div>
+                        {leg.removeTrustline && (() => {
+                          const bal = accountBalances.find((b) => b.key === leg.assetKey);
+                          if (!bal) return null;
+                          if (parseFloat(leg.amount) < parseFloat(bal.balance)) {
+                            return (
+                              <p className="text-xs text-amber-500 flex items-center gap-1">
+                                <AlertTriangle className="h-3 w-3 shrink-0" />
+                                Amount is less than full balance ({bal.balance}). Trustline removal will fail if balance remains.
+                              </p>
+                            );
+                          }
+                          return null;
+                        })()}
+                      </div>
+                    )}
 
                     {/* Destination */}
                     <div className="space-y-2">
@@ -1455,34 +1538,30 @@ export default function PaymentsPage() {
             </TabsContent>
 
             {/* ---- Tab 2: Path Payment ---- */}
-            <TabsContent value="path" className="space-y-4 mt-4">
+            <TabsContent value="path" className="space-y-3 mt-3">
 
               {/* Strict receive / strict send toggle */}
               <div className="flex items-center gap-2 rounded-md border border-border p-1">
-                <button
+                <Button
                   type="button"
+                  size="sm"
+                  variant={pathMode === "strict-receive" ? "default" : "outline"}
+                  className="flex-1 gap-1.5"
                   onClick={() => setPathMode("strict-receive")}
-                  className={`flex-1 flex items-center justify-center gap-1.5 rounded py-1.5 text-sm font-medium transition-colors ${
-                    pathMode === "strict-receive"
-                      ? "bg-primary text-primary-foreground"
-                      : "text-muted-foreground hover:text-foreground"
-                  }`}
                 >
                   <ArrowLeftRight className="h-3.5 w-3.5" />
                   Strict Receive
-                </button>
-                <button
+                </Button>
+                <Button
                   type="button"
+                  size="sm"
+                  variant={pathMode === "strict-send" ? "default" : "outline"}
+                  className="flex-1 gap-1.5"
                   onClick={() => setPathMode("strict-send")}
-                  className={`flex-1 flex items-center justify-center gap-1.5 rounded py-1.5 text-sm font-medium transition-colors ${
-                    pathMode === "strict-send"
-                      ? "bg-primary text-primary-foreground"
-                      : "text-muted-foreground hover:text-foreground"
-                  }`}
                 >
                   <Send className="h-3.5 w-3.5" />
                   Strict Send
-                </button>
+                </Button>
               </div>
               <p className="text-xs text-muted-foreground -mt-2">
                 {pathMode === "strict-receive"
@@ -1491,18 +1570,12 @@ export default function PaymentsPage() {
               </p>
 
               {/* Source asset */}
-              <fieldset className="space-y-3 rounded-md border border-border p-4">
+              <fieldset className="space-y-2 rounded-md border border-border p-3">
                 <legend className="px-2 text-sm font-medium text-muted-foreground">
                   Source Asset
                 </legend>
                 <div className="flex items-center gap-2">
-                  <input
-                    type="checkbox"
-                    id="src-native"
-                    checked={srcIsNative}
-                    onChange={(e) => setSrcIsNative(e.target.checked)}
-                    className="h-4 w-4 rounded border-input"
-                  />
+                  <Switch checked={srcIsNative} onCheckedChange={setSrcIsNative} id="src-native" />
                   <Label htmlFor="src-native" className="text-sm cursor-pointer">
                     Native (XLM)
                   </Label>
@@ -1555,7 +1628,6 @@ export default function PaymentsPage() {
                       value={maxSendAmount}
                       onChange={(e) => setMaxSendAmount(e.target.value)}
                     />
-                    <p className="text-xs text-muted-foreground">Maximum you are willing to spend.</p>
                   </div>
                 ) : (
                   <div className="space-y-2">
@@ -1569,24 +1641,17 @@ export default function PaymentsPage() {
                       value={exactSendAmount}
                       onChange={(e) => setExactSendAmount(e.target.value)}
                     />
-                    <p className="text-xs text-muted-foreground">Exact amount you will send.</p>
                   </div>
                 )}
               </fieldset>
 
               {/* Destination asset */}
-              <fieldset className="space-y-3 rounded-md border border-border p-4">
+              <fieldset className="space-y-2 rounded-md border border-border p-3">
                 <legend className="px-2 text-sm font-medium text-muted-foreground">
                   Destination Asset
                 </legend>
                 <div className="flex items-center gap-2">
-                  <input
-                    type="checkbox"
-                    id="dest-native"
-                    checked={destIsNative}
-                    onChange={(e) => setDestIsNative(e.target.checked)}
-                    className="h-4 w-4 rounded border-input"
-                  />
+                  <Switch checked={destIsNative} onCheckedChange={setDestIsNative} id="dest-native" />
                   <Label htmlFor="dest-native" className="text-sm cursor-pointer">
                     Native (XLM)
                   </Label>
@@ -1731,15 +1796,19 @@ export default function PaymentsPage() {
                   </Label>
                   <div className="space-y-2 max-h-64 overflow-y-auto">
                     {paths.map((p, i) => (
-                      <button
+                      <Button
                         key={p.id}
                         type="button"
-                        onClick={() => setSelectedPathIndex(i)}
-                        className={`w-full text-left rounded-md border p-3 transition-colors ${
-                          selectedPathIndex === i
-                            ? "border-primary bg-primary/5 ring-1 ring-primary"
-                            : "border-border hover:bg-muted/50"
-                        }`}
+                        variant="outline"
+                        onClick={() => {
+                          setSelectedPathIndex(i);
+                          if (pathMode === "strict-receive") setMaxSendAmount(p.sourceAmount);
+                          else setMinReceiveAmount(p.destinationAmount);
+                        }}
+                        className={cn(
+                          "w-full h-auto flex-col items-start whitespace-normal text-left p-3",
+                          selectedPathIndex === i && "border-primary bg-primary/5 ring-1 ring-primary",
+                        )}
                       >
                         <div className="flex items-center justify-between text-sm">
                           <div className="flex items-center gap-2">
@@ -1769,15 +1838,30 @@ export default function PaymentsPage() {
                               .join(" → ")}
                           </div>
                         )}
-                      </button>
+                      </Button>
                     ))}
                   </div>
+                  {selectedPathIndex !== null && paths[selectedPathIndex] && (() => {
+                    const sp = paths[selectedPathIndex];
+                    const tooTight = pathMode === "strict-receive"
+                      ? Number(maxSendAmount) < Number(sp.sourceAmount)
+                      : Number(minReceiveAmount) > Number(sp.destinationAmount);
+                    if (!tooTight) return null;
+                    return (
+                      <p className="text-xs text-amber-500 flex items-center gap-1">
+                        <AlertTriangle className="h-3 w-3 shrink-0" />
+                        {pathMode === "strict-receive"
+                          ? `Selected path needs up to ${sp.sourceAmount} — your max send is lower and the transaction will fail.`
+                          : `Selected path only guarantees ${sp.destinationAmount} — your min receive is higher and the transaction will fail.`}
+                      </p>
+                    );
+                  })()}
                 </div>
               )}
             </TabsContent>
 
             {/* ---- Tab 3: Claimable Balance ---- */}
-            <TabsContent value="claimable" className="space-y-4 mt-4">
+            <TabsContent value="claimable" className="space-y-3 mt-3">
               <p className="text-sm text-muted-foreground">
                 Create a claimable balance that claimants can claim at any time (unconditional predicate).
                 The asset is locked from your account until claimed or reclaimed.
@@ -1818,31 +1902,68 @@ export default function PaymentsPage() {
               {/* Amount */}
               <div className="space-y-2">
                 <Label htmlFor="claim-amount">Amount</Label>
-                <Input
-                  id="claim-amount"
-                  type="number"
-                  placeholder="0.00"
-                  min="0"
-                  step="any"
-                  value={claimAmount}
-                  onChange={(e) => setClaimAmount(e.target.value)}
-                />
+                <div className="flex gap-2">
+                  <Input
+                    id="claim-amount"
+                    type="number"
+                    placeholder="0.00"
+                    min="0"
+                    step="any"
+                    value={claimAmount}
+                    onChange={(e) => setClaimAmount(e.target.value)}
+                    className="flex-1"
+                  />
+                  {(() => {
+                    const bal = accountBalances.find((b) => b.key === claimAssetKey);
+                    if (!bal) return null;
+                    const maxAmt = claimAssetKey === "native"
+                      ? nativeMaxSpendable(bal, Number(fee) || 100, 1, 0.5 * claimants.length)
+                      : Math.max(0, parseFloat(bal.balance) - parseFloat(bal.sellingLiabilities || "0")).toFixed(7);
+                    return (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-9 px-2 text-xs shrink-0"
+                        onClick={() => setClaimAmount(maxAmt)}
+                      >
+                        Max
+                      </Button>
+                    );
+                  })()}
+                </div>
                 {claimAmount && Number(claimAmount) <= 0 && (
                   <p className="text-xs text-destructive flex items-center gap-1">
                     <AlertTriangle className="h-3 w-3 shrink-0" />
                     Amount must be greater than 0.
                   </p>
                 )}
+                {(() => {
+                  const bal = accountBalances.find((b) => b.key === claimAssetKey);
+                  if (!bal || !claimAmount || Number(claimAmount) <= 0) return null;
+                  if (Number(claimAmount) <= parseFloat(bal.balance)) return null;
+                  return (
+                    <p className="text-xs text-amber-500 flex items-center gap-1">
+                      <AlertTriangle className="h-3 w-3 shrink-0" />
+                      Amount exceeds your available balance ({bal.balance}).
+                    </p>
+                  );
+                })()}
               </div>
 
               {/* Claimants */}
               <div className="space-y-3">
                 <div className="flex items-center justify-between">
-                  <Label>Claimants</Label>
+                  <div className="flex items-center gap-2">
+                    <Label>Claimants</Label>
+                    {claimants.length >= 10 && (
+                      <span className="text-xs text-muted-foreground">(protocol max 10 claimants)</span>
+                    )}
+                  </div>
                   <Button
                     variant="ghost"
                     size="sm"
                     className="h-6 px-2 text-xs gap-1"
+                    disabled={claimants.length >= 10}
                     onClick={() => setClaimants((prev) => [...prev, makeClaimant()])}
                   >
                     <Plus className="h-3 w-3" />
@@ -1869,12 +1990,22 @@ export default function PaymentsPage() {
                         </Button>
                       )}
                     </div>
-                    {c.destination.trim() && StrKey.isValidEd25519PublicKey(c.destination.trim()) && (
-                      <div className="flex items-center gap-1 text-xs text-muted-foreground pl-1">
-                        <Check className="h-3 w-3 text-green-500 shrink-0" />
-                        <ShortAddress address={c.destination.trim()} network={network} />
-                      </div>
-                    )}
+                    {c.destination.trim() &&
+                      StrKey.isValidEd25519PublicKey(c.destination.trim()) &&
+                      claimants.findIndex((x) => x.destination.trim() === c.destination.trim()) === idx && (
+                        <div className="flex items-center gap-1 text-xs text-muted-foreground pl-1">
+                          <Check className="h-3 w-3 text-green-500 shrink-0" />
+                          <ShortAddress address={c.destination.trim()} network={network} />
+                        </div>
+                      )}
+                    {c.destination.trim() &&
+                      StrKey.isValidEd25519PublicKey(c.destination.trim()) &&
+                      claimants.findIndex((x) => x.destination.trim() === c.destination.trim()) !== idx && (
+                        <p className="text-xs text-destructive flex items-center gap-1 pl-1">
+                          <AlertTriangle className="h-3 w-3 shrink-0" />
+                          Duplicate claimant address.
+                        </p>
+                      )}
                     {c.destination.trim() && !StrKey.isValidEd25519PublicKey(c.destination.trim()) && (
                       <p className="text-xs text-destructive flex items-center gap-1 pl-1">
                         <AlertTriangle className="h-3 w-3 shrink-0" />
@@ -1887,11 +2018,14 @@ export default function PaymentsPage() {
                   All claimants use an unconditional predicate — they can claim at any time.
                   The creator (you) is also implicitly able to reclaim via clawback if AUTH_CLAWBACK is set.
                 </p>
+                <p className="text-xs text-muted-foreground">
+                  Creating this locks {(claimants.length * 0.5).toFixed(1)} XLM of additional reserve in your account until claimed or reclaimed.
+                </p>
               </div>
             </TabsContent>
 
             {/* ---- Tab 4: Fee Bump ---- */}
-            <TabsContent value="feebump" className="space-y-4 mt-4">
+            <TabsContent value="feebump" className="space-y-3 mt-3">
               <p className="text-sm text-muted-foreground">
                 Wrap a signed transaction with a higher fee. Useful when the original fee is too low
                 and the transaction is stuck. The fee account pays the difference.
@@ -1915,14 +2049,31 @@ export default function PaymentsPage() {
                   </p>
                 )}
                 {innerTxXdr.trim() && !innerTxParseError && parsedInnerTxOps !== null && (
-                  <div className="flex items-center gap-3 text-xs text-muted-foreground">
-                    <Check className="h-3 w-3 text-green-500 shrink-0" />
-                    <span>Valid transaction</span>
-                    <span className="text-muted-foreground/60">·</span>
-                    <span>{parsedInnerTxOps} op{parsedInnerTxOps !== 1 ? "s" : ""}</span>
-                    <span className="text-muted-foreground/60">·</span>
-                    <span>current fee: {parsedInnerTxFee} stroops</span>
-                  </div>
+                  <>
+                    <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                      <Check className="h-3 w-3 text-green-500 shrink-0" />
+                      <span>Valid transaction</span>
+                      <span className="text-muted-foreground/60">·</span>
+                      <span>{parsedInnerTxOps} op{parsedInnerTxOps !== 1 ? "s" : ""}</span>
+                      <span className="text-muted-foreground/60">·</span>
+                      <span>current fee: {parsedInnerTxFee} stroops</span>
+                      <span className="text-muted-foreground/60">·</span>
+                      <span className={parsedInnerTxSigs === 0 ? "text-amber-500 font-medium" : ""}>
+                        {parsedInnerTxSigs} signature{parsedInnerTxSigs !== 1 ? "s" : ""}
+                      </span>
+                    </div>
+                    {parsedInnerTxSigs === 0 && (
+                      <p className="text-xs text-amber-500 flex items-center gap-1 mt-1">
+                        <AlertTriangle className="h-3 w-3 shrink-0" />
+                        Unsigned inner transaction — submission will fail with tx_bad_auth.
+                      </p>
+                    )}
+                    <p className="text-xs text-amber-500 flex items-center gap-1 mt-1">
+                      <AlertTriangle className="h-3 w-3 shrink-0" />
+                      XDR does not encode its network — verify this transaction was signed for{" "}
+                      <span className="font-medium">{NETWORK_LABELS[network]}</span>. A mismatch fails with tx_bad_auth.
+                    </p>
+                  </>
                 )}
               </div>
 
@@ -1941,6 +2092,12 @@ export default function PaymentsPage() {
                   Must be ≥ 100 stroops and ≥ the inner tx's fee per op.
                   The fee account (your signing wallet) pays the difference.
                 </p>
+                {innerPerOpFee !== null && Number(feeBumpBaseFee) < innerPerOpFee && (
+                  <p className="text-xs text-destructive flex items-center gap-1">
+                    <AlertTriangle className="h-3 w-3 shrink-0" />
+                    Base fee must be at least {innerPerOpFee} stroops/op (the inner transaction&apos;s own rate).
+                  </p>
+                )}
               </div>
             </TabsContent>
           </Tabs>
@@ -1951,13 +2108,11 @@ export default function PaymentsPage() {
       {/* Memo + Fee side-by-side — not shown for fee bump                 */}
       {/* ================================================================== */}
       {activeTab !== "feebump" && (
-        <div className="grid grid-cols-2 gap-4">
-          {/* Memo */}
-          <Card>
-            <CardHeader className="pb-2 pt-3 px-4">
-              <CardTitle className="text-sm font-medium">Memo</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-2 px-4 pb-4">
+        <Card>
+          <CardContent className="grid grid-cols-2 gap-4 px-4 py-3">
+            {/* Memo */}
+            <div className="space-y-2">
+              <Label className="text-sm">Memo</Label>
               <Select value={memoType} onValueChange={(v) => setMemoType(v as MemoType)}>
                 <SelectTrigger className="h-8 text-sm">
                   <SelectValue />
@@ -1981,16 +2136,11 @@ export default function PaymentsPage() {
                   onChange={(e) => setMemoValue(e.target.value)}
                 />
               )}
-            </CardContent>
-          </Card>
+            </div>
 
-          {/* Fee */}
-          <Card>
-            <CardHeader className="pb-2 pt-3 px-4">
-              <CardTitle className="text-sm font-medium">Fee</CardTitle>
-              <CardDescription className="text-xs">Stroops per operation</CardDescription>
-            </CardHeader>
-            <CardContent className="px-4 pb-4">
+            {/* Fee */}
+            <div className="space-y-2">
+              <Label htmlFor="fee" className="text-sm">Fee <span className="text-muted-foreground font-normal">(stroops/op)</span></Label>
               <Input
                 id="fee"
                 type="number"
@@ -2000,9 +2150,9 @@ export default function PaymentsPage() {
                 onChange={(e) => setFee(e.target.value)}
                 className="h-8 text-sm"
               />
-            </CardContent>
-          </Card>
-        </div>
+            </div>
+          </CardContent>
+        </Card>
       )}
 
       {/* ================================================================== */}
@@ -2235,7 +2385,7 @@ export default function PaymentsPage() {
                       <span className="text-muted-foreground">Amount:</span>
                       <span className="font-mono">{leg.amount} {assetLabel(leg.assetKey)}</span>
                       <span className="text-muted-foreground">To:</span>
-                      <span className="font-mono text-xs break-all">{leg.destination.trim()}</span>
+                      <ShortAddress address={leg.destination.trim()} network={network} />
                     </div>
                   </div>
                 ))}
@@ -2257,7 +2407,30 @@ export default function PaymentsPage() {
                 <span className="text-muted-foreground">Mode:</span>
                 <span>{pathMode === "strict-receive" ? "Strict Receive" : "Strict Send"}</span>
                 <span className="text-muted-foreground">Destination:</span>
-                <span className="font-mono text-xs break-all">{pathDest.trim()}</span>
+                <ShortAddress address={pathDest.trim()} network={network} />
+                {selectedPathIndex !== null && paths[selectedPathIndex] && (() => {
+                  const sp = paths[selectedPathIndex];
+                  return (
+                    <>
+                      <span className="text-muted-foreground">Route:</span>
+                      <span className="font-mono text-xs">
+                        {sp.path.length > 0 ? `via ${sp.path.map((hop) => assetLabel(hop.asset_type, hop.asset_code)).join(" → ")}` : "Direct (no intermediary hops)"}
+                      </span>
+                      <span className="text-muted-foreground">Quoted:</span>
+                      <span className="font-mono text-xs">
+                        {sp.sourceAmount} {assetLabel(sp.sourceAssetType, sp.sourceAssetCode)} → {sp.destinationAmount} {assetLabel(sp.destinationAssetType, sp.destinationAssetCode)}
+                      </span>
+                      {pathsFetchedAt !== null && Date.now() - pathsFetchedAt > 60000 && (
+                        <div className="col-span-2">
+                          <p className="text-xs text-amber-500 flex items-center gap-1">
+                            <AlertTriangle className="h-3 w-3 shrink-0" />
+                            Quote is over a minute old — the order book may have moved. Consider closing this dialog and re-running Find Paths.
+                          </p>
+                        </div>
+                      )}
+                    </>
+                  );
+                })()}
                 {pathMode === "strict-receive" ? (
                   <>
                     <span className="text-muted-foreground">Receive exactly:</span>
@@ -2300,8 +2473,9 @@ export default function PaymentsPage() {
                 </div>
                 <div className="space-y-1">
                   {claimants.map((c, i) => (
-                    <div key={c.id} className="text-xs font-mono text-muted-foreground break-all">
-                      {i + 1}. {c.destination.trim()}
+                    <div key={c.id} className="flex items-center gap-1 text-xs text-muted-foreground">
+                      <span>{i + 1}.</span>
+                      <ShortAddress address={c.destination.trim()} network={network} />
                     </div>
                   ))}
                 </div>
@@ -2327,7 +2501,7 @@ export default function PaymentsPage() {
             <Button variant="outline" onClick={() => setConfirmOpen(false)}>
               Cancel
             </Button>
-            <Button onClick={handleSubmit}>Confirm & Submit</Button>
+            <Button onClick={handleSubmit} disabled={isSubmitting}>Confirm & Submit</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
