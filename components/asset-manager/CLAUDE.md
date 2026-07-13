@@ -1,0 +1,13 @@
+## Asset Manager
+- Route: `app/(tools)/asset-manager/page.tsx`
+- Panel: `components/asset-manager/AssetManagerPanel.tsx`
+- Tabs: `FlagsTab.tsx`, `HoldersTab.tsx`, `TradesTab.tsx` (699L — place/batch/cancel sell+buy offers for the distributor; submits real signed transactions, was previously undocumented here — needs explicit user sign-off like any other money-moving tab)
+- Lib: `lib/asset-manager/index.ts`
+- **Shared state**: `assetCode`, `issuer`, `secretKey` are owned by `AssetManagerPanel` and passed as props to all tabs — entered once, persisted while switching tabs, cleared by the X button (shown when `isReady`)
+- **`isReady`** = `assetCode.trim().length > 0 && StrKey.isValidEd25519PublicKey(issuer.trim())` — tabs only render when ready
+- **Group picker**: loads `assetCode + issuer` from any saved asset group; shown when `groups.length > 0`
+- **Wallet**: shows green wallet indicator when `activeWallet` is set; `secretKey = activeWallet?.secretKey ?? manualSecretKey.trim()`
+- **FlagsTab** — `{ issuer, secretKey }` props; Load/Reload flags, toggle AUTH_REQUIRED / AUTH_REVOCABLE / AUTH_CLAWBACK_ENABLED / AUTH_IMMUTABLE with single TX each
+- **HoldersTab** — `{ assetCode, issuer, secretKey }` props; runs `fetchTrustlineHolders` + `fetchSellOffers` concurrently via `Promise.allSettled`; merges into unified `HolderRow`; filter pills (All / Sellers / Frozen); action buttons (🔓 Unfreeze / – Restrict / 🔒 Freeze); amber highlight on rows with sell offers; Export CSV
+- `TrustlineAction`: `"authorize" | "freeze" | "maintain_only"` — maps to `set_trust_line_flags` flags
+- `AUTH_FLAGS`: REQUIRED=1, REVOCABLE=2, IMMUTABLE=4, CLAWBACK_ENABLED=8

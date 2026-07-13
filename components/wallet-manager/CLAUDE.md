@@ -1,0 +1,14 @@
+## Wallet Manager
+- Hooks: `hooks/use-wallet-folders.ts`, `hooks/use-wallets-v2.ts`, `hooks/use-active-wallet.ts`
+- Panel: `components/wallet-manager/WalletManagerPanel.tsx`
+- Wallets organised in folders (2-panel layout: folder list left, wallet list right)
+- `WalletEntry`: `{ id, folderId, name, publicKey, secretKey, position }` — stored in SQLite DB via `/api/db/wallets-v2`
+- `WalletFolder`: stored via `/api/db/wallet-folders`
+- Active wallet: `useActiveWallet()` — module-level singleton, persisted in DB via `/api/db/app-state` key `active_wallet_id`; also mirrored to localStorage for instant restore on mount
+- **Cross-tab sync**: `useActiveWallet` listens to `storage` events so connect/disconnect in one tab reflects in all other open tabs
+- **Header wallet button**: always visible in header — dashed "Connect Wallet" when disconnected, green pill with name+address when connected; dropdown lists all wallets for switching + disconnect action
+- **Bulk Payments + Ghost Payments**: when `activeWallet` is set, secret key input is replaced by a green wallet indicator; `effectiveSecretKey = activeWallet?.secretKey ?? secretKey`
+- **Folder delete cascade**: `deleteFolder` optimistically purges wallets from cache via `purgeWalletsByFolder()` from `use-wallets-v2`; API route also manually deletes wallets before folder (SQLite FK constraint can't be added via ALTER TABLE)
+- **Wallet data IS in SQLite DB** (not localStorage) — this is a local single-user tool; secret keys stored server-side in `stellar-toolkit.db`; do not add cloud sync or multi-user access without security review
+- Old `/api/db/wallets` route removed — only `wallets-v2` is active; `hooks/use-wallets.ts` is a re-export shim (still referenced by `app/page.tsx`)
+- `shortAddr()` canonical location: `lib/format.ts` — import from there, do not define inline in components

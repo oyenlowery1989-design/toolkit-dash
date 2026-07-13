@@ -1,0 +1,13 @@
+## Trustline Manager
+- Route: `app/(tools)/trustline-manager/page.tsx`
+- Panel: `components/trustline-manager/TrustlineManagerPanel.tsx`
+- Tabs: `SingleTrustlineTab.tsx`, `BulkTrustlineTab.tsx`
+- Lib: `lib/trustline-manager/index.ts`
+- **Single tab**: add or remove one trustline at a time; drain-before-remove (sends balance to destination then removes); auto-populate drain destination from active wallet
+- **Bulk tab**: N assets × M accounts — progress grid; auto-delete toggle; drain option with destination; static warning note about offers
+- **Offer detection**: in remove mode, `fetchAccountOffersForAsset` checks both selling AND buying sides (debounced 900ms) — both block trustline removal with `op_line_full`
+- **Offer cancel**: amber panel shows offer table (ID, selling, buying, amount, price); manual "Cancel N offers" button + auto-cancel in `handleSubmit`
+- `cancelOffersBatch`: uses `manageSellOffer amount=0` with correct asset fields from `AccountOffer._rawSelling/_rawBuying`; batches 100 ops/tx
+- `drainAndRemoveTrustline`: custom assets send balance + `change_trust limit=0` in one tx; XLM uses `accountMerge`
+- `MAX_TRUST_LIMIT = "922337203685.4775807"`
+- **`AccountOffer` type**: `{ id, sellingLabel, buyingLabel, amount, price, _rawSelling, _rawBuying }` — raw fields: `{ type, code?, issuer? }` for reconstructing Asset objects

@@ -1,0 +1,11 @@
+## Soroban Contracts
+- Route: `app/(tools)/soroban/page.tsx`
+- Panel: `components/soroban/SorobanPanel.tsx`
+- Lib: `lib/soroban/sac.ts`
+- **Purpose**: Wrap an existing classic Stellar asset with a Stellar Asset Contract (SAC) — does NOT create a new asset
+- `computeSacAddress(assetCode, issuer, network)` — deterministic, no network call; uses `Asset.contractId(networkPassphrase)`
+- `checkSacDeployed(contractId, network, signal?)` — queries Soroban RPC `getLedgerEntries` for contract instance key
+- `deploySac(options)` — `invokeHostFunction` tx with `HostFunctionTypeCreateContract` + `contractIdPreimageFromAsset`; simulate → assemble → sign → submit → poll 30×2s
+- `SOROBAN_RPC_URLS` constants for public/testnet/futurenet; `resolveRpcUrl(network, localRpcUrl?)` helper
+- Contract ID shown instantly (deterministic); deploy button requires wallet or secret key
+- SAC vs classic: SAC has Soroban token interface (`balance`, `transfer`, `approve`) — but most wallets (Lobstr, Solar) still show the underlying classic asset balance, not the SAC balance; users transacting via DEX/Horizon see classic asset as usual

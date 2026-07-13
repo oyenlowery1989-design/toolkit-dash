@@ -1,0 +1,12 @@
+## Saved Analyses Module
+- Hook: `hooks/use-saved-analyses.ts` — DB-backed, stores `SavedAnalysis` (id, name, assetCode, issuer, distribAddresses, network, timestamp, result, notes?, tags?)
+- `result` is the full `AssetProceedsResult` — all XLM proceeds/sold/outgoing/onHand + topDestinations
+- **Auto-save**: Asset Sales' Bulk tab calls `saveAnalysis()` automatically on each row completion (no manual button needed); Single Asset tab still has manual "Save Analysis" button; Asset Lookup's Distribution Sales feature also auto-saves (added so all three proceeds-producing surfaces share one history)
+- `SavedAnalysesPanel` has two views toggled by header buttons:
+  - **Table view** (default): sortable by any column (asset, XLM proceeds, asset sold, outgoing, on hand, saved date); click header to sort asc/desc
+  - **Cards view**: expandable cards with tags, notes, re-run button, top destinations table
+- **Aggregate stats bar**: total XLM proceeds, total outgoing, unique assets, unique issuers, top earner — shown above the list
+- **Compare Snapshots** section (`components/saved-analyses/SnapshotCompare.tsx` + `lib/saved-analyses/diff.ts`): groups saved analyses by `assetCode:issuer:network`, shown only for assets with 2+ snapshots. Pick a baseline (older) and compare (newer) snapshot — renders field deltas (XLM proceeds/asset sold/outgoing/on-hand, before → after with signed delta) plus a destinations-diff table (`new`/`increased`/`decreased`/`dropped` per address, sorted by `|delta|` desc). "dropped" means the address fell out of the top-50 `topDestinations` cap, not proven-empty — this is stated in the UI. Collapsed by default, next to Cross-Asset Destinations
+- **Cross-Asset Destinations** section: aggregates `topDestinations` across ALL filtered analyses, highlights addresses that appear in multiple assets with a yellow "shared" badge — reveals shared banks/exchanges across projects; collapsed by default
+- DB endpoint: `/api/db/saved-analyses`; max 50 entries (oldest dropped on insert)
+- `window focus` sync not added to saved-analyses (only asset-groups has it) — may be needed if cross-tab save is required
