@@ -3,6 +3,7 @@ import { resolveAddress } from "@/lib/address-resolver";
 import type { AddressBookEntry } from "@/hooks/use-address-book";
 import type { KnownIntermediary, KnownCreator } from "@/lib/intermediary-tracer/types";
 import type { AssetGroup, GroupMember } from "@/lib/asset-groups/types";
+import type { Person } from "@/lib/persons/types";
 
 const ADDR_A = "GAMMBVZRMZE33O46HKLXOTOV5GOL5Y5RRC4SCMR53SSNQJXLJ6LNVCNJ";
 const ADDR_B = "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5";
@@ -21,6 +22,17 @@ function makeIntermediary(address: string, name: string): KnownIntermediary {
 
 function makeCreator(address: string, name: string): KnownCreator {
   return { address, name, addedAt: 1000 };
+}
+
+function makePerson(address: string, name: string): Person {
+  return {
+    id: "per1",
+    name,
+    addresses: [{ id: "pa1", personId: "per1", address, addedAt: 1000 }],
+    relationships: [],
+    createdAt: 1000,
+    updatedAt: 1000,
+  };
 }
 
 function makeGroup(address: string, role: GroupMember["role"], label?: string): AssetGroup {
@@ -102,14 +114,18 @@ describe("resolveAddress", () => {
     expect(result.name).toBe("Known Exchange");
   });
 
-  it("priority: intermediary > creator > group > book", () => {
-    // ADDR_A in all four sources
+  it("priority: person > intermediary > creator > group > book", () => {
+    // ADDR_A in all five sources
     const book = [makeBookEntry(ADDR_A, "Book")];
     const groups = [makeGroup(ADDR_A, "distributor", "GroupMember")];
     const creators = [makeCreator(ADDR_A, "Creator")];
     const intermediaries = [makeIntermediary(ADDR_A, "Intermediary")];
+    const persons = [makePerson(ADDR_A, "A Person")];
 
-    // intermediary beats all
+    // person beats all
+    expect(resolveAddress(ADDR_A, book, intermediaries, creators, groups, persons).source).toBe("person");
+
+    // without person, intermediary wins
     expect(resolveAddress(ADDR_A, book, intermediaries, creators, groups).source).toBe("intermediary");
 
     // without intermediary, creator wins
@@ -120,6 +136,16 @@ describe("resolveAddress", () => {
 
     // only book
     expect(resolveAddress(ADDR_A, book, [], [], []).source).toBe("book");
+  });
+
+  it('returns source: "person" with badge "PERSON" and pink badgeClass', () => {
+    const book = [makeBookEntry(ADDR_A, "Book Label")];
+    const persons = [makePerson(ADDR_A, "Elon Musk")];
+    const result = resolveAddress(ADDR_A, book, [], [], [], persons);
+    expect(result.source).toBe("person");
+    expect(result.badge).toBe("PERSON");
+    expect(result.badgeClass).toContain("pink");
+    expect(result.name).toBe("Elon Musk");
   });
 
   it("does not match a different address", () => {

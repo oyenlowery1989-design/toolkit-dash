@@ -7,6 +7,7 @@ import { useAddressBook, ADDRESS_COLORS } from "@/hooks/use-address-book";
 import { useKnownIntermediaries } from "@/hooks/use-known-intermediaries";
 import { useKnownCreators } from "@/hooks/use-known-creators";
 import { useAssetGroups } from "@/hooks/use-asset-groups";
+import { usePersons } from "@/hooks/use-persons";
 import { resolveAddress } from "@/lib/address-resolver";
 
 // Role styles for explicit role prop (issuer / distrib passed from parent)
@@ -39,11 +40,12 @@ interface ShortAddressProps {
 
 /**
  * Renders a Stellar address resolved from all known sources:
- *   1. Address Book (user label)
+ *   1. Persons → PERSON badge (named human/entity owns this address)
  *   2. Known Intermediaries → INTERMEDIARY badge
  *   3. Known Creators → CREATOR badge
  *   4. Asset Group members → GROUP / role badge
- *   5. Raw truncated address
+ *   5. Address Book (user label)
+ *   6. Raw truncated address
  */
 export function ShortAddress({
   address,
@@ -61,8 +63,9 @@ export function ShortAddress({
   const { entries: intermediaries } = useKnownIntermediaries();
   const { entries: creators } = useKnownCreators();
   const { groups } = useAssetGroups();
+  const { persons } = usePersons();
 
-  const resolved = resolveAddress(address, bookEntries, intermediaries, creators, groups);
+  const resolved = resolveAddress(address, bookEntries, intermediaries, creators, groups, persons);
 
   // Address book entry for color
   const bookEntry = bookEntries.find((e) => e.publicKey === address);
