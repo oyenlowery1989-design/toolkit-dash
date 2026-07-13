@@ -6,6 +6,8 @@
 
 import type { ScheduledTask } from "node-cron";
 import type { AutoSendGroup } from "./types";
+import { rowToGroup } from "./db-map";
+import { getSupabase, isSupabaseOnly } from "@/lib/supabase-server";
 
 declare global {
   var _autoSendTasks: Map<string, ScheduledTask> | undefined;
@@ -18,13 +20,17 @@ declare global {
 if (!global._autoSendRunningGroups) global._autoSendRunningGroups = new Set<string>();
 const _runningGroups = global._autoSendRunningGroups;
 
+/** A loaded group, tagged with the Supabase user_id that owns it (Supabase mode only —
+ *  used so last_failure_at write-back can be scoped to the right user). */
+type ScheduledGroup = AutoSendGroup & { userId?: string };
+
 function getDb() {
   // Lazy import to avoid issues in non-Node contexts
   const { getDb: _getDb } = require("@/lib/db");
   return _getDb();
 }
 
-function loadEnabledGroups(): AutoSendGroup[] {
+function loadEnabledGroupsFromSqlite(): ScheduledGroup[] {
   try {
     const db = getDb();
     const groups = db
@@ -37,39 +43,71 @@ function loadEnabledGroups(): AutoSendGroup[] {
       const dests = db
         .prepare(`SELECT * FROM auto_send_destinations WHERE group_id = ? ORDER BY position ASC`)
         .all(g.id) as Record<string, unknown>[];
-      return {
-        id: g.id as string,
-        name: g.name as string,
-        network: (g.network as string) ?? "public",
-        secretKey: (g.secret_key as string) ?? "",
-        intervalMinutes: g.interval_minutes as number,
-        enabled: true,
-        batchSend: (g.batch_send as number) === 1,
-        batchMemo: (g.batch_memo as string) ?? undefined,
-        minReserve: (g.min_reserve as number) ?? 10.0,
-        minSenderThreshold: (g.min_sender_threshold as number) ?? 0,
-        previewOnly: (g.preview_only as number) === 1,
-        lastFailureAt: (g.last_failure_at as number) ?? undefined,
-        createdAt: g.created_at as number,
-        destinations: dests.map((d) => ({
-          id: d.id as string,
-          groupId: d.group_id as string,
-          destination: d.destination as string,
-          percentage: d.percentage as number,
-          isRemainder: (d.is_remainder as number) === 1,
-          paused: (d.is_paused as number) === 1,
-          label: (d.label as string) ?? undefined,
-          memo: (d.memo as string) ?? undefined,
-          minThreshold: (d.min_threshold as number) ?? 0,
-          maxCap: (d.max_cap as number) ?? 0,
-          position: d.position as number,
-        })),
-      };
+      return rowToGroup(g, dests);
     });
   } catch (err) {
     console.error("[auto-send] Failed to load groups from DB:", err);
     return [];
   }
+}
+
+/** Self-hosted (non-Vercel) deployments explicitly configured with DB_PROVIDER=supabase must
+ *  read from Supabase here too — otherwise the scheduler process keeps reading stale/absent
+ *  local SQLite while the UI's API routes correctly write to Supabase, so enabling/disabling/
+ *  deleting a group through the UI has zero effect on what the running scheduler executes.
+ *  Uses the service-role client (bypasses RLS) since the scheduler runs across all users. */
+async function loadEnabledGroupsFromSupabase(): Promise<ScheduledGroup[]> {
+  const sb = getSupabase();
+  if (!sb) return [];
+
+  const { data: groups, error } = await sb
+    .from("auto_send_groups")
+    .select("*")
+    .eq("enabled", true)
+    .not("interval_minutes", "is", null)
+    .order("created_at", { ascending: true });
+
+  if (error || !groups) {
+    console.error("[auto-send] Failed to load groups from Supabase:", error);
+    return [];
+  }
+
+  const result: ScheduledGroup[] = [];
+  for (const g of groups as Record<string, unknown>[]) {
+    const { data: dests } = await sb
+      .from("auto_send_destinations")
+      .select("*")
+      .eq("group_id", g.id)
+      .order("position", { ascending: true });
+    result.push({ ...rowToGroup(g, dests ?? []), userId: (g.user_id as string | undefined) || undefined });
+  }
+  return result;
+}
+
+async function loadEnabledGroups(): Promise<ScheduledGroup[]> {
+  if (isSupabaseOnly()) return loadEnabledGroupsFromSupabase();
+  return loadEnabledGroupsFromSqlite();
+}
+
+/** Dual-mode write-back for the group's failure-alert timestamp — scheduler.ts is the only
+ *  caller (the manual-run route has no equivalent write). Pass `null` to clear it. */
+async function setGroupLastFailure(groupId: string, userId: string | undefined, timestamp: number | null): Promise<void> {
+  if (isSupabaseOnly()) {
+    const sb = getSupabase();
+    if (!sb) return;
+    try {
+      const query = sb.from("auto_send_groups").update({ last_failure_at: timestamp }).eq("id", groupId);
+      const { error } = await (userId ? query.eq("user_id", userId) : query);
+      if (error) console.error("[auto-send] last_failure_at Supabase update failed:", error);
+    } catch (err) {
+      console.error("[auto-send] last_failure_at Supabase update threw:", err);
+    }
+    return;
+  }
+  try {
+    const db = getDb();
+    db.prepare("UPDATE auto_send_groups SET last_failure_at = ? WHERE id = ?").run(timestamp, groupId);
+  } catch { /* non-fatal */ }
 }
 
 function minutesToCronExpression(minutes: number): string {
@@ -88,10 +126,10 @@ export function startScheduler(): void {
   global._autoSendTasks = new Map();
 
   console.log("[auto-send] Scheduler starting...");
-  scheduleAll();
+  scheduleAll().catch((err) => console.error("[auto-send] scheduleAll failed:", err));
 }
 
-function scheduleAll(): void {
+async function scheduleAll(): Promise<void> {
   const cron = require("node-cron") as typeof import("node-cron");
   const tasks = global._autoSendTasks!;
 
@@ -99,7 +137,7 @@ function scheduleAll(): void {
   for (const task of tasks.values()) task.stop();
   tasks.clear();
 
-  const groups = loadEnabledGroups();
+  const groups = await loadEnabledGroups();
   for (const group of groups) {
     if (!group.intervalMinutes) continue;
     const expr = minutesToCronExpression(group.intervalMinutes);
@@ -113,7 +151,7 @@ function scheduleAll(): void {
       try {
         const { runGroup, previewGroup } = await import("./runner");
         // Reload group from DB to get latest config
-        const freshGroups = loadEnabledGroups();
+        const freshGroups = await loadEnabledGroups();
         const fresh = freshGroups.find((g) => g.id === group.id);
         if (fresh) {
           if (fresh.previewOnly) {
@@ -139,21 +177,17 @@ function scheduleAll(): void {
           } else {
             const result = await runGroup(fresh);
             // Track failure/success for alert banner
-            try {
-              const db = getDb();
-              const ranAt = Date.now();
-              const hasFailed = result.results.some((r) => r.status === "failed");
-              const nonSkipped = result.results.filter((r) => r.status !== "skipped");
-              // Require at least one real send — otherwise an all-skipped run (e.g. every
-              // destination below its threshold) vacuously satisfies .every() and would
-              // wrongly clear an existing failure banner.
-              const allSent = nonSkipped.length > 0 && nonSkipped.every((r) => r.status === "sent");
-              if (hasFailed) {
-                db.prepare("UPDATE auto_send_groups SET last_failure_at = ? WHERE id = ?").run(ranAt, fresh.id);
-              } else if (allSent) {
-                db.prepare("UPDATE auto_send_groups SET last_failure_at = NULL WHERE id = ?").run(fresh.id);
-              }
-            } catch { /* non-fatal */ }
+            const hasFailed = result.results.some((r) => r.status === "failed");
+            const nonSkipped = result.results.filter((r) => r.status !== "skipped");
+            // Require at least one real send — otherwise an all-skipped run (e.g. every
+            // destination below its threshold) vacuously satisfies .every() and would
+            // wrongly clear an existing failure banner.
+            const allSent = nonSkipped.length > 0 && nonSkipped.every((r) => r.status === "sent");
+            if (hasFailed) {
+              await setGroupLastFailure(fresh.id, fresh.userId, Date.now());
+            } else if (allSent) {
+              await setGroupLastFailure(fresh.id, fresh.userId, null);
+            }
           }
         }
       } catch (err) {
@@ -170,5 +204,5 @@ function scheduleAll(): void {
 /** Call after group changes to reload all schedules. */
 export function refreshScheduler(): void {
   if (!global._autoSendStarted) return;
-  scheduleAll();
+  scheduleAll().catch((err) => console.error("[auto-send] scheduleAll failed:", err));
 }

@@ -85,6 +85,12 @@ export function useTieredRewardConfigs() {
   const upsertTier = useCallback(
     (configId: string, tier: Omit<Tier, "id" | "configId" | "assets"> & { id?: string; assets?: RewardAsset[] }) => {
       const id = tier.id ?? crypto.randomUUID();
+      // Decide create-vs-update by actual cache membership, computed BEFORE the optimistic
+      // mutation below — not by whether the caller supplied an id. Tier import/replace
+      // pre-generates an id for a brand-new tier (so it can attach child assets immediately),
+      // and `tier.id ? "update" : "create"` would misfire "update" against a row that doesn't
+      // exist yet (silent no-op on SQLite, 404 on Supabase).
+      const exists = _cache.get().some((c) => c.id === configId && c.tiers.some((t) => t.id === id));
       const full: Tier = { ...tier, id, configId, assets: tier.assets ?? [] };
       _cache.set(
         _cache.get().map((c) => {
@@ -96,7 +102,9 @@ export function useTieredRewardConfigs() {
           return { ...c, tiers };
         })
       );
-      dbAction(tier.id ? "update" : "create", "tier", { id, configId, ...tier }).catch(handleActionError);
+      // Returned so callers that need to sequence tier-then-asset creation (e.g. tier
+      // import/replace) can await actual completion instead of firing unawaited in parallel.
+      return dbAction(exists ? "update" : "create", "tier", { id, configId, ...tier }).catch(handleActionError);
     },
     []
   );

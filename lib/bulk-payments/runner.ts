@@ -104,13 +104,24 @@ export async function runBulkPayments({
   }
 
   for (let i = 0; i < batches.length; i++) {
-    if (signal.aborted) break;
+    // Not yet started when abort fired — including every batch after one
+    // that was aborted mid-submission below (loop just keeps landing here).
+    if (signal.aborted) {
+      onBatchUpdate({
+        batchIndex: i,
+        count: batches[i].length,
+        status: "failed",
+        error: "Aborted — not submitted",
+      });
+      continue;
+    }
 
     const batch = batches[i];
 
     onBatchUpdate({ batchIndex: i, count: batch.length, status: "sending" });
 
     let precomputedHash: string | undefined;
+    let submitting = false;
     try {
       const tx = buildBatchTransaction(
         account,
@@ -127,8 +138,12 @@ export async function runBulkPayments({
       // failures does not always include the hash, so we capture it here.
       precomputedHash = Buffer.from(tx.hash()).toString("hex");
 
-      if (signal.aborted) break;
+      if (signal.aborted) {
+        onBatchUpdate({ batchIndex: i, count: batch.length, status: "failed", error: "Aborted — not submitted" });
+        continue;
+      }
 
+      submitting = true;
       const response = await server.submitTransaction(tx);
 
       onBatchUpdate({
@@ -138,7 +153,19 @@ export async function runBulkPayments({
         txHash: response.hash,
       });
     } catch (err) {
-      if (signal.aborted) break;
+      if (signal.aborted) {
+        // If we were mid-submitTransaction when abort fired, the tx may
+        // have actually reached the ledger — don't claim it failed.
+        onBatchUpdate({
+          batchIndex: i,
+          count: batch.length,
+          status: "failed",
+          error: submitting
+            ? "Aborted during submission — verify on-chain before retrying (tx may have succeeded)"
+            : "Aborted — not submitted",
+        });
+        continue;
+      }
 
       const { error } = extractHorizonResult(err);
 

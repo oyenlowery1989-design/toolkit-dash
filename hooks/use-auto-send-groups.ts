@@ -30,15 +30,16 @@ export function useAutoSendGroups() {
   const groups = _cache.get();
 
   const createGroup = useCallback(
-    (entry: { id?: string; name: string; network: string; secretKey: string; intervalMinutes: number | null }) => {
+    (entry: { id?: string; name: string; network: string; secretKey: string; intervalMinutes: number | null; enabled?: boolean }) => {
       const id = entry.id ?? crypto.randomUUID();
+      const enabled = entry.enabled ?? true;
       const optimistic: AutoSendGroup = {
         id,
         name: entry.name,
         network: entry.network,
         secretKey: entry.secretKey,
         intervalMinutes: entry.intervalMinutes,
-        enabled: true,
+        enabled,
         batchSend: false,
         batchMemo: undefined,
         minReserve: 10.0,
@@ -48,7 +49,7 @@ export function useAutoSendGroups() {
         destinations: [],
       };
       _cache.set([optimistic, ..._cache.get()]);
-      dbPost(ENDPOINT, { type: "group", id, ...entry }).catch(() => _cache.reload(ENDPOINT));
+      const promise = dbPost(ENDPOINT, { type: "group", id, ...entry, enabled }).catch(() => _cache.reload(ENDPOINT));
       // Notify scheduler about new group if it has an interval
       if (entry.intervalMinutes) {
         waitForAuth().then(() => fetch("/api/auto-send/run", {
@@ -57,6 +58,7 @@ export function useAutoSendGroups() {
           body: JSON.stringify({ action: "refresh-scheduler" }),
         })).catch(() => {});
       }
+      return promise;
     },
     []
   );
@@ -110,7 +112,7 @@ export function useAutoSendGroups() {
       // Server may resolve a different (pre-existing) row id when upserting by
       // (groupId, destination) — reload so the cache picks up the authoritative id
       // instead of drifting from the client-generated one used above.
-      dbPost(ENDPOINT, { type: "destination", groupId, ...dest, id }).then(
+      return dbPost(ENDPOINT, { type: "destination", groupId, ...dest, id }).then(
         () => _cache.reload(ENDPOINT),
         () => _cache.reload(ENDPOINT),
       );

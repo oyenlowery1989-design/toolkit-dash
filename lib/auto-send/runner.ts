@@ -9,6 +9,7 @@ import {
 import type { AutoSendGroup, DestinationRunResult, GroupRunResult, GroupPreview } from "./types";
 import { getDb } from "@/lib/db";
 import { withAccountLock } from "@/lib/stellar-submit";
+import { getErrorMessage } from "@/lib/stellar-helpers";
 const { Server } = Horizon;
 
 const HORIZON_URLS: Record<string, string> = {
@@ -27,23 +28,8 @@ const DEFAULT_MIN_RESERVE = 10.0;
 const FEE_BUDGET = 1.0; // flat 1 XLM safety buffer for fees
 
 export function extractError(err: unknown): string {
-  if (err && typeof err === "object") {
-    const e = err as Record<string, unknown>;
-    // Stellar SDK 400 error — result_codes live in response.data.extras
-    const extras = (e.response as Record<string, unknown> | undefined)?.data as Record<string, unknown> | undefined;
-    if (extras?.extras) {
-      const rc = (extras.extras as Record<string, unknown>).result_codes as Record<string, unknown> | undefined;
-      if (rc) {
-        const tx = rc.transaction as string | undefined;
-        const ops = rc.operations as string[] | undefined;
-        const parts: string[] = [];
-        if (tx) parts.push(tx);
-        if (ops?.length) parts.push(`ops: ${ops.join(", ")}`);
-        if (parts.length) return parts.join(" | ");
-      }
-    }
-  }
-  return err instanceof Error ? err.message.slice(0, 200) : String(err).slice(0, 200);
+  const msg = getErrorMessage(err);
+  return (msg === "An unexpected error occurred." ? String(err) : msg).slice(0, 200);
 }
 
 async function loadNativeBalance(server: InstanceType<typeof Server>, address: string): Promise<number> {

@@ -19,7 +19,7 @@ interface Props {
   config: TieredRewardConfig;
   onUpdate: (id: string, updates: Partial<TieredRewardConfig>) => void;
   onDelete: (id: string) => void;
-  onUpsertTier: (configId: string, tier: Omit<Tier, "id" | "configId" | "assets"> & { id?: string }) => void;
+  onUpsertTier: (configId: string, tier: Omit<Tier, "id" | "configId" | "assets"> & { id?: string }) => Promise<void>;
   onDeleteTier: (configId: string, tierId: string) => Promise<void>;
   onUpsertAsset: (configId: string, tierId: string, asset: Omit<RewardAsset, "id" | "tierId"> & { id?: string }) => void;
   onDeleteAsset: (configId: string, tierId: string, assetId: string) => void;
@@ -268,24 +268,25 @@ export function TierConfigCard({ config, onUpdate, onDelete, onUpsertTier, onDel
     // creating the new tiers — otherwise the create request's overlap validation can race
     // against the still-in-flight deletes and see the old (soon-to-be-removed) ranges.
     await Promise.all(config.tiers.map((tier) => onDeleteTier(config.id, tier.id)));
-    // Insert new tiers with pre-generated IDs so we can attach assets immediately
-    importPreview.forEach((t, idx) => {
+    // Insert new tiers with pre-generated IDs so we can attach assets immediately — await each
+    // tier's creation before creating its child assets, eliminating the tier-vs-asset race.
+    for (const [idx, t] of importPreview.entries()) {
       const tierId = crypto.randomUUID();
-      onUpsertTier(config.id, {
+      await onUpsertTier(config.id, {
         id: tierId,
         tierNumber: idx + 1,
         minTokens: t.minTokens,
         maxTokens: t.maxTokens,
         position: idx,
       });
-      t.assets.forEach((a) => {
+      for (const a of t.assets) {
         onUpsertAsset(config.id, tierId, {
           assetCode: a.assetCode,
           assetIssuer: a.assetIssuer,
           amount: a.amount,
         });
-      });
-    });
+      }
+    }
     setImportOpen(false);
     setImportText("");
     setImportPreview(null);

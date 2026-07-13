@@ -189,6 +189,18 @@ export async function POST(req: NextRequest) {
             min_tokens: data.minTokens, max_tokens: data.maxTokens ?? null, position: data.position,
           });
         } else if (action === "update") {
+          const { data: otherTiers } = await sb
+            .from("tiered_reward_tiers")
+            .select("min_tokens, max_tokens")
+            .eq("config_id", tierConfigId)
+            .neq("id", data.id);
+          const allTiers = [
+            ...(otherTiers ?? []).map((t: Row) => ({ minTokens: t.min_tokens as number, maxTokens: t.max_tokens as number | null })),
+            { minTokens: data.minTokens as number, maxTokens: (data.maxTokens as number | null) ?? null },
+          ];
+          const overlapErr = validateNoOverlap(allTiers);
+          if (overlapErr) return NextResponse.json({ error: overlapErr }, { status: 400 });
+
           await sb.from("tiered_reward_tiers").update({
             tier_number: data.tierNumber, min_tokens: data.minTokens,
             max_tokens: data.maxTokens ?? null, position: data.position,
@@ -299,6 +311,17 @@ export async function POST(req: NextRequest) {
           `INSERT INTO tiered_reward_tiers (id, config_id, tier_number, min_tokens, max_tokens, position) VALUES (?, ?, ?, ?, ?, ?)`
         ).run(data.id, data.configId, data.tierNumber, data.minTokens, data.maxTokens ?? null, data.position);
       } else if (action === "update") {
+        const tierRow = db.prepare("SELECT config_id FROM tiered_reward_tiers WHERE id = ?").get(data.id) as { config_id: string } | undefined;
+        if (tierRow) {
+          const existing = db.prepare("SELECT min_tokens, max_tokens FROM tiered_reward_tiers WHERE config_id = ? AND id != ?").all(tierRow.config_id, data.id) as Array<{ min_tokens: number; max_tokens: number | null }>;
+          const allTiers = [
+            ...existing.map((t) => ({ minTokens: t.min_tokens, maxTokens: t.max_tokens })),
+            { minTokens: data.minTokens as number, maxTokens: (data.maxTokens as number | null) ?? null },
+          ];
+          const overlapErr = validateNoOverlap(allTiers);
+          if (overlapErr) return NextResponse.json({ error: overlapErr }, { status: 400 });
+        }
+
         db.prepare(
           `UPDATE tiered_reward_tiers SET tier_number=?, min_tokens=?, max_tokens=?, position=? WHERE id=?`
         ).run(data.tierNumber, data.minTokens, data.maxTokens ?? null, data.position, data.id);

@@ -5,7 +5,7 @@
  */
 
 import type { ScheduledTask } from "node-cron";
-import type { TieredRewardConfig } from "./types";
+import type { TieredRewardConfig, RunLogRow } from "./types";
 import { getSupabase, isSupabaseOnly } from "@/lib/supabase-server";
 
 declare global {
@@ -136,6 +136,30 @@ function minutesToCronExpression(minutes: number): string {
   return `0 */${Math.max(1, hours)} * * *`;
 }
 
+/**
+ * Sets/clears last_failure_at for a config. Must be Supabase-aware like runner.ts's
+ * last_run_at write — otherwise on Vercel+Supabase this unconditional getDb() call would
+ * silently no-op and the UI's failure banner would never reflect real scheduled-run outcomes.
+ */
+async function setConfigLastFailure(configId: string, userId: string | undefined, timestamp: number | null): Promise<void> {
+  if (isSupabaseOnly()) {
+    const sb = getSupabase();
+    if (!sb) return;
+    try {
+      const query = sb.from("tiered_reward_configs").update({ last_failure_at: timestamp }).eq("id", configId);
+      const { error } = await (userId ? query.eq("user_id", userId) : query);
+      if (error) console.error("[tiered-rewards] last_failure_at Supabase update failed:", error);
+    } catch (err) {
+      console.error("[tiered-rewards] last_failure_at Supabase update threw:", err);
+    }
+    return;
+  }
+  try {
+    const db = getDb();
+    db.prepare("UPDATE tiered_reward_configs SET last_failure_at = ? WHERE id = ?").run(timestamp, configId);
+  } catch { /* non-fatal */ }
+}
+
 export function startTieredRewardsScheduler(): void {
   if (process.env.VERCEL) return;
   if (global._tieredRewardsStarted) return;
@@ -169,7 +193,7 @@ async function scheduleAll(): Promise<void> {
       console.log(`[tiered-rewards] Running config "${config.name}" (${config.id})`);
       try {
         const { calculatePreview } = await import("./calculator");
-        const { runConfig } = await import("./runner");
+        const { runConfig, insertLogRows } = await import("./runner");
 
         // Reload config from DB to get latest
         const freshConfigs = await loadEnabledConfigs();
@@ -179,67 +203,48 @@ async function scheduleAll(): Promise<void> {
         const preview = await calculatePreview(fresh);
         if ("error" in preview) {
           console.error(`[tiered-rewards] Preview failed for "${fresh.name}":`, preview.error);
-          try {
-            const db = getDb();
-            db.prepare("UPDATE tiered_reward_configs SET last_failure_at = ? WHERE id = ?").run(Date.now(), fresh.id);
-          } catch { /* non-fatal */ }
+          await setConfigLastFailure(fresh.id, fresh.userId, Date.now());
           return;
         }
 
         if (preview.blocked) {
           console.warn(`[tiered-rewards] Config "${fresh.name}" blocked:`, preview.blockReasons.join("; "));
-          try {
-            const db = getDb();
-            db.prepare("UPDATE tiered_reward_configs SET last_failure_at = ? WHERE id = ?").run(Date.now(), fresh.id);
-          } catch { /* non-fatal */ }
+          await setConfigLastFailure(fresh.id, fresh.userId, Date.now());
           return;
         }
 
         if (fresh.previewOnly) {
           // Log preview rows instead of running
           const ranAt = Date.now();
-          try {
-            const db = getDb();
-            const stmt = db.prepare(
-              `INSERT INTO tiered_reward_run_log
-               (id, config_id, tier_number, holder_address, asset_code, asset_issuer, amount_sent, status, ran_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-            );
-            const insertMany = db.transaction(() => {
-              for (const assignment of preview.assignments) {
-                for (const holder of assignment.holders) {
-                  for (const asset of assignment.tier.assets) {
-                    stmt.run(
-                      crypto.randomUUID(), fresh.id, assignment.tier.tierNumber,
-                      holder.address, asset.assetCode, asset.assetIssuer ?? null,
-                      asset.amount, "preview", ranAt
-                    );
-                  }
-                }
+          const rows: Omit<RunLogRow, "id">[] = [];
+          for (const assignment of preview.assignments) {
+            for (const holder of assignment.holders) {
+              for (const asset of assignment.tier.assets) {
+                rows.push({
+                  configId: fresh.id,
+                  tierNumber: assignment.tier.tierNumber,
+                  holderAddress: holder.address,
+                  assetCode: asset.assetCode,
+                  assetIssuer: asset.assetIssuer,
+                  amountSent: asset.amount,
+                  status: "preview",
+                  ranAt,
+                });
               }
-            });
-            insertMany();
-          } catch { /* non-fatal */ }
+            }
+          }
+          await insertLogRows(rows, fresh.userId);
           return;
         }
 
         const result = await runConfig(fresh, preview.assignments, fresh.userId);
         if ("error" in result) {
           console.error(`[tiered-rewards] Run failed for "${fresh.name}":`, result.error);
-          try {
-            const db = getDb();
-            db.prepare("UPDATE tiered_reward_configs SET last_failure_at = ? WHERE id = ?").run(Date.now(), fresh.id);
-          } catch { /* non-fatal */ }
+          await setConfigLastFailure(fresh.id, fresh.userId, Date.now());
         } else if (result.totalFailed > 0) {
-          try {
-            const db = getDb();
-            db.prepare("UPDATE tiered_reward_configs SET last_failure_at = ? WHERE id = ?").run(Date.now(), fresh.id);
-          } catch { /* non-fatal */ }
+          await setConfigLastFailure(fresh.id, fresh.userId, Date.now());
         } else {
-          try {
-            const db = getDb();
-            db.prepare("UPDATE tiered_reward_configs SET last_failure_at = NULL WHERE id = ?").run(fresh.id);
-          } catch { /* non-fatal */ }
+          await setConfigLastFailure(fresh.id, fresh.userId, null);
         }
       } catch (err) {
         console.error(`[tiered-rewards] Config "${config.name}" run failed:`, err);

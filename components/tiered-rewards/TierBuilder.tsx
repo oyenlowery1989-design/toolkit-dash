@@ -65,10 +65,14 @@ export function TierBuilder({ tiers, onUpsertTier, onDeleteTier, onUpsertAsset, 
       setAddError("Max must be greater than min (or leave empty for open-ended top tier)");
       return;
     }
-    const candidate: Tier = { id: "candidate", configId: "", tierNumber: sorted.length + 1, minTokens: min, maxTokens: max, position: sorted.length, assets: [] };
+    // Use max existing values, not count — deleting a non-last tier (e.g. tier 2 of [1,2,3])
+    // then adding a new one must not collide with a surviving tier's tierNumber/position.
+    const nextNumber = (sorted.length ? Math.max(...sorted.map((t) => t.tierNumber)) : 0) + 1;
+    const nextPosition = (sorted.length ? Math.max(...sorted.map((t) => t.position)) : -1) + 1;
+    const candidate: Tier = { id: "candidate", configId: "", tierNumber: nextNumber, minTokens: min, maxTokens: max, position: nextPosition, assets: [] };
     const overlap = detectOverlap([...tiers, candidate], "candidate");
     if (overlap) { setAddError(overlap); return; }
-    onUpsertTier({ tierNumber: sorted.length + 1, minTokens: min, maxTokens: max, position: sorted.length });
+    onUpsertTier({ tierNumber: nextNumber, minTokens: min, maxTokens: max, position: nextPosition });
     setNewMin(""); setNewMax(""); setAddError(null);
   }
 

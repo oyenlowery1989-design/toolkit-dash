@@ -104,7 +104,8 @@ function parseAssetPairs(
   return results;
 }
 
-function explorerTxUrl(network: Network, hash: string): string {
+function explorerTxUrl(network: Network, hash: string): string | null {
+  if (network !== "public" && network !== "testnet") return null;
   const base =
     network === "public"
       ? "https://stellar.expert/explorer/public/tx"
@@ -123,6 +124,7 @@ function BatchRow({
   result: BatchResult;
   network: Network;
 }) {
+  const txUrl = result.txHash ? explorerTxUrl(network, result.txHash) : null;
   return (
     <tr className="border-b last:border-0 text-xs">
       <td className="px-3 py-2 tabular-nums text-muted-foreground">
@@ -151,15 +153,19 @@ function BatchRow({
       </td>
       <td className="px-3 py-2">
         {result.txHash ? (
-          <a
-            href={explorerTxUrl(network, result.txHash)}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center gap-1 text-primary hover:underline font-mono"
-          >
-            {result.txHash.slice(0, 10)}…
-            <ExternalLink className="h-3 w-3" />
-          </a>
+          txUrl ? (
+            <a
+              href={txUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 text-primary hover:underline font-mono"
+            >
+              {result.txHash.slice(0, 10)}…
+              <ExternalLink className="h-3 w-3" />
+            </a>
+          ) : (
+            <span className="font-mono">{result.txHash.slice(0, 10)}…</span>
+          )
         ) : result.error ? (
           <span className="text-destructive" title={result.error}>
             {result.error.length > 60
@@ -237,6 +243,8 @@ export function BulkPaymentsPanel() {
   // Balance preflight
   const [balanceXlm, setBalanceXlm] = useState<number | null>(null);
   const [balanceLoading, setBalanceLoading] = useState(false);
+  const [hasAssetTrustline, setHasAssetTrustline] = useState(true);
+  const [assetBalance, setAssetBalance] = useState<number | null>(null);
 
   const abortRef = useRef<AbortController | null>(null);
 
@@ -263,7 +271,13 @@ export function BulkPaymentsPanel() {
 
   const handleSaveList = useCallback(() => {
     const addresses =
-      sourceTab === "manual" ? parseValidAddresses(manualText) : recipients.length > 0 ? recipients : [];
+      sourceTab === "manual"
+        ? parseValidAddresses(manualText)
+        : sourceTab === "group"
+          ? (deriveGroupAddresses() ?? [])
+          : recipients.length > 0
+            ? recipients
+            : [];
     if (addresses.length === 0) {
       setError("Nothing to save — add addresses first.");
       return;
@@ -272,7 +286,7 @@ export function BulkPaymentsPanel() {
     const assets = sourceTab === "assets" && assetsText.trim() ? assetsText.trim() : undefined;
     saveList(name, network, addresses, assets);
     setSaveName("");
-  }, [saveName, sourceTab, manualText, assetsText, recipients, network, saveList]);
+  }, [saveName, sourceTab, manualText, assetsText, recipients, network, saveList, deriveGroupAddresses]);
 
   const handleLoadList = useCallback(
     (id: string) => {
@@ -366,6 +380,17 @@ export function BulkPaymentsPanel() {
     } catch {
       return null;
     }
+  }
+
+  // Shared by handlePreview's group branch and handleSaveList, so "Save
+  // List" works right after picking a group without requiring Preview first.
+  function deriveGroupAddresses(): string[] | null {
+    const grp = groups.find((g) => g.id === selectedGroupId);
+    if (!grp || grp.members.length === 0) return null;
+    const senderPub = getSenderPublicKey();
+    const excludeSet = getExcludeSet();
+    if (senderPub) excludeSet.add(senderPub);
+    return grp.members.map((m) => m.address).filter((a) => !excludeSet.has(a));
   }
 
   // ---------------------------------------------------------------------------
@@ -464,17 +489,11 @@ export function BulkPaymentsPanel() {
         return;
       }
     } else if (sourceTab === "group") {
-      const grp = groups.find((g) => g.id === selectedGroupId);
-      if (!grp || grp.members.length === 0) {
+      const addrs = deriveGroupAddresses();
+      if (!addrs) {
         setError("Select a group with at least one member.");
         return;
       }
-      const senderPub = getSenderPublicKey();
-      const excludeSet = getExcludeSet();
-      if (senderPub) excludeSet.add(senderPub);
-      const addrs = grp.members
-        .map((m) => m.address)
-        .filter((a) => !excludeSet.has(a));
       setRecipients(addrs);
     } else {
       if (recipients.length === 0) {
@@ -499,9 +518,28 @@ export function BulkPaymentsPanel() {
         const account = await horizonServer.loadAccount(senderPub);
         const native = account.balances.find((b) => b.asset_type === "native");
         setBalanceXlm(native ? parseFloat(native.balance) : 0);
+
+        if (!isNative) {
+          const code = customAssetCode.trim();
+          const issuer = customAssetIssuer.trim();
+          const line = account.balances.find(
+            (b) =>
+              "asset_code" in b &&
+              "asset_issuer" in b &&
+              b.asset_code === code &&
+              b.asset_issuer === issuer,
+          );
+          setHasAssetTrustline(!!line);
+          setAssetBalance(line ? parseFloat(line.balance) : null);
+        } else {
+          setHasAssetTrustline(true);
+          setAssetBalance(null);
+        }
       }
     } catch {
       setBalanceXlm(null);
+      setHasAssetTrustline(true);
+      setAssetBalance(null);
     } finally {
       setBalanceLoading(false);
     }
@@ -615,15 +653,36 @@ export function BulkPaymentsPanel() {
     abortRef.current?.abort();
     abortRef.current = new AbortController();
 
-    // Mark failed batches as pending again
-    const resetResults = batchResults.map((r) =>
-      failedIndices.includes(r.batchIndex) ? { ...r, status: "pending" as const, error: undefined } : r,
-    );
+    const failedSet = new Set(failedIndices);
+
+    // Expand each failed batch into one row per recipient and retry with
+    // batchSize: 1 — so a single bad recipient inside an otherwise-good
+    // batch fails alone instead of poisoning the whole batch again. Rebuild
+    // `batches` in lockstep so a second retry (on whatever's still failed
+    // after this one) keeps batchIndex a valid array index into both.
+    const newBatches: string[][] = [];
+    const resetResults: BatchResult[] = [];
+    const pendingRowIndices: number[] = [];
+    const failedRecipients: string[] = [];
+
+    for (const r of batchResults) {
+      if (!failedSet.has(r.batchIndex)) {
+        newBatches.push(batches[r.batchIndex] ?? []);
+        resetResults.push({ ...r, batchIndex: newBatches.length - 1 });
+        continue;
+      }
+      for (const recipient of batches[r.batchIndex] ?? []) {
+        newBatches.push([recipient]);
+        resetResults.push({ batchIndex: newBatches.length - 1, count: 1, status: "pending" });
+        pendingRowIndices.push(newBatches.length - 1);
+        failedRecipients.push(recipient);
+      }
+    }
+
+    setBatches(newBatches);
     setBatchResults(resetResults);
     setPhase("sending");
     setError(null);
-
-    const failedRecipients = failedIndices.flatMap((i) => batches[i] ?? []);
 
     // Seed from the freshly-reset array (not the stale pre-retry closure) so
     // that if Abort fires before any onBatchUpdate callback runs, the retried
@@ -636,14 +695,14 @@ export function BulkPaymentsPanel() {
         secretKey: effectiveSecretKey.trim(),
         recipients: failedRecipients,
         memo: memo.trim(),
-        batchSize,
+        batchSize: 1,
         feeMultiplier,
         amount: amount.trim(),
         asset: getPaymentAsset(),
         signal: abortRef.current.signal,
         onBatchUpdate: (result) => {
-          // Map back to original batch indices
-          const originalIndex = failedIndices[result.batchIndex];
+          // Map the single-recipient sub-batch back to its expanded row
+          const originalIndex = pendingRowIndices[result.batchIndex];
           const mapped = { ...result, batchIndex: originalIndex };
           setBatchResults((prev) => {
             const next = [...prev];
@@ -669,9 +728,9 @@ export function BulkPaymentsPanel() {
     }
     setPhase("done");
 
-    // Scope the history entry + toast to only the batches that were actually
+    // Scope the history entry + toast to only the rows that were actually
     // retried this attempt — not the running totals across the whole send.
-    const retryResults = failedIndices.map((i) => finalResults[i]);
+    const retryResults = pendingRowIndices.map((i) => finalResults[i]);
     const successCount = retryResults.filter((r) => r.status === "success").reduce((s, r) => s + r.count, 0);
     const failedCount = retryResults.filter((r) => r.status === "failed").reduce((s, r) => s + r.count, 0);
     addRun({ network, memo: memo.trim(), recipientCount: failedRecipients.length, successCount, failedCount });
@@ -692,6 +751,8 @@ export function BulkPaymentsPanel() {
     setAssetSources([]);
     setFetchProgress(null);
     setBalanceXlm(null);
+    setHasAssetTrustline(true);
+    setAssetBalance(null);
     setError(null);
   }
 
@@ -823,6 +884,35 @@ export function BulkPaymentsPanel() {
                 </span>
               </div>
             )}
+            {!balanceLoading && !isNative && !hasAssetTrustline && (
+              <div className="rounded-md bg-destructive/10 border border-destructive/30 p-3 text-sm text-destructive flex items-start gap-2">
+                <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+                <span>
+                  Sender has no trustline for <strong>{customAssetCode.trim()}</strong> — every batch will fail.
+                </span>
+              </div>
+            )}
+            {!balanceLoading &&
+              !isNative &&
+              hasAssetTrustline &&
+              assetBalance !== null &&
+              assetBalance < recipients.length * parsedAmount && (
+                <div className="rounded-md bg-destructive/10 border border-destructive/30 p-3 text-sm text-destructive flex items-start gap-2">
+                  <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+                  <span>
+                    Sender holds{" "}
+                    <strong>
+                      {assetBalance.toLocaleString(undefined, { maximumFractionDigits: 4 })} {customAssetCode.trim()}
+                    </strong>
+                    , but sending requires{" "}
+                    <strong>
+                      {(recipients.length * parsedAmount).toLocaleString(undefined, { maximumFractionDigits: 4 })}{" "}
+                      {customAssetCode.trim()}
+                    </strong>
+                    .
+                  </span>
+                </div>
+              )}
             <div className="rounded-md bg-yellow-500/10 border border-yellow-500/30 p-3 text-sm text-yellow-700 dark:text-yellow-400 flex items-start gap-2">
               <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
               <span>

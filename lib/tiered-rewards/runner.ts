@@ -3,6 +3,7 @@ import type { TieredRewardConfig, TierAssignment, RunLogRow } from "./types";
 import { getDb } from "@/lib/db";
 import { withAccountLock, isBadSeq } from "@/lib/stellar-submit";
 import { getSupabase, isSupabaseOnly } from "@/lib/supabase-server";
+import { getErrorMessage } from "@/lib/stellar-helpers";
 
 const { Server } = Horizon;
 
@@ -37,24 +38,8 @@ const BATCH_SIZE = 100;
 export const FEE_BUDGET = 1.0; // must match calculator.ts
 
 function extractError(err: unknown): string {
-  if (err && typeof err === "object") {
-    const e = err as Record<string, unknown>;
-    const resp = e.response as Record<string, unknown> | undefined;
-    const data = resp?.data as Record<string, unknown> | undefined;
-    const extras = data?.extras as Record<string, unknown> | undefined;
-    if (extras) {
-      const rc = extras.result_codes as Record<string, unknown> | undefined;
-      if (rc) {
-        const tx = rc.transaction as string | undefined;
-        const ops = rc.operations as string[] | undefined;
-        const parts: string[] = [];
-        if (tx) parts.push(tx);
-        if (ops?.length) parts.push(`ops: ${ops.join(", ")}`);
-        if (parts.length) return parts.join(" | ");
-      }
-    }
-  }
-  return err instanceof Error ? err.message.slice(0, 200) : String(err).slice(0, 200);
+  const msg = getErrorMessage(err);
+  return (msg === "An unexpected error occurred." ? String(err) : msg).slice(0, 200);
 }
 
 function getOpResultCodes(err: unknown): string[] | null {
@@ -102,7 +87,7 @@ async function sendSingleOp(
  * double-paying) a run they mistakenly believe failed. `userId` attributes the rows for
  * the Supabase `tiered_reward_run_log.user_id` column (NOT NULL DEFAULT '').
  */
-async function insertLogRows(rows: Omit<RunLogRow, "id">[], userId?: string): Promise<void> {
+export async function insertLogRows(rows: Omit<RunLogRow, "id">[], userId?: string): Promise<void> {
   if (rows.length === 0) return;
 
   if (isSupabaseOnly()) {
@@ -292,13 +277,28 @@ async function runTier(
 
       if (hasNoTrust) {
         // Retry each op individually — skip no_trust recipients, continue the rest
-        for (const op of batch) {
+        for (let oi = 0; oi < batch.length; oi++) {
+          const op = batch[oi];
           const result = await sendSingleOp(server, keypair, networkPassphrase, op, baseFee, memo);
           if (result.skipped) {
             await insertLogRows([{ configId, tierNumber: tier.tierNumber, holderAddress: op.holder, assetCode: op.assetCode, assetIssuer: op.assetIssuer, amountSent: 0, status: "skipped" as const, error: "No trustline for reward asset", ranAt }], userId);
           } else if (result.error) {
             aborted = true;
             await insertLogRows([{ configId, tierNumber: tier.tierNumber, holderAddress: op.holder, assetCode: op.assetCode, assetIssuer: op.assetIssuer, amountSent: 0, status: "failed" as const, error: result.error, ranAt }], userId);
+            // batchStart is already past this whole batch — log the unfinished tail of THIS
+            // batch here, so every holder in it gets some audit row (the outer aborted-batchStart
+            // reconciliation below only covers subsequent, not-yet-started batches).
+            const tail = batch.slice(oi + 1);
+            if (tail.length > 0) {
+              await insertLogRows(
+                tail.map((o) => ({
+                  configId, tierNumber: tier.tierNumber, holderAddress: o.holder,
+                  assetCode: o.assetCode, assetIssuer: o.assetIssuer,
+                  amountSent: 0, status: "aborted" as const, error: "Aborted — earlier payment failed", ranAt,
+                })),
+                userId
+              );
+            }
             break;
           } else {
             await insertLogRows([{ configId, tierNumber: tier.tierNumber, holderAddress: op.holder, assetCode: op.assetCode, assetIssuer: op.assetIssuer, amountSent: op.amount, status: "sent" as const, txHash: result.txHash, ranAt }], userId);

@@ -53,6 +53,7 @@ import { runBulkPayments } from "@/lib/bulk-payments/runner";
 import type { BatchResult, AssetSource } from "@/lib/bulk-payments/types";
 import { useBulkRecipients } from "@/hooks/use-bulk-recipients";
 import { useHorizonServer } from "@/hooks/use-horizon-server";
+import { calcAvailableXlm, type RawHorizonAccount } from "@/lib/stellar-reserve";
 import { formatXlm, parseAddresses as parseValidAddresses, shortAddr } from "@/lib/format";
 import { toast } from "sonner";
 import { notifyIfHidden } from "@/lib/notifications";
@@ -90,7 +91,8 @@ function parseAssetPairs(text: string): { assetCode: string; issuer: string }[] 
   return results;
 }
 
-function explorerTxUrl(network: Network, hash: string): string {
+function explorerTxUrl(network: Network, hash: string): string | null {
+  if (network !== "public" && network !== "testnet") return null;
   const base =
     network === "public"
       ? "https://stellar.expert/explorer/public/tx"
@@ -185,6 +187,7 @@ function BatchRow({
   result: BatchResult;
   network: Network;
 }) {
+  const txUrl = result.txHash ? explorerTxUrl(network, result.txHash) : null;
   return (
     <tr className="border-b last:border-0 text-xs">
       <td className="px-3 py-2 tabular-nums text-muted-foreground">
@@ -213,15 +216,19 @@ function BatchRow({
       </td>
       <td className="px-3 py-2">
         {result.txHash ? (
-          <a
-            href={explorerTxUrl(network, result.txHash)}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center gap-1 text-primary hover:underline font-mono"
-          >
-            {result.txHash.slice(0, 10)}…
-            <ExternalLink className="h-3 w-3" />
-          </a>
+          txUrl ? (
+            <a
+              href={txUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 text-primary hover:underline font-mono"
+            >
+              {result.txHash.slice(0, 10)}…
+              <ExternalLink className="h-3 w-3" />
+            </a>
+          ) : (
+            <span className="font-mono">{result.txHash.slice(0, 10)}…</span>
+          )
         ) : result.error ? (
           <span className="text-destructive" title={result.error}>
             {result.error.length > 60
@@ -289,6 +296,11 @@ export function GhostPaymentsPanel() {
   const [underfundedAmount, setUnderfundedAmount] = useState<string | null>(null);
   const [repeatTimes, setRepeatTimes] = useState(1);
   const [currentRound, setCurrentRound] = useState<number>(0);
+  // For trustline_touch mode (single sender only): whether the trustline already
+  // exists, and how much spare XLM reserve the sender has — both computed at
+  // preview time so the preview can warn about the real reserve-lock side effect.
+  const [trustlineExists, setTrustlineExists] = useState<boolean | null>(null);
+  const [availableReserveXlm, setAvailableReserveXlm] = useState<number | null>(null);
 
   // Auto-fill ghost asset (GHOST:SENDER_ADDRESS) when secret key is entered.
   // Only in no_trust mode. Recipients have no trust line → op_no_trust → fails on-chain.
@@ -331,6 +343,24 @@ export function GhostPaymentsPanel() {
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ghostMode]);
+
+  // If the signing wallet changes (header dropdown switch, or cross-tab sync
+  // via the useActiveWallet singleton) while an underfunded-mode overshoot
+  // amount was already computed, that amount is stale — it was derived from
+  // the PREVIOUS wallet's balance and may no longer exceed the new wallet's
+  // balance, which would let a real payment succeed instead of failing with
+  // op_underfunded. Clear it and bounce back to configure so the user must
+  // re-run Preview against the newly active wallet.
+  useEffect(() => {
+    if (underfundedAmount !== null) {
+      setUnderfundedAmount(null);
+    }
+    if (phase === "preview" && ghostMode === "underfunded") {
+      setPhase("configure");
+      setError("Signing wallet changed — please run Preview again.");
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [effectiveSecretKey]);
 
   const abortRef = useRef<AbortController | null>(null);
   const submittingRef = useRef(false);
@@ -477,6 +507,13 @@ export function GhostPaymentsPanel() {
       if (resolved.isNative() || resolved.getCode() !== "GHOST") {
         return "Ghost Asset mode requires the auto-generated GHOST asset (no trust line) — native XLM cannot be used here.";
       }
+      // The "no trust line exists for this asset" guarantee only holds when
+      // the GHOST asset is self-issued by a sender in THIS transaction — a
+      // foreign issuer using code "GHOST" could easily be a real asset some
+      // recipients already trust, silently defeating op_no_trust.
+      if (!getAllSenderPublicKeys().includes(resolved.getIssuer())) {
+        return "Ghost Asset mode requires the GHOST asset's issuer to be one of your own signing keys.";
+      }
     }
     return null;
   }
@@ -621,6 +658,8 @@ export function GhostPaymentsPanel() {
     // trustline_touch doesn't use recipients — skip recipient validation
     if (ghostMode === "trustline_touch") {
       setPhase("preview");
+      setTrustlineExists(null);
+      setAvailableReserveXlm(null);
       try {
         const senderPub = getSenderPublicKey();
         if (senderPub) {
@@ -628,6 +667,26 @@ export function GhostPaymentsPanel() {
           const account = await horizonServer.loadAccount(senderPub);
           const native = account.balances.find((b) => b.asset_type === "native");
           setBalanceXlm(native ? parseFloat(native.balance) : 0);
+
+          // Only check per-account for single-sender mode — too many Horizon
+          // calls to be worth it for round-robin/all-to-all/rotate.
+          if (senderMode === "single") {
+            const code = customAssetCode.trim();
+            const issuer = customAssetIssuer.trim();
+            const exists = account.balances.some(
+              (b) =>
+                "asset_code" in b &&
+                b.asset_code === code &&
+                b.asset_issuer === issuer,
+            );
+            setTrustlineExists(exists);
+            // AccountResponse's TS type omits num_sponsoring/num_sponsored even
+            // though the SDK spreads them onto the instance from the raw
+            // Horizon JSON at runtime (see server_api.d.ts's AccountRecord).
+            setAvailableReserveXlm(
+              calcAvailableXlm(account as unknown as RawHorizonAccount).available,
+            );
+          }
         }
       } catch {
         setBalanceXlm(null);
@@ -925,6 +984,8 @@ export function GhostPaymentsPanel() {
     setError(null);
     setCurrentRound(0);
     setUnderfundedAmount(null);
+    setTrustlineExists(null);
+    setAvailableReserveXlm(null);
   }
 
   // ---------------------------------------------------------------------------
@@ -965,6 +1026,7 @@ export function GhostPaymentsPanel() {
   // ---------------------------------------------------------------------------
 
   if (phase === "preview") {
+    const senderPub = getSenderPublicKey();
     return (
       <div className="space-y-6">
         <GhostBanner mode={ghostMode} />
@@ -977,10 +1039,18 @@ export function GhostPaymentsPanel() {
                 {GHOST_MODES.find((m) => m.id === ghostMode)?.errorCode}
               </span>{" "}
               on <strong>{network}</strong>.{" "}
-              {ghostMode === "trustline_touch" ? "Transaction will succeed — no balance changes." : "No funds will move."}
+              {ghostMode === "trustline_touch" ? "Transaction will succeed on-chain — see trustline details below." : "No funds will move."}
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
+            {senderPub && (
+              <div className="rounded-md border border-border p-3 text-sm space-y-1">
+                <p className="text-xs text-muted-foreground">
+                  Signing wallet{senderMode !== "single" ? " (sender 1)" : ""}
+                </p>
+                <ShortAddress address={senderPub} network={network} />
+              </div>
+            )}
             <div className="grid gap-3 sm:grid-cols-2 text-sm">
               <div className="rounded-md bg-muted/50 p-3 space-y-1">
                 <p className="text-xs text-muted-foreground">
@@ -1034,9 +1104,29 @@ export function GhostPaymentsPanel() {
                     {customAssetCode.trim()}
                     <ShortAddress address={customAssetIssuer.trim()} network={network} />
                   </p>
-                  <p className="text-xs text-blue-500">
-                    change_trust to MAX_LIMIT — no balance change
-                  </p>
+                  {senderMode !== "single" ? (
+                    <p className="text-xs text-amber-500">
+                      change_trust to MAX_LIMIT — may create a new trustline per sender and lock 0.5 XLM of reserve each (not checked per-account in multi-sender modes)
+                    </p>
+                  ) : trustlineExists === false ? (
+                    <>
+                      <p className="text-xs text-amber-500">
+                        Creates a NEW trustline — permanently locks 0.5 XLM of reserve; will fail if you don&apos;t have that much spare reserve.
+                      </p>
+                      {availableReserveXlm !== null && availableReserveXlm < 0.5 && (
+                        <p className="text-xs text-destructive flex items-center gap-1">
+                          <AlertTriangle className="h-3 w-3 shrink-0" />
+                          Available reserve is only {availableReserveXlm.toFixed(4)} XLM — this transaction will likely fail.
+                        </p>
+                      )}
+                    </>
+                  ) : trustlineExists === true ? (
+                    <p className="text-xs text-blue-500">
+                      change_trust to MAX_LIMIT — trustline already exists, no balance change
+                    </p>
+                  ) : (
+                    <p className="text-xs text-muted-foreground">Checking trustline status…</p>
+                  )}
                 </div>
               ) : ghostMode === "underfunded" ? (
                 <div className="space-y-1">
@@ -1457,6 +1547,12 @@ export function GhostPaymentsPanel() {
                       onChange={(e) =>
                         setCustomAssetCode(e.target.value)
                       }
+                      disabled={ghostMode === "no_trust"}
+                      title={
+                        ghostMode === "no_trust"
+                          ? "Locked to the auto-generated GHOST asset while in no_trust mode"
+                          : undefined
+                      }
                       className="w-24 font-mono text-xs"
                     />
                     <Input
@@ -1464,6 +1560,12 @@ export function GhostPaymentsPanel() {
                       value={customAssetIssuer}
                       onChange={(e) =>
                         setCustomAssetIssuer(e.target.value.trim())
+                      }
+                      disabled={ghostMode === "no_trust"}
+                      title={
+                        ghostMode === "no_trust"
+                          ? "Locked to the auto-generated GHOST asset while in no_trust mode"
+                          : undefined
                       }
                       className="font-mono text-xs"
                     />

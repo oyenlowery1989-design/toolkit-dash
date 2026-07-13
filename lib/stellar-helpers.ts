@@ -7,19 +7,22 @@
  */
 export function getErrorMessage(err: unknown): string {
   if (typeof err === "string") return err;
-  if (err instanceof Error) {
-    // Horizon 400 errors carry result_codes in the response body
-    const codes = (err as any)?.response?.data?.extras?.result_codes;
-    if (codes) {
-      const tx: string = codes.transaction ?? "";
-      const ops: string[] = codes.operations ?? [];
-      const parts: string[] = [];
-      if (tx) parts.push(`tx: ${tx}`);
-      if (ops.length) parts.push(`ops: ${ops.join(", ")}`);
-      if (parts.length) return `${err.message} — ${parts.join(" | ")}`;
+  // Horizon 400 errors carry result_codes in the response body — this shape
+  // can arrive on a plain object (not just an Error instance), so check it
+  // before narrowing to Error.
+  const codes = (err as any)?.response?.data?.extras?.result_codes;
+  if (codes) {
+    const tx: string = codes.transaction ?? "";
+    const ops: string[] = codes.operations ?? [];
+    const parts: string[] = [];
+    if (tx) parts.push(`tx: ${tx}`);
+    if (ops.length) parts.push(`ops: ${ops.join(", ")}`);
+    if (parts.length) {
+      const prefix = err instanceof Error ? `${err.message} — ` : "";
+      return `${prefix}${parts.join(" | ")}`;
     }
-    return err.message;
   }
+  if (err instanceof Error) return err.message;
   return "An unexpected error occurred.";
 }
 

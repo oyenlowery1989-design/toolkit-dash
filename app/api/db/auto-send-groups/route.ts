@@ -77,8 +77,9 @@ export async function POST(req: NextRequest) {
     const now = Date.now();
 
     if (body.type === "group") {
-      const { id, name, network, secretKey, intervalMinutes } = body as Record<string, unknown>;
+      const { id, name, network, secretKey, intervalMinutes, enabled } = body as Record<string, unknown>;
       if (!id || !name) return NextResponse.json({ error: "id and name required" }, { status: 400 });
+      const enabledFlag = enabled === undefined ? 1 : (enabled ? 1 : 0);
 
       if (isSupabaseOnly()) {
         const sb = getSupabase()!;
@@ -90,13 +91,13 @@ export async function POST(req: NextRequest) {
         const { error } = await sb.from("auto_send_groups").upsert({
           id, user_id: auth.userId!, name: (name as string).trim(),
           network: network ?? "public", secret_key: secretKey ?? "",
-          interval_minutes: intervalMinutes ?? null, enabled: 1, created_at: now,
+          interval_minutes: intervalMinutes ?? null, enabled: enabledFlag, created_at: now,
         });
         if (error) return NextResponse.json({ error: error.message }, { status: 500 });
       } else {
         const db = getDb();
-        db.prepare(`INSERT INTO auto_send_groups (id, name, network, secret_key, interval_minutes, enabled, created_at) VALUES (?, ?, ?, ?, ?, 1, ?)`)
-          .run(id, (name as string).trim(), network ?? "public", secretKey ?? "", intervalMinutes ?? null, now);
+        db.prepare(`INSERT INTO auto_send_groups (id, name, network, secret_key, interval_minutes, enabled, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`)
+          .run(id, (name as string).trim(), network ?? "public", secretKey ?? "", intervalMinutes ?? null, enabledFlag, now);
       }
       return NextResponse.json({ ok: true });
     }

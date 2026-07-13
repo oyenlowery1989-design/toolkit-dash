@@ -895,31 +895,33 @@ function GroupCard({ groupId, runAllStatus }: { groupId: string; runAllStatus?: 
     }
   }
 
-  function handleDuplicate() {
+  async function handleDuplicate() {
     const newId = crypto.randomUUID();
     const newName = `${group!.name} (copy)`;
-    createGroup({
+    // Disabled from the start — removes the race against a separate follow-up PATCH
+    await createGroup({
       id: newId,
       name: newName,
       network: group!.network,
       secretKey: group!.secretKey,
       intervalMinutes: group!.intervalMinutes,
+      enabled: false,
     });
-    // Disable the copy so it doesn't auto-run
-    updateGroup(newId, { enabled: false });
-    for (const d of group!.destinations) {
-      upsertDestination(newId, {
-        destination: d.destination,
-        percentage: d.percentage,
-        isRemainder: d.isRemainder,
-        paused: d.paused,
-        label: d.label,
-        memo: d.memo,
-        minThreshold: d.minThreshold,
-        maxCap: d.maxCap,
-        position: d.position,
-      });
-    }
+    await Promise.all(
+      group!.destinations.map((d) =>
+        upsertDestination(newId, {
+          destination: d.destination,
+          percentage: d.percentage,
+          isRemainder: d.isRemainder,
+          paused: d.paused,
+          label: d.label,
+          memo: d.memo,
+          minThreshold: d.minThreshold,
+          maxCap: d.maxCap,
+          position: d.position,
+        })
+      )
+    );
   }
 
   function handleDragDrop(fromIdx: number, toIdx: number) {
@@ -1136,7 +1138,7 @@ function GroupCard({ groupId, runAllStatus }: { groupId: string; runAllStatus?: 
                 size="icon"
                 className="h-auto w-auto p-0.5 text-red-400/60 hover:text-red-400 hover:bg-red-500/10"
                 onClick={() => {
-                  updateGroup(group.id, { lastFailureAt: undefined });
+                  updateGroup(group.id, { lastFailureAt: null });
                   setDismissedFailure(true);
                 }}
               >
