@@ -4,6 +4,7 @@ import { useRef, useState, useCallback, useEffect } from "react";
 import { useSearchParams } from "next/navigation";
 import { Asset, StrKey, Keypair, TransactionBuilder, Operation, Memo } from "stellar-sdk";
 import { Ghost } from "lucide-react";
+import { cn } from "@/lib/utils";
 import { useAssetGroups } from "@/hooks/use-asset-groups";
 import { useActiveWallet } from "@/hooks/use-active-wallet";
 import { WalletSelect, WalletAppendSelect } from "@/components/ui/wallet-select";
@@ -1031,8 +1032,8 @@ export function GhostPaymentsPanel() {
       <div className="space-y-6">
         <GhostBanner mode={ghostMode} />
         <Card>
-          <CardHeader>
-            <CardTitle>Review before ghost send</CardTitle>
+          <CardHeader className="pb-2 pt-3 px-4">
+            <CardTitle className="text-sm font-medium">Review before ghost send</CardTitle>
             <CardDescription>
               Confirm the details below. Mode:{" "}
               <span className={`font-mono ${ghostMode === "trustline_touch" ? "text-blue-400" : "text-orange-400"}`}>
@@ -1042,7 +1043,7 @@ export function GhostPaymentsPanel() {
               {ghostMode === "trustline_touch" ? "Transaction will succeed on-chain — see trustline details below." : "No funds will move."}
             </CardDescription>
           </CardHeader>
-          <CardContent className="space-y-4">
+          <CardContent className="space-y-4 px-4 pb-3">
             {senderPub && (
               <div className="rounded-md border border-border p-3 text-sm space-y-1">
                 <p className="text-xs text-muted-foreground">
@@ -1207,7 +1208,7 @@ export function GhostPaymentsPanel() {
                 </div>
               )}
           </CardContent>
-          <CardFooter className="flex gap-2">
+          <CardFooter className="flex gap-2 px-4 pb-3">
             <Button
               onClick={handleSend}
               disabled={
@@ -1239,8 +1240,8 @@ export function GhostPaymentsPanel() {
     return (
       <div className="space-y-6">
         <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center justify-between">
+          <CardHeader className="pb-2 pt-3 px-4">
+            <CardTitle className="text-sm font-medium flex items-center justify-between">
               <span>{phase === "sending" ? "Sending…" : "Complete"}</span>
               {phase === "done" && (
                 <div className="flex items-center gap-2 text-sm font-normal">
@@ -1261,7 +1262,7 @@ export function GhostPaymentsPanel() {
               </CardDescription>
             )}
           </CardHeader>
-          <CardContent>
+          <CardContent className="px-4 pb-3">
             <div className="overflow-x-auto border rounded-md">
               <table className="w-full text-sm">
                 <thead>
@@ -1287,7 +1288,7 @@ export function GhostPaymentsPanel() {
               </p>
             )}
           </CardContent>
-          <CardFooter className="flex gap-2">
+          <CardFooter className="flex gap-2 px-4 pb-3">
             {phase === "sending" && (
               <Button variant="outline" onClick={handleAbort}>
                 <X className="mr-2 h-4 w-4" />
@@ -1319,43 +1320,47 @@ export function GhostPaymentsPanel() {
     <div className="space-y-6">
       <GhostBanner mode={ghostMode} />
 
-      {/* Mode selector */}
-      <div className="grid gap-3 sm:grid-cols-3">
+      {/* Mode selector — compact label+tagline buttons only; the selected mode's
+          full description lives in one shared block below instead of inside
+          each grid cell, so the row's height isn't dictated by whichever cell
+          happens to be tallest (CSS grid rows size to their tallest child
+          regardless of align-items, so keeping the description in-grid meant
+          shrinking the other two cards' content never actually saved space). */}
+      <div className="grid gap-2 sm:grid-cols-3">
         {GHOST_MODES.map((m) => (
           <Button
             key={m.id}
             type="button"
-            variant="ghost"
+            variant="outline"
             onClick={() => setGhostMode(m.id)}
-            className={`flex flex-col items-start justify-start whitespace-normal text-left h-auto w-full rounded-lg border p-4 transition-all space-y-1.5 ${
-              ghostMode === m.id
-                ? "border-orange-500/60 bg-orange-500/5 ring-1 ring-orange-500/30"
-                : "border-border hover:border-muted-foreground/40 hover:bg-muted/30"
-            }`}
+            className={cn(
+              "flex-col items-start justify-start whitespace-normal text-left h-auto w-full p-3 gap-1",
+              ghostMode === m.id && "border-orange-500/60 bg-orange-500/10 ring-1 ring-orange-500/30",
+            )}
           >
-            <div className="flex items-center justify-between w-full">
-              <span className="text-sm font-semibold">{m.label}</span>
-              {ghostMode === m.id && (
-                <span className="text-xs font-medium text-orange-500 bg-orange-500/10 rounded-full px-2 py-0.5">
-                  Selected
-                </span>
-              )}
-            </div>
-            <p className="text-xs font-mono text-orange-400">{m.tagline}</p>
-            <p className="text-xs text-muted-foreground leading-relaxed">
-              {m.description}
-            </p>
-            <p className="text-xs text-muted-foreground mt-1">
-              <span className="font-medium">Works for:</span> {m.worksFor}
-            </p>
+            <span className="text-sm font-semibold">{m.label}</span>
+            <span className="text-xs font-mono text-orange-400 font-normal">{m.tagline}</span>
           </Button>
         ))}
       </div>
 
+      {/* Selected mode detail */}
+      {(() => {
+        const m = GHOST_MODES.find((mm) => mm.id === ghostMode)!;
+        return (
+          <div className="rounded-lg border border-orange-500/30 bg-orange-500/5 p-3 space-y-1">
+            <p className="text-xs text-muted-foreground leading-relaxed">{m.description}</p>
+            <p className="text-xs text-muted-foreground">
+              <span className="font-medium">Works for:</span> {m.worksFor}
+            </p>
+          </div>
+        );
+      })()}
+
       {/* Sender Mode */}
       <Card>
-        <CardHeader>
-          <CardTitle>Sender Mode</CardTitle>
+        <CardHeader className="pb-2 pt-3 px-4">
+          <CardTitle className="text-sm font-medium">Sender Mode</CardTitle>
           <CardDescription>
             Choose how many accounts will send and how recipients are distributed.
             {ghostMode === "underfunded" && (
@@ -1365,7 +1370,7 @@ export function GhostPaymentsPanel() {
             )}
           </CardDescription>
         </CardHeader>
-        <CardContent>
+        <CardContent className="px-4 pb-3">
           <Tabs value={senderMode} onValueChange={(v) => setSenderMode(v as SenderMode)}>
             <TabsList className="mb-4 grid grid-cols-4 w-full">
               <TabsTrigger value="single">Single</TabsTrigger>
@@ -1435,14 +1440,14 @@ export function GhostPaymentsPanel() {
 
       {/* Memo + key */}
       <Card>
-        <CardHeader>
-          <CardTitle>Message &amp; Signing</CardTitle>
+        <CardHeader className="pb-2 pt-3 px-4">
+          <CardTitle className="text-sm font-medium">Message &amp; Signing</CardTitle>
           <CardDescription>
             The memo is attached to every ghost transaction and visible on explorers.
             The secret key never leaves your browser.
           </CardDescription>
         </CardHeader>
-        <CardContent className="space-y-4">
+        <CardContent className="space-y-4 px-4 pb-3">
           <div className="space-y-2">
             <div className="flex items-center justify-between">
               <Label htmlFor="memo">Memo</Label>
@@ -1702,15 +1707,15 @@ export function GhostPaymentsPanel() {
 
       {/* Recipients — hidden for trustline_touch (no recipients needed) */}
       {ghostMode !== "trustline_touch" && <Card>
-        <CardHeader>
-          <CardTitle>Recipients</CardTitle>
+        <CardHeader className="pb-2 pt-3 px-4">
+          <CardTitle className="text-sm font-medium">Recipients</CardTitle>
           <CardDescription>
             Paste addresses manually or fetch holders of one or more assets.
             Both sources are deduplicated and merged. Your own address is always
             excluded.
           </CardDescription>
         </CardHeader>
-        <CardContent>
+        <CardContent className="px-4 pb-3">
           <Tabs
             value={sourceTab}
             onValueChange={(v) =>

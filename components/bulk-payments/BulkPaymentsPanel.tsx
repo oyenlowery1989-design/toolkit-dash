@@ -799,14 +799,14 @@ export function BulkPaymentsPanel() {
     return (
       <div className="space-y-6">
         <Card>
-          <CardHeader>
-            <CardTitle>Review before sending</CardTitle>
+          <CardHeader className="pb-2 pt-3 px-4">
+            <CardTitle className="text-sm font-medium">Review before sending</CardTitle>
             <CardDescription>
               Confirm the details below. This will submit real transactions on{" "}
               <strong>{network}</strong>.
             </CardDescription>
           </CardHeader>
-          <CardContent className="space-y-4">
+          <CardContent className="space-y-4 px-4 pb-3">
             <div className="grid gap-3 sm:grid-cols-2 text-sm">
               <div className="rounded-md bg-muted/50 p-3 space-y-1">
                 <p className="text-xs text-muted-foreground">Recipients</p>
@@ -922,7 +922,7 @@ export function BulkPaymentsPanel() {
               </span>
             </div>
           </CardContent>
-          <CardFooter className="flex gap-2">
+          <CardFooter className="flex gap-2 px-4 pb-3">
             <Button onClick={handleSend}>
               <Send className="mr-2 h-4 w-4" />
               Send Now
@@ -944,8 +944,8 @@ export function BulkPaymentsPanel() {
     return (
       <div className="space-y-6">
         <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center justify-between">
+          <CardHeader className="pb-2 pt-3 px-4">
+            <CardTitle className="text-sm font-medium flex items-center justify-between">
               <span>
                 {phase === "sending" ? "Sending…" : "Complete"}
               </span>
@@ -968,7 +968,7 @@ export function BulkPaymentsPanel() {
               </CardDescription>
             )}
           </CardHeader>
-          <CardContent>
+          <CardContent className="px-4 pb-3">
             <div className="overflow-x-auto border rounded-md">
               <table className="w-full text-sm">
                 <thead>
@@ -994,7 +994,7 @@ export function BulkPaymentsPanel() {
               </p>
             )}
           </CardContent>
-          <CardFooter className="flex gap-2">
+          <CardFooter className="flex gap-2 px-4 pb-3">
             {phase === "sending" && (
               <Button variant="outline" onClick={handleAbort}>
                 <X className="mr-2 h-4 w-4" />
@@ -1029,14 +1029,14 @@ export function BulkPaymentsPanel() {
     <div className="space-y-6">
       {/* Memo + key */}
       <Card>
-        <CardHeader>
-          <CardTitle>Message &amp; Signing</CardTitle>
+        <CardHeader className="pb-2 pt-3 px-4">
+          <CardTitle className="text-sm font-medium">Message &amp; Signing</CardTitle>
           <CardDescription>
             The memo is attached to every transaction and visible on explorers.
             The secret key never leaves your browser.
           </CardDescription>
         </CardHeader>
-        <CardContent className="space-y-4">
+        <CardContent className="space-y-4 px-4 pb-3">
           <div className="space-y-2">
             <div className="flex items-center justify-between">
               <Label htmlFor="memo">Memo</Label>
@@ -1199,15 +1199,15 @@ export function BulkPaymentsPanel() {
 
       {/* Recipients */}
       <Card>
-        <CardHeader>
-          <CardTitle>Recipients</CardTitle>
+        <CardHeader className="pb-2 pt-3 px-4">
+          <CardTitle className="text-sm font-medium">Recipients</CardTitle>
           <CardDescription>
             Paste addresses manually or fetch holders of one or more assets.
             Both sources are deduplicated and merged. Your own address is always
             excluded.
           </CardDescription>
         </CardHeader>
-        <CardContent>
+        <CardContent className="px-4 pb-3">
           <Tabs
             value={sourceTab}
             onValueChange={(v) => setSourceTab(v as "manual" | "assets" | "group")}

@@ -63,7 +63,7 @@ async function loadEnabledGroupsFromSupabase(): Promise<ScheduledGroup[]> {
   const { data: groups, error } = await sb
     .from("auto_send_groups")
     .select("*")
-    .eq("enabled", true)
+    .eq("enabled", 1)
     .not("interval_minutes", "is", null)
     .order("created_at", { ascending: true });
 

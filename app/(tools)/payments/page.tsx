@@ -1178,19 +1178,14 @@ export default function PaymentsPage() {
     : secretKeyDisplay.trim().length > 0;
 
   return (
-    <div className="space-y-4">
-      <div>
-        <h1 className="text-lg font-semibold">Payments</h1>
-      </div>
+    <div className="space-y-3">
+      <h1 className="text-lg font-semibold">Payments</h1>
 
       {/* ================================================================== */}
       {/* Signing Card — always at top so balances load immediately          */}
       {/* ================================================================== */}
       <Card>
-        <CardHeader className="pb-2 pt-3 px-4">
-          <CardTitle className="text-sm font-medium">Signing Account</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-2 px-4 pb-3">
+        <CardContent className="space-y-2 px-4 py-3">
           {/* Wallet picker */}
           {wallets.length > 0 && (
             <div className="flex items-center justify-between">
@@ -1259,10 +1254,7 @@ export default function PaymentsPage() {
       {/* Payment Tabs                                                       */}
       {/* ================================================================== */}
       <Card>
-        <CardHeader className="pb-2 pt-3 px-4">
-          <CardTitle className="text-sm font-medium">New Payment</CardTitle>
-        </CardHeader>
-        <CardContent className="px-4 pb-3">
+        <CardContent className="px-4 py-3">
           <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as PaymentTab)}>
             <TabsList className="w-full grid grid-cols-4">
               <TabsTrigger value="send" className="gap-1.5">
@@ -1341,12 +1333,12 @@ export default function PaymentsPage() {
                     key={leg.id}
                     className="rounded-md border border-border bg-muted/20 p-3 space-y-2"
                   >
-                    {/* Leg header */}
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                        Payment {legs.length > 1 ? idx + 1 : ""}
-                      </span>
-                      {legs.length > 1 && (
+                    {/* Leg header — only shown once there's more than one leg to distinguish */}
+                    {legs.length > 1 && (
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                          Payment {idx + 1}
+                        </span>
                         <Button
                           variant="ghost"
                           size="icon"
@@ -1355,8 +1347,8 @@ export default function PaymentsPage() {
                         >
                           <Trash2 className="h-3.5 w-3.5" />
                         </Button>
-                      )}
-                    </div>
+                      </div>
+                    )}
 
                     <div className="grid gap-3 sm:grid-cols-2">
                       {/* Asset picker */}
@@ -1574,75 +1566,77 @@ export default function PaymentsPage() {
                 <legend className="px-2 text-sm font-medium text-muted-foreground">
                   Source Asset
                 </legend>
-                <div className="flex items-center gap-2">
-                  <Switch checked={srcIsNative} onCheckedChange={setSrcIsNative} id="src-native" />
-                  <Label htmlFor="src-native" className="text-sm cursor-pointer">
-                    Native (XLM)
-                  </Label>
+                <div className={cn(srcIsNative ? "flex items-end gap-3" : "space-y-2")}>
+                  <div className={cn("flex items-center gap-2", srcIsNative && "shrink-0 pb-2")}>
+                    <Switch checked={srcIsNative} onCheckedChange={setSrcIsNative} id="src-native" />
+                    <Label htmlFor="src-native" className="text-sm cursor-pointer whitespace-nowrap">
+                      Native (XLM)
+                    </Label>
+                  </div>
+                  {!srcIsNative && (
+                    <div className="grid gap-4 sm:grid-cols-2">
+                      <div className="space-y-2">
+                        <Label htmlFor="src-code">Asset Code</Label>
+                        <Input
+                          id="src-code"
+                          placeholder="USDC"
+                          maxLength={12}
+                          value={srcAssetCode}
+                          onChange={(e) => setSrcAssetCode(e.target.value)}
+                        />
+                        {srcAssetCode.trim() && !isValidAssetCode(srcAssetCode.trim()) && (
+                          <p className="text-xs text-destructive flex items-center gap-1">
+                            <AlertTriangle className="h-3 w-3 shrink-0" />
+                            1-12 alphanumeric characters.
+                          </p>
+                        )}
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="src-issuer">Asset Issuer</Label>
+                        <Input
+                          id="src-issuer"
+                          placeholder="G..."
+                          value={srcAssetIssuer}
+                          onChange={(e) => setSrcAssetIssuer(e.target.value)}
+                          className="font-mono text-sm"
+                        />
+                        {srcAssetIssuer.trim() && !StrKey.isValidEd25519PublicKey(srcAssetIssuer.trim()) && (
+                          <p className="text-xs text-destructive flex items-center gap-1">
+                            <AlertTriangle className="h-3 w-3 shrink-0" />
+                            Invalid issuer public key.
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                  {pathMode === "strict-receive" ? (
+                    <div className={cn("space-y-2", srcIsNative && "flex-1")}>
+                      <Label htmlFor="max-send">Max Send Amount</Label>
+                      <Input
+                        id="max-send"
+                        type="number"
+                        placeholder="0.00"
+                        min="0"
+                        step="any"
+                        value={maxSendAmount}
+                        onChange={(e) => setMaxSendAmount(e.target.value)}
+                      />
+                    </div>
+                  ) : (
+                    <div className={cn("space-y-2", srcIsNative && "flex-1")}>
+                      <Label htmlFor="exact-send">Exact Send Amount</Label>
+                      <Input
+                        id="exact-send"
+                        type="number"
+                        placeholder="0.00"
+                        min="0"
+                        step="any"
+                        value={exactSendAmount}
+                        onChange={(e) => setExactSendAmount(e.target.value)}
+                      />
+                    </div>
+                  )}
                 </div>
-                {!srcIsNative && (
-                  <div className="grid gap-4 sm:grid-cols-2">
-                    <div className="space-y-2">
-                      <Label htmlFor="src-code">Asset Code</Label>
-                      <Input
-                        id="src-code"
-                        placeholder="USDC"
-                        maxLength={12}
-                        value={srcAssetCode}
-                        onChange={(e) => setSrcAssetCode(e.target.value)}
-                      />
-                      {srcAssetCode.trim() && !isValidAssetCode(srcAssetCode.trim()) && (
-                        <p className="text-xs text-destructive flex items-center gap-1">
-                          <AlertTriangle className="h-3 w-3 shrink-0" />
-                          1-12 alphanumeric characters.
-                        </p>
-                      )}
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="src-issuer">Asset Issuer</Label>
-                      <Input
-                        id="src-issuer"
-                        placeholder="G..."
-                        value={srcAssetIssuer}
-                        onChange={(e) => setSrcAssetIssuer(e.target.value)}
-                        className="font-mono text-sm"
-                      />
-                      {srcAssetIssuer.trim() && !StrKey.isValidEd25519PublicKey(srcAssetIssuer.trim()) && (
-                        <p className="text-xs text-destructive flex items-center gap-1">
-                          <AlertTriangle className="h-3 w-3 shrink-0" />
-                          Invalid issuer public key.
-                        </p>
-                      )}
-                    </div>
-                  </div>
-                )}
-                {pathMode === "strict-receive" ? (
-                  <div className="space-y-2">
-                    <Label htmlFor="max-send">Max Send Amount</Label>
-                    <Input
-                      id="max-send"
-                      type="number"
-                      placeholder="0.00"
-                      min="0"
-                      step="any"
-                      value={maxSendAmount}
-                      onChange={(e) => setMaxSendAmount(e.target.value)}
-                    />
-                  </div>
-                ) : (
-                  <div className="space-y-2">
-                    <Label htmlFor="exact-send">Exact Send Amount</Label>
-                    <Input
-                      id="exact-send"
-                      type="number"
-                      placeholder="0.00"
-                      min="0"
-                      step="any"
-                      value={exactSendAmount}
-                      onChange={(e) => setExactSendAmount(e.target.value)}
-                    />
-                  </div>
-                )}
               </fieldset>
 
               {/* Destination asset */}
@@ -1650,77 +1644,82 @@ export default function PaymentsPage() {
                 <legend className="px-2 text-sm font-medium text-muted-foreground">
                   Destination Asset
                 </legend>
-                <div className="flex items-center gap-2">
-                  <Switch checked={destIsNative} onCheckedChange={setDestIsNative} id="dest-native" />
-                  <Label htmlFor="dest-native" className="text-sm cursor-pointer">
-                    Native (XLM)
-                  </Label>
+                <div className={cn(destIsNative ? "flex items-end gap-3" : "space-y-2")}>
+                  <div className={cn("flex items-center gap-2", destIsNative && "shrink-0 pb-2")}>
+                    <Switch checked={destIsNative} onCheckedChange={setDestIsNative} id="dest-native" />
+                    <Label htmlFor="dest-native" className="text-sm cursor-pointer whitespace-nowrap">
+                      Native (XLM)
+                    </Label>
+                  </div>
+                  {!destIsNative && (
+                    <div className="grid gap-4 sm:grid-cols-2">
+                      <div className="space-y-2">
+                        <Label htmlFor="dest-code">Asset Code</Label>
+                        <Input
+                          id="dest-code"
+                          placeholder="USDC"
+                          maxLength={12}
+                          value={destAssetCode}
+                          onChange={(e) => setDestAssetCode(e.target.value)}
+                        />
+                        {destAssetCode.trim() && !isValidAssetCode(destAssetCode.trim()) && (
+                          <p className="text-xs text-destructive flex items-center gap-1">
+                            <AlertTriangle className="h-3 w-3 shrink-0" />
+                            1-12 alphanumeric characters.
+                          </p>
+                        )}
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="dest-issuer">Asset Issuer</Label>
+                        <Input
+                          id="dest-issuer"
+                          placeholder="G..."
+                          value={destAssetIssuer}
+                          onChange={(e) => setDestAssetIssuer(e.target.value)}
+                          className="font-mono text-sm"
+                        />
+                        {destAssetIssuer.trim() && !StrKey.isValidEd25519PublicKey(destAssetIssuer.trim()) && (
+                          <p className="text-xs text-destructive flex items-center gap-1">
+                            <AlertTriangle className="h-3 w-3 shrink-0" />
+                            Invalid issuer public key.
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                  {pathMode === "strict-receive" ? (
+                    <div className={cn("space-y-2", destIsNative && "flex-1")}>
+                      <Label htmlFor="dest-amount">Destination Amount</Label>
+                      <Input
+                        id="dest-amount"
+                        type="number"
+                        placeholder="0.00"
+                        min="0"
+                        step="any"
+                        value={destAmount}
+                        onChange={(e) => setDestAmount(e.target.value)}
+                      />
+                    </div>
+                  ) : (
+                    <div className={cn("space-y-2", destIsNative && "flex-1")}>
+                      <Label htmlFor="min-receive">Min Receive Amount</Label>
+                      <Input
+                        id="min-receive"
+                        type="number"
+                        placeholder="0.00"
+                        min="0"
+                        step="any"
+                        value={minReceiveAmount}
+                        onChange={(e) => setMinReceiveAmount(e.target.value)}
+                      />
+                    </div>
+                  )}
                 </div>
-                {!destIsNative && (
-                  <div className="grid gap-4 sm:grid-cols-2">
-                    <div className="space-y-2">
-                      <Label htmlFor="dest-code">Asset Code</Label>
-                      <Input
-                        id="dest-code"
-                        placeholder="USDC"
-                        maxLength={12}
-                        value={destAssetCode}
-                        onChange={(e) => setDestAssetCode(e.target.value)}
-                      />
-                      {destAssetCode.trim() && !isValidAssetCode(destAssetCode.trim()) && (
-                        <p className="text-xs text-destructive flex items-center gap-1">
-                          <AlertTriangle className="h-3 w-3 shrink-0" />
-                          1-12 alphanumeric characters.
-                        </p>
-                      )}
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="dest-issuer">Asset Issuer</Label>
-                      <Input
-                        id="dest-issuer"
-                        placeholder="G..."
-                        value={destAssetIssuer}
-                        onChange={(e) => setDestAssetIssuer(e.target.value)}
-                        className="font-mono text-sm"
-                      />
-                      {destAssetIssuer.trim() && !StrKey.isValidEd25519PublicKey(destAssetIssuer.trim()) && (
-                        <p className="text-xs text-destructive flex items-center gap-1">
-                          <AlertTriangle className="h-3 w-3 shrink-0" />
-                          Invalid issuer public key.
-                        </p>
-                      )}
-                    </div>
-                  </div>
-                )}
-                {pathMode === "strict-receive" ? (
-                  <div className="space-y-2">
-                    <Label htmlFor="dest-amount">Destination Amount</Label>
-                    <Input
-                      id="dest-amount"
-                      type="number"
-                      placeholder="0.00"
-                      min="0"
-                      step="any"
-                      value={destAmount}
-                      onChange={(e) => setDestAmount(e.target.value)}
-                    />
-                    <p className="text-xs text-muted-foreground">Exact amount the destination will receive.</p>
-                  </div>
-                ) : (
-                  <div className="space-y-2">
-                    <Label htmlFor="min-receive">Min Receive Amount</Label>
-                    <Input
-                      id="min-receive"
-                      type="number"
-                      placeholder="0.00"
-                      min="0"
-                      step="any"
-                      value={minReceiveAmount}
-                      onChange={(e) => setMinReceiveAmount(e.target.value)}
-                    />
-                    <p className="text-xs text-muted-foreground">Minimum the destination must receive (tx fails if below).</p>
-                  </div>
-                )}
+                <p className="text-xs text-muted-foreground">
+                  {pathMode === "strict-receive"
+                    ? "Exact amount the destination will receive."
+                    : "Minimum the destination must receive (tx fails if below)."}
+                </p>
               </fieldset>
 
               {/* Destination account */}
