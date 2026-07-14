@@ -17,6 +17,7 @@ import { Switch } from "@/components/ui/switch";
 import {
   AlertTriangle,
   BookmarkCheck,
+  Check,
   ChevronDown,
   ChevronRight,
   Clock,
@@ -24,6 +25,7 @@ import {
   RefreshCw,
   Save,
   Search,
+  Trash2,
   TrendingDown,
   X,
 } from "lucide-react";
@@ -33,10 +35,11 @@ import { getErrorMessage } from "@/lib/stellar-helpers";
 import { ShortAddress } from "@/components/shared/ShortAddress";
 import { inferDistribLite } from "@/lib/asset-lookup/fetchers";
 import { fetchAssetXlmProceeds } from "@/lib/proceeds-investigator/fetchers";
-import { formatXlm, parseAddresses } from "@/lib/format";
+import { formatXlm, formatUsdEstimate, parseAddresses } from "@/lib/format";
 import { useSavedSearches } from "@/hooks/use-saved-searches";
 import { useSavedAnalyses } from "@/hooks/use-saved-analyses";
 import { useBulkScanState } from "@/hooks/use-bulk-scan-state";
+import { useConfirmClick } from "@/hooks/use-confirm-click";
 import { parseAssetPairs } from "@/lib/asset-pair";
 import { useXlmUsdPrice } from "@/hooks/use-xlm-usd-price";
 import { fetchHomeDomain } from "@/components/shared/ChainDisplay";
@@ -64,8 +67,7 @@ import {
 type AssetRowStatus = "pending" | "inferring" | "scanning" | "done" | "error";
 
 interface PriorSaveInfo {
-  count: number;
-  lastAnalysis: SavedAnalysis;
+  matches: SavedAnalysis[]; // sorted newest-first
 }
 
 interface AssetRow {
@@ -78,8 +80,16 @@ interface AssetRow {
   inferReason?: string;
   result?: AssetProceedsResult;
   priorSave?: PriorSaveInfo | null;
+  skippedUnchanged?: boolean;
+  newSaveId?: string;
   elapsedMs?: number;
   expanded: boolean;
+}
+
+/** True when a fresh result is identical (all tracked fields + destinations) to the given prior save. */
+function isUnchangedSince(prior: SavedAnalysis, result: AssetProceedsResult): boolean {
+  const diff = diffSnapshots(prior, { ...prior, timestamp: Date.now(), result });
+  return diff.fields.every((f) => f.delta === 0) && diff.destinations.length === 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -122,77 +132,195 @@ async function runConcurrent<T>(
 // you don't have to leave the page to see what changed since last run.
 // ---------------------------------------------------------------------------
 
+function SavedEntryRow({
+  analysis,
+  xlmUsdPrice,
+  isLatest,
+  onDelete,
+}: {
+  analysis: SavedAnalysis;
+  xlmUsdPrice: number | null;
+  isLatest: boolean;
+  onDelete: (id: string) => void;
+}) {
+  const { confirming, onClick } = useConfirmClick(() => onDelete(analysis.id));
+  return (
+    <div className="flex items-center gap-2 text-xs py-1">
+      <span className="text-muted-foreground w-20 shrink-0">{timeAgo(analysis.timestamp)}</span>
+      <span className="font-mono">
+        {formatXlm(analysis.result.totalXlmProceeds)} XLM
+        {xlmUsdPrice != null && (
+          <span className="text-muted-foreground ml-1">({formatUsdEstimate(analysis.result.totalXlmProceeds, xlmUsdPrice)})</span>
+        )}
+      </span>
+      {isLatest && <span className="text-[10px] text-muted-foreground">(most recent)</span>}
+      <Button
+        variant="ghost"
+        size="sm"
+        className={`ml-auto h-6 px-2 text-xs ${confirming ? "text-destructive" : "text-muted-foreground"}`}
+        onClick={onClick}
+        title={confirming ? "Click again to confirm delete" : "Delete this saved analysis"}
+      >
+        {confirming ? "Confirm delete" : <Trash2 className="h-3 w-3" />}
+      </Button>
+    </div>
+  );
+}
+
 function SinceLastSave({
   priorSave,
   currentResult,
   network,
+  xlmUsdPrice,
+  skippedUnchanged,
+  newSaveId,
+  onDelete,
 }: {
   priorSave: PriorSaveInfo;
   currentResult: AssetProceedsResult;
   network: string;
+  xlmUsdPrice: number | null;
+  skippedUnchanged: boolean;
+  newSaveId?: string;
+  onDelete: (id: string) => void;
 }) {
-  const diff = diffSnapshots(priorSave.lastAnalysis, {
-    ...priorSave.lastAnalysis,
-    timestamp: Date.now(),
-    result: currentResult,
-  });
+  const [showAllSaves, setShowAllSaves] = useState(false);
+  // Date.now() sampled via useState's lazy initializer (runs once, not on every
+  // render) instead of directly in the render body, to stay a pure render —
+  // this only stamps the synthetic "current" snapshot passed to diffSnapshots,
+  // not anything displayed directly.
+  const [mountedAt] = useState(() => Date.now());
+  const lastAnalysis = priorSave.matches[0];
+  const diff = diffSnapshots(lastAnalysis, { ...lastAnalysis, timestamp: mountedAt, result: currentResult });
 
   return (
     <div className="mt-6 border-t border-border pt-4">
-      <h4 className="text-sm font-semibold flex items-center gap-2">
-        Since Last Save
-        <span className="text-xs font-normal text-muted-foreground">
-          saved {priorSave.count}× before · last {timeAgo(priorSave.lastAnalysis.timestamp)}
-        </span>
-      </h4>
-
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-3">
-        {diff.fields.map((f) => (
-          <FieldDeltaCard key={f.key} label={f.label} before={f.before} after={f.after} delta={f.delta} />
-        ))}
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <h4 className="text-sm font-semibold flex items-center gap-2">
+          Since Last Save
+          <span className="text-xs font-normal text-muted-foreground">
+            saved {priorSave.matches.length}× before · last {timeAgo(lastAnalysis.timestamp)}
+          </span>
+        </h4>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-6 px-2 text-xs text-muted-foreground"
+          onClick={() => setShowAllSaves((v) => !v)}
+        >
+          {showAllSaves ? <ChevronDown className="h-3 w-3 mr-1" /> : <ChevronRight className="h-3 w-3 mr-1" />}
+          Manage saves ({priorSave.matches.length}{newSaveId ? " + this run" : ""})
+        </Button>
       </div>
 
-      <div className="mt-4">
-        <h5 className="text-xs font-semibold text-muted-foreground mb-1.5">
-          Destination Changes
-        </h5>
-        {diff.destinations.length === 0 ? (
-          <p className="text-xs text-muted-foreground py-2">
-            No destination changes since the last save.
-          </p>
-        ) : (
-          <div className="overflow-x-auto border rounded-md">
-            <table className="w-full text-xs">
-              <thead>
-                <tr className="border-b bg-muted/40 text-muted-foreground">
-                  <th className="px-3 py-2 text-left font-medium">Destination</th>
-                  <th className="px-3 py-2 text-left font-medium"></th>
-                  <th className="px-3 py-2 text-right font-medium">Before</th>
-                  <th className="px-3 py-2 text-right font-medium">After</th>
-                  <th className="px-3 py-2 text-right font-medium">Δ XLM</th>
-                </tr>
-              </thead>
-              <tbody>
-                {diff.destinations.map((d) => (
-                  <tr key={d.address} className="border-b last:border-0">
-                    <td className="px-3 py-2">
-                      <ShortAddress address={d.address} network={network as "public" | "testnet"} />
-                    </td>
-                    <td className="px-3 py-2">
-                      <DeltaBadge kind={d.kind} />
-                    </td>
-                    <td className="px-3 py-2 text-right tabular-nums font-mono">{formatXlm(d.beforeXlm)}</td>
-                    <td className="px-3 py-2 text-right tabular-nums font-mono">{formatXlm(d.afterXlm)}</td>
-                    <td className={`px-3 py-2 text-right tabular-nums font-mono font-semibold ${d.deltaXlm > 0 ? "text-green-500" : d.deltaXlm < 0 ? "text-red-500" : ""}`}>
-                      {d.deltaXlm > 0 ? "+" : ""}{formatXlm(d.deltaXlm)}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+      {showAllSaves && (
+        <div className="mt-2 mb-3 rounded-md border border-border bg-muted/20 px-3 py-1 divide-y divide-border/60">
+          {newSaveId && (
+            <div className="flex items-center gap-2 text-xs py-1">
+              <Check className="h-3 w-3 text-green-500 shrink-0" />
+              <span className="font-mono">
+                {formatXlm(currentResult.totalXlmProceeds)} XLM
+                {xlmUsdPrice != null && (
+                  <span className="text-muted-foreground ml-1">({formatUsdEstimate(currentResult.totalXlmProceeds, xlmUsdPrice)})</span>
+                )}
+              </span>
+              <span className="text-[10px] text-muted-foreground">(just saved this run)</span>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="ml-auto h-6 px-2 text-xs text-muted-foreground"
+                onClick={() => onDelete(newSaveId)}
+                title="Undo this run's save"
+              >
+                <Trash2 className="h-3 w-3" />
+              </Button>
+            </div>
+          )}
+          {priorSave.matches.map((a, i) => (
+            <SavedEntryRow key={a.id} analysis={a} xlmUsdPrice={xlmUsdPrice} isLatest={i === 0} onDelete={onDelete} />
+          ))}
+        </div>
+      )}
+
+      {skippedUnchanged ? (
+        <p className="text-xs text-muted-foreground flex items-center gap-1.5 mt-2">
+          <Check className="h-3.5 w-3.5 text-green-500" />
+          No changes since the last save — not saved again.
+        </p>
+      ) : (
+        <>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-3">
+            {diff.fields.map((f) => (
+              <FieldDeltaCard
+                key={f.key}
+                label={f.label}
+                before={f.before}
+                after={f.after}
+                delta={f.delta}
+                xlmUsdPrice={xlmUsdPrice}
+                isXlmAmount={f.key !== "totalAssetSold"}
+              />
+            ))}
           </div>
-        )}
-      </div>
+
+          <div className="mt-4">
+            <h5 className="text-xs font-semibold text-muted-foreground mb-1.5">
+              Destination Changes
+            </h5>
+            {diff.destinations.length === 0 ? (
+              <p className="text-xs text-muted-foreground py-2">
+                No destination changes since the last save.
+              </p>
+            ) : (
+              <div className="overflow-x-auto border rounded-md">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="border-b bg-muted/40 text-muted-foreground">
+                      <th className="px-3 py-2 text-left font-medium">Destination</th>
+                      <th className="px-3 py-2 text-left font-medium"></th>
+                      <th className="px-3 py-2 text-right font-medium">Before</th>
+                      <th className="px-3 py-2 text-right font-medium">After</th>
+                      <th className="px-3 py-2 text-right font-medium">Δ XLM</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {diff.destinations.map((d) => (
+                      <tr key={d.address} className="border-b last:border-0">
+                        <td className="px-3 py-2">
+                          <ShortAddress address={d.address} network={network as "public" | "testnet"} />
+                        </td>
+                        <td className="px-3 py-2">
+                          <DeltaBadge kind={d.kind} />
+                        </td>
+                        <td className="px-3 py-2 text-right tabular-nums font-mono">
+                          {formatXlm(d.beforeXlm)}
+                          {xlmUsdPrice != null && (
+                            <div className="text-[10px] font-normal text-muted-foreground">{formatUsdEstimate(d.beforeXlm, xlmUsdPrice)}</div>
+                          )}
+                        </td>
+                        <td className="px-3 py-2 text-right tabular-nums font-mono">
+                          {formatXlm(d.afterXlm)}
+                          {xlmUsdPrice != null && (
+                            <div className="text-[10px] font-normal text-muted-foreground">{formatUsdEstimate(d.afterXlm, xlmUsdPrice)}</div>
+                          )}
+                        </td>
+                        <td className={`px-3 py-2 text-right tabular-nums font-mono font-semibold ${d.deltaXlm > 0 ? "text-green-500" : d.deltaXlm < 0 ? "text-red-500" : ""}`}>
+                          {d.deltaXlm > 0 ? "+" : ""}{formatXlm(d.deltaXlm)}
+                          {xlmUsdPrice != null && (
+                            <div className="text-[10px] font-normal text-muted-foreground">
+                              {d.deltaXlm > 0 ? "+" : ""}{formatUsdEstimate(d.deltaXlm, xlmUsdPrice)}
+                            </div>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -205,7 +333,7 @@ export function AssetSalesTab() {
   const router = useRouter();
   const { settings, updateSettings } = useSettings();
   const { upsert: upsertSearch } = useSavedSearches();
-  const { analyses: savedAnalyses, saveAnalysis } = useSavedAnalyses();
+  const { analyses: savedAnalyses, saveAnalysis, remove: removeSavedAnalysis } = useSavedAnalyses();
   const {
     history: searchHistory,
     upsert: upsertHistory,
@@ -429,35 +557,41 @@ export function AssetSalesTab() {
           );
           if (signal.aborted) return;
 
-          // Prior saves of this exact asset — surfaced as a badge instead of
-          // silently auto-saving another identical-looking entry.
+          // Prior saves of this exact asset — used to skip a redundant save
+          // when nothing actually changed, and to render the diff below.
           const key = assetKey({ assetCode, issuer, network: settings.network });
-          const priorMatches = savedAnalyses.filter(
-            (a) => assetKey(a) === key,
-          );
+          const priorMatches = savedAnalyses
+            .filter((a) => assetKey(a) === key)
+            .sort((a, b) => b.timestamp - a.timestamp);
           const priorSave: PriorSaveInfo | null = priorMatches.length
-            ? {
-                count: priorMatches.length,
-                lastAnalysis: priorMatches.reduce((newest, a) =>
-                  a.timestamp > newest.timestamp ? a : newest,
-                ),
-              }
+            ? { matches: priorMatches }
             : null;
+          const unchanged = priorSave
+            ? isUnchangedSince(priorSave.matches[0], result)
+            : false;
+
+          let newSaveId: string | undefined;
+          if (!unchanged) {
+            // Auto-save to Saved Analyses on completion — skipped when identical
+            // to the most recent prior save, so re-running a static asset doesn't
+            // pile up duplicate entries.
+            newSaveId = saveAnalysis({
+              name: `${assetCode} — ${new Date().toLocaleDateString()}`,
+              assetCode,
+              issuer,
+              distribAddresses: scanAccounts,
+              network: settings.network,
+              result,
+            });
+          }
 
           updateRow(i, {
             status: "done",
             result,
             priorSave,
+            skippedUnchanged: unchanged,
+            newSaveId,
             elapsedMs: Date.now() - startedAt,
-          });
-          // Auto-save to Saved Analyses on completion
-          saveAnalysis({
-            name: `${assetCode} — ${new Date().toLocaleDateString()}`,
-            assetCode,
-            issuer,
-            distribAddresses: scanAccounts,
-            network: settings.network,
-            result,
           });
           upsertSearch({
             type: "asset",
@@ -526,6 +660,20 @@ export function AssetSalesTab() {
       });
     }
     setAllSaved(true);
+  };
+
+  const handleDeleteSavedAnalysis = (rowIndex: number, id: string) => {
+    removeSavedAnalysis(id);
+    setRows((prev) =>
+      prev.map((r, idx) => {
+        if (idx !== rowIndex || !r.priorSave) return r;
+        return {
+          ...r,
+          newSaveId: r.newSaveId === id ? undefined : r.newSaveId,
+          priorSave: { matches: r.priorSave.matches.filter((a) => a.id !== id) },
+        };
+      }),
+    );
   };
 
   const toggleExpand = (i: number) =>
@@ -866,12 +1014,22 @@ export function AssetSalesTab() {
                       {formatDuration(row.elapsedMs)}
                     </span>
                   )}
-                  {row.priorSave && (
+                  {row.priorSave && row.priorSave.matches.length > 0 && (
                     <span
-                      className="text-[10px] rounded-full border border-border px-2 py-0.5 text-muted-foreground whitespace-nowrap"
-                      title={`Already saved ${row.priorSave.count}× before — see "Since Last Save" below for the full diff`}
+                      className={`text-[10px] rounded-full border px-2 py-0.5 whitespace-nowrap ${
+                        row.skippedUnchanged
+                          ? "border-green-500/30 bg-green-500/10 text-green-500"
+                          : "border-border text-muted-foreground"
+                      }`}
+                      title={
+                        row.skippedUnchanged
+                          ? "Unchanged since last save — not saved again"
+                          : `Saved ${row.priorSave.matches.length}× before — see "Since Last Save" below for the full diff`
+                      }
                     >
-                      saved {row.priorSave.count}× before
+                      {row.skippedUnchanged
+                        ? "unchanged, not saved"
+                        : `saved ${row.priorSave.matches.length}× before`}
                     </span>
                   )}
                   <ProceedsStatusBadge status={row.status} />
@@ -949,13 +1107,18 @@ export function AssetSalesTab() {
                     showProgressBar
                     showGroupAction
                     undistributedXlm={row.result.estimatedOnHandXlm}
+                    xlmUsdPrice={xlmUsdPrice}
                   />
 
-                  {row.priorSave && (
+                  {row.priorSave && row.priorSave.matches.length > 0 && (
                     <SinceLastSave
                       priorSave={row.priorSave}
                       currentResult={row.result}
                       network={settings.network}
+                      xlmUsdPrice={xlmUsdPrice}
+                      skippedUnchanged={!!row.skippedUnchanged}
+                      newSaveId={row.newSaveId}
+                      onDelete={(id) => handleDeleteSavedAnalysis(i, id)}
                     />
                   )}
                 </div>

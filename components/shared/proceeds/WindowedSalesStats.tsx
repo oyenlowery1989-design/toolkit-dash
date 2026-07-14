@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { formatXlm } from "@/lib/format";
 import { getWindowedSalesTotals } from "@/lib/proceeds-investigator/windowed";
 import type { ProceedsLedgerEntry } from "@/lib/proceeds-investigator/types";
@@ -15,7 +16,10 @@ interface WindowedSalesStatsProps {
 
 /** Last-24h / last-7d sold totals, derived from an already-fetched proceedsLedger (dex_sale/path_sale entries carry real tx timestamps). */
 export function WindowedSalesStats({ ledger, assetCode, xlmUsdPrice, nowMs }: WindowedSalesStatsProps) {
-  const { last24h, last7d } = getWindowedSalesTotals(ledger, nowMs ?? Date.now());
+  // Date.now() sampled via useState's lazy initializer (runs once, not on every
+  // render) instead of directly in the render body, to stay a pure render.
+  const [mountedAt] = useState(() => Date.now());
+  const { last24h, last7d } = getWindowedSalesTotals(ledger, nowMs ?? mountedAt);
   const fmtUsd = (n: number) =>
     xlmUsdPrice != null ? (n * xlmUsdPrice).toLocaleString(undefined, { maximumFractionDigits: 0 }) : undefined;
 
