@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ChevronDown, ChevronRight, GitCompareArrows } from "lucide-react";
 import {
   Card,
@@ -18,9 +18,10 @@ import {
 } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { ShortAddress } from "@/components/shared/ShortAddress";
-import { formatXlm } from "@/lib/format";
+import { formatXlm, formatUsdEstimate } from "@/lib/format";
 import { comparableGroups, diffSnapshots, type DestinationDeltaKind } from "@/lib/saved-analyses/diff";
 import type { SavedAnalysis } from "@/hooks/use-saved-analyses";
+import { useXlmUsdPrice } from "@/hooks/use-xlm-usd-price";
 
 export function DeltaBadge({ kind }: { kind: DestinationDeltaKind }) {
   const map: Record<DestinationDeltaKind, { label: string; className: string }> = {
@@ -37,28 +38,58 @@ export function DeltaBadge({ kind }: { kind: DestinationDeltaKind }) {
   );
 }
 
-export function FieldDeltaCard({ label, before, after, delta }: { label: string; before: number; after: number; delta: number }) {
+export function FieldDeltaCard({
+  label,
+  before,
+  after,
+  delta,
+  xlmUsdPrice,
+  isXlmAmount = true,
+}: {
+  label: string;
+  before: number;
+  after: number;
+  delta: number;
+  xlmUsdPrice?: number | null;
+  isXlmAmount?: boolean;
+}) {
   const sign = delta > 0 ? "+" : delta < 0 ? "" : "±";
   const color = delta > 0 ? "text-green-500" : delta < 0 ? "text-red-500" : "text-muted-foreground";
+  const showUsd = isXlmAmount && xlmUsdPrice != null;
   return (
     <div className="rounded-lg border border-border bg-card px-3 py-2">
       <p className="text-xs text-muted-foreground">{label}</p>
       <p className="text-sm font-mono mt-0.5">
         {formatXlm(before)} → {formatXlm(after)}
       </p>
+      {showUsd && (
+        <p className="text-[10px] text-muted-foreground tabular-nums">
+          {formatUsdEstimate(before, xlmUsdPrice!)} → {formatUsdEstimate(after, xlmUsdPrice!)}
+        </p>
+      )}
       <p className={`text-xs font-mono font-semibold mt-0.5 ${color}`}>
         {sign}{formatXlm(Math.abs(delta))}
+        {showUsd && (
+          <span className="font-normal text-muted-foreground ml-1">
+            ({sign}{formatUsdEstimate(Math.abs(delta), xlmUsdPrice!)})
+          </span>
+        )}
       </p>
     </div>
   );
 }
 
 export function SnapshotCompare({ analyses }: { analyses: SavedAnalysis[] }) {
+  const { price: xlmUsdPrice, ensure: ensureXlmUsdPrice } = useXlmUsdPrice();
   const [show, setShow] = useState(false);
   const groups = useMemo(() => comparableGroups(analyses), [analyses]);
   const [groupKey, setGroupKey] = useState<string>("");
   const [compareId, setCompareId] = useState<string>("");
   const [baselineId, setBaselineId] = useState<string>("");
+
+  useEffect(() => {
+    if (show) ensureXlmUsdPrice();
+  }, [show, ensureXlmUsdPrice]);
 
   const activeGroup = groups.find((g) => g.key === groupKey) ?? groups[0];
   const snapshots = activeGroup?.snapshots ?? [];
@@ -148,7 +179,15 @@ export function SnapshotCompare({ analyses }: { analyses: SavedAnalysis[] }) {
             <>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                 {diff.fields.map((f) => (
-                  <FieldDeltaCard key={f.key} label={f.label} before={f.before} after={f.after} delta={f.delta} />
+                  <FieldDeltaCard
+                    key={f.key}
+                    label={f.label}
+                    before={f.before}
+                    after={f.after}
+                    delta={f.delta}
+                    xlmUsdPrice={xlmUsdPrice}
+                    isXlmAmount={f.key !== "totalAssetSold"}
+                  />
                 ))}
               </div>
 
@@ -177,10 +216,25 @@ export function SnapshotCompare({ analyses }: { analyses: SavedAnalysis[] }) {
                             <td className="px-3 py-2">
                               <DeltaBadge kind={d.kind} />
                             </td>
-                            <td className="px-3 py-2 text-right tabular-nums font-mono">{formatXlm(d.beforeXlm)}</td>
-                            <td className="px-3 py-2 text-right tabular-nums font-mono">{formatXlm(d.afterXlm)}</td>
+                            <td className="px-3 py-2 text-right tabular-nums font-mono">
+                              {formatXlm(d.beforeXlm)}
+                              {xlmUsdPrice != null && (
+                                <div className="text-[10px] font-normal text-muted-foreground">{formatUsdEstimate(d.beforeXlm, xlmUsdPrice)}</div>
+                              )}
+                            </td>
+                            <td className="px-3 py-2 text-right tabular-nums font-mono">
+                              {formatXlm(d.afterXlm)}
+                              {xlmUsdPrice != null && (
+                                <div className="text-[10px] font-normal text-muted-foreground">{formatUsdEstimate(d.afterXlm, xlmUsdPrice)}</div>
+                              )}
+                            </td>
                             <td className={`px-3 py-2 text-right tabular-nums font-mono font-semibold ${d.deltaXlm > 0 ? "text-green-500" : d.deltaXlm < 0 ? "text-red-500" : ""}`}>
                               {d.deltaXlm > 0 ? "+" : ""}{formatXlm(d.deltaXlm)}
+                              {xlmUsdPrice != null && (
+                                <div className="text-[10px] font-normal text-muted-foreground">
+                                  {d.deltaXlm > 0 ? "+" : ""}{formatUsdEstimate(d.deltaXlm, xlmUsdPrice)}
+                                </div>
+                              )}
                             </td>
                           </tr>
                         ))}

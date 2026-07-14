@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Download, UserSearch, Layers, Wallet, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ShortAddress } from "@/components/shared/ShortAddress";
-import { formatXlm } from "@/lib/format";
+import { formatXlm, formatUsdEstimate } from "@/lib/format";
 import { SaveToGroupButton } from "./SaveToGroupButton";
 import { useHorizonServer } from "@/hooks/use-horizon-server";
 import { fetchXlmBalance, type XlmBalanceValue } from "@/lib/horizon-balance";
@@ -45,6 +45,8 @@ interface ProceedsDestinationsTableProps {
    *  (e.g. AssetProceedsResult.estimatedOnHandXlm). Rendered as a synthetic final
    *  row so the percent column visibly accounts for the full totalXlmProceeds. */
   undistributedXlm?: number;
+  /** Shows an approximate $ estimate under each XLM amount when provided. Omit to hide. */
+  xlmUsdPrice?: number | null;
 }
 
 /** Standard table for a list of counterparty/destination address summaries
@@ -67,6 +69,7 @@ export function ProceedsDestinationsTable({
   emptyMessage = "No destination outflows found.",
   showBalanceColumn = true,
   undistributedXlm,
+  xlmUsdPrice,
 }: ProceedsDestinationsTableProps) {
   const hasActions = !!onDownloadCsv || !!onInvestigate || showGroupAction || !!onAddToGroup;
   const colSpan =
@@ -155,7 +158,12 @@ export function ProceedsDestinationsTable({
                 <td className="px-3 py-2 text-xs">
                   <ShortAddress address={row.address} network={network} />
                 </td>
-                <td className="px-3 py-2 text-right tabular-nums">{formatXlm(row.totalXlm)}</td>
+                <td className="px-3 py-2 text-right tabular-nums">
+                  {formatXlm(row.totalXlm)}
+                  {xlmUsdPrice != null && (
+                    <div className="text-[10px] font-normal text-muted-foreground">{formatUsdEstimate(row.totalXlm, xlmUsdPrice)}</div>
+                  )}
+                </td>
                 {showPercentColumn && (
                   <td className="px-3 py-2 text-right tabular-nums">
                     {showProgressBar ? (
@@ -277,6 +285,9 @@ export function ProceedsDestinationsTable({
               </td>
               <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">
                 {formatXlm(undistributedXlm)}
+                {xlmUsdPrice != null && (
+                  <div className="text-[10px] font-normal">{formatUsdEstimate(undistributedXlm, xlmUsdPrice)}</div>
+                )}
               </td>
               {showPercentColumn && (
                 <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">

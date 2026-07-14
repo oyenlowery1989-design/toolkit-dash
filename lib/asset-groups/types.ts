@@ -14,7 +14,7 @@ export const ROLE_LABELS: Record<GroupMemberRole, string> = {
   distributor:  "Distributor",
   creator:      "Creator",
   intermediary: "Intermediary",
-  bank:         "Bank / Consolidation",
+  bank:         "Bank",
   withdrawal:   "Withdrawal",
   destination:  "Destination",
   service:      "Service (CEX/DEX)",
