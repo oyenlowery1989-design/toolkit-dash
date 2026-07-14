@@ -90,7 +90,6 @@ type TxStatus =
   | "submitting"
   | "success"
   | "error";
-type MemoType = "none" | "text" | "id" | "hash" | "return";
 type PaymentTab = "send" | "path" | "claimable" | "feebump";
 type PathMode = "strict-receive" | "strict-send";
 
@@ -166,16 +165,6 @@ function assetLabel(keyOrType: string, code?: string): string {
   return keyOrType.split(":")[0]; // called with "CODE:ISSUER" key
 }
 
-function buildMemo(type: MemoType, value: string): Memo {
-  switch (type) {
-    case "text":   return Memo.text(value);
-    case "id":     return Memo.id(value);
-    case "hash":   return Memo.hash(value);
-    case "return": return Memo.return(value);
-    default:       return Memo.none();
-  }
-}
-
 function isValidAssetCode(code: string): boolean {
   return /^[a-zA-Z0-9]{1,12}$/.test(code);
 }
@@ -248,8 +237,7 @@ export default function PaymentsPage() {
   const [innerTxParseError, setInnerTxParseError] = useState<string | null>(null);
   const [feeBumpBaseFee, setFeeBumpBaseFee] = useState("200");
 
-  // -- Memo
-  const [memoType, setMemoType] = useState<MemoType>("none");
+  // -- Memo (plain text; empty = no memo)
   const [memoValue, setMemoValue] = useState("");
 
   // -- Fee
@@ -863,8 +851,8 @@ export default function PaymentsPage() {
       }
 
       // 4. Add memo (not for claimable balance — no memo on that op, but it's still valid)
-      if (memoType !== "none" && memoValue.trim()) {
-        builder.addMemo(buildMemo(memoType, memoValue.trim()));
+      if (memoValue.trim()) {
+        builder.addMemo(Memo.text(memoValue.trim()));
       }
 
       // 5. Build & sign
@@ -968,8 +956,8 @@ export default function PaymentsPage() {
               startingBalance: legs[0].amount,
             }),
           );
-          if (memoType !== "none" && memoValue.trim()) {
-            builder2.addMemo(buildMemo(memoType, memoValue.trim()));
+          if (memoValue.trim()) {
+            builder2.addMemo(Memo.text(memoValue.trim()));
           }
           const tx2 = builder2.setTimeout(30).build();
           tx2.sign(keypair);
@@ -1029,7 +1017,6 @@ export default function PaymentsPage() {
     setParsedInnerTxSigs(null);
     setInnerTxParseError(null);
     setFeeBumpBaseFee("200");
-    setMemoType("none");
     setMemoValue("");
     setFee("100");
     setSecretKeyDisplay("");
@@ -2128,29 +2115,12 @@ export default function PaymentsPage() {
             {/* Memo */}
             <div className="space-y-2">
               <Label className="text-sm">Memo</Label>
-              <Select value={memoType} onValueChange={(v) => setMemoType(v as MemoType)}>
-                <SelectTrigger className="h-8 text-sm">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">None</SelectItem>
-                  <SelectItem value="text">Text</SelectItem>
-                  <SelectItem value="id">ID</SelectItem>
-                  <SelectItem value="hash">Hash</SelectItem>
-                  <SelectItem value="return">Return</SelectItem>
-                </SelectContent>
-              </Select>
-              {memoType !== "none" && (
-                <Input
-                  className="h-8 text-sm"
-                  placeholder={
-                    memoType === "text" ? "Memo text…" :
-                    memoType === "id" ? "12345" : "64-char hex…"
-                  }
-                  value={memoValue}
-                  onChange={(e) => setMemoValue(e.target.value)}
-                />
-              )}
+              <Input
+                className="h-8 text-sm"
+                placeholder="Memo text (optional)…"
+                value={memoValue}
+                onChange={(e) => setMemoValue(e.target.value)}
+              />
             </div>
 
             {/* Fee */}
@@ -2409,10 +2379,10 @@ export default function PaymentsPage() {
                   <span className="font-mono">{fee} stroops</span>
                   <span className="text-muted-foreground">Network:</span>
                   <span>{NETWORK_LABELS[network]}</span>
-                  {memoType !== "none" && memoValue.trim() && (
+                  {memoValue.trim() && (
                     <>
                       <span className="text-muted-foreground">Memo:</span>
-                      <span className="font-mono text-xs break-all">({memoType}) {memoValue.trim()}</span>
+                      <span className="font-mono text-xs break-all">{memoValue.trim()}</span>
                     </>
                   )}
                 </div>
@@ -2465,10 +2435,10 @@ export default function PaymentsPage() {
                 <span className="font-mono">{fee} stroops</span>
                 <span className="text-muted-foreground">Network:</span>
                 <span>{NETWORK_LABELS[network]}</span>
-                {memoType !== "none" && memoValue.trim() && (
+                {memoValue.trim() && (
                   <>
                     <span className="text-muted-foreground">Memo:</span>
-                    <span className="font-mono text-xs break-all">({memoType}) {memoValue.trim()}</span>
+                    <span className="font-mono text-xs break-all">{memoValue.trim()}</span>
                   </>
                 )}
               </div>
