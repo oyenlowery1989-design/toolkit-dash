@@ -185,6 +185,25 @@ export function AddressBalancesPanel() {
     });
   };
 
+  const fetchRowInto = async (index: number, address: string, horizonUrl: string, signal: AbortSignal) => {
+    updateRow(index, { status: "loading" });
+    const result = await fetchAddressBalance(horizonUrl, address, signal);
+    if (signal.aborted) return;
+    if (result.status === "ok") {
+      updateRow(index, {
+        status: "done",
+        total: result.total,
+        available: result.available,
+        locked: result.locked,
+        lockReason: result.lockReason,
+      });
+    } else if (result.status === "unfunded") {
+      updateRow(index, { status: "unfunded" });
+    } else {
+      updateRow(index, { status: "error", error: "Failed to fetch balance." });
+    }
+  };
+
   const handleRun = async () => {
     const addresses = parseAddresses(addressesText);
     if (addresses.length === 0) {
@@ -223,28 +242,51 @@ export function AddressBalancesPanel() {
     await runConcurrent(
       addresses,
       CONCURRENCY,
-      async (i, address) => {
-        updateRow(i, { status: "loading" });
-        const result = await fetchAddressBalance(horizonUrl, address, signal);
-        if (signal.aborted) return;
-        if (result.status === "ok") {
-          updateRow(i, {
-            status: "done",
-            total: result.total,
-            available: result.available,
-            locked: result.locked,
-            lockReason: result.lockReason,
-          });
-        } else if (result.status === "unfunded") {
-          updateRow(i, { status: "unfunded" });
-        } else {
-          updateRow(i, { status: "error", error: "Failed to fetch balance." });
-        }
-      },
+      (i, address) => fetchRowInto(i, address, horizonUrl, signal),
       signal,
     );
 
     setRunning(false);
+    setRows((currentRows) => {
+      scanState.saveImmediate(currentRows, false);
+      return currentRows;
+    });
+  };
+
+  // Re-fetches every currently listed address without re-parsing the
+  // textarea — same rows, fresh balance/locked status.
+  const handleRecheckAll = async () => {
+    if (rows.length === 0 || running) return;
+    setInterrupted(false);
+    abortRef.current?.abort();
+    abortRef.current = new AbortController();
+    const signal = abortRef.current.signal;
+    const addresses = rows.map((r) => r.address);
+    setRunning(true);
+    const horizonUrl = resolveHorizonUrl(settings);
+
+    await runConcurrent(
+      addresses,
+      CONCURRENCY,
+      (i, address) => fetchRowInto(i, address, horizonUrl, signal),
+      signal,
+    );
+
+    setRunning(false);
+    setRows((currentRows) => {
+      scanState.saveImmediate(currentRows, false);
+      return currentRows;
+    });
+  };
+
+  // Re-fetches a single row in place — handy after resolving a locked
+  // account or if you suspect its balance just changed.
+  const handleRecheckRow = async (address: string) => {
+    if (running) return;
+    const index = rows.findIndex((r) => r.address === address);
+    if (index === -1) return;
+    const horizonUrl = resolveHorizonUrl(settings);
+    await fetchRowInto(index, address, horizonUrl, new AbortController().signal);
     setRows((currentRows) => {
       scanState.saveImmediate(currentRows, false);
       return currentRows;
@@ -390,13 +432,24 @@ export function AddressBalancesPanel() {
           </Button>
           {rows.length > 0 && (
             <Button
+              variant="outline"
+              size="sm"
+              onClick={handleRecheckAll}
+              disabled={running}
+            >
+              <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
+              Recheck All
+            </Button>
+          )}
+          {rows.length > 0 && (
+            <Button
               variant="ghost"
               size="sm"
               onClick={handleClear}
               disabled={running}
               className="text-muted-foreground"
             >
-              <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
+              <X className="mr-1.5 h-3.5 w-3.5" />
               Clear
             </Button>
           )}
@@ -516,7 +569,20 @@ export function AddressBalancesPanel() {
                     <ShortAddress address={row.address} network={settings.network} />
                   </TableCell>
                   <TableCell>
-                    <StatusBadge status={row.status} />
+                    <span className="flex items-center gap-1.5">
+                      <StatusBadge status={row.status} />
+                      {(row.status === "done" || row.status === "unfunded" || row.status === "error") && (
+                        <button
+                          type="button"
+                          onClick={() => handleRecheckRow(row.address)}
+                          disabled={running}
+                          title="Recheck this address"
+                          className="text-muted-foreground/50 hover:text-foreground transition-colors disabled:opacity-30"
+                        >
+                          <RefreshCw className="h-3 w-3" />
+                        </button>
+                      )}
+                    </span>
                     {row.status === "error" && row.error && (
                       <p className="text-xs text-destructive mt-1">{row.error}</p>
                     )}
