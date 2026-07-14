@@ -37,7 +37,9 @@ export async function fetchAddressBalance(
     const data = (await res.json()) as FullHorizonAccount;
     const { total, available } = calcAvailableXlm(data);
     const { locked, reason } = checkSignerCanPay(data, address);
-    return { status: "ok", total, available, locked, lockReason: reason };
+    // Locked accounts have no signer able to authorize a payment — nothing
+    // is actually withdrawable, regardless of the reserve-adjusted balance.
+    return { status: "ok", total, available: locked ? 0 : available, locked, lockReason: reason };
   } catch {
     return { status: "error" };
   } finally {
