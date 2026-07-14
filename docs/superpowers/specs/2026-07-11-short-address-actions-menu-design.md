@@ -21,45 +21,73 @@ Adding two more inline icons makes already-tight rows (see: Issuer/Distrib rows
 in Asset Lookup, holder tables in Asset Manager) more cramped. Consolidate into
 a dropdown instead.
 
-## Design
+## Design (revised — adaptive inline/overflow, per Fable review 2026-07-11)
 
-### Component changes — `components/shared/ShortAddress.tsx`
+Always-on `⋮` was rejected: it adds permanent visual noise to already-dense
+rows and turns one-click actions into two-click. Instead, actions render as
+inline icon-buttons next to the address whenever there's room, and collapse
+to a single `⋮` overflow menu only when there isn't.
 
-- Address text: **unchanged**. Click still copies to clipboard; Copy/Check icon
-  still swaps on hover.
-- Badge (INTERMEDIARY / CREATOR / role / group) and colored dot: **unchanged**,
-  stay inline next to the address text.
-- **Removed**: the existing hover-only external-link icon and hover-only "+"
-  quick-add icon.
-- **Added**: one always-visible `⋮` (MoreVertical) icon-button trigger that
-  opens a dropdown menu, in this order:
-  1. **Copy address** — same `navigator.clipboard.writeText` as clicking the
-     address text; closes menu on click (standard item behavior)
-  2. **Open in Stellar.Expert** — external link, same URL construction as
-     today (`https://stellar.expert/explorer/{network}/account/{address}`);
-     hidden entirely when `network` isn't `"public"`/`"testnet"` (same gating
-     as today's icon)
-  3. **Add to Address Book** — same `handleQuickAdd` navigation to
-     `/address-book?add=...`; only rendered when
-     `resolved.source === "none" && !role` (same gating as today's icon)
-  4. **Investigate** — `router.push(\`/address-investigator?address=${address}\`)`
-  5. **Show XLM Balance** — see below
+### Action list (single source of truth)
+
+One `actions` array (id, icon, label, onSelect, `visible` gate) drives both
+render paths — mapped once to inline icon-buttons, once to
+`<DropdownMenuItem>`s, no duplicated logic:
+
+1. **Copy address** — same `navigator.clipboard.writeText` as clicking the
+   address text
+2. **Open in Stellar.Expert** — external link, same URL construction as today
+   (`https://stellar.expert/explorer/{network}/account/{address}`); hidden
+   entirely when `network` isn't `"public"`/`"testnet"` (same gating as today)
+3. **Add to Address Book** — same `handleQuickAdd` navigation to
+   `/address-book?add=...`; only rendered when
+   `resolved.source === "none" && !role` (same gating as today)
+4. **Investigate** — `router.push(\`/address-investigator?address=${address}\`)`
+5. **Show XLM Balance** — see below
+
+Address text, dot, and badge are **never** part of the collapsible group —
+always rendered inline, unchanged from today.
+
+### Adaptive collapse behavior
+
+- **All-or-nothing**: either all action icons render inline (no `⋮` at all),
+  or none do and a single always-visible `⋮` (MoreVertical) opens a dropdown
+  containing all applicable actions. No partial priority-nav partitioning —
+  overkill for ~4 icons and avoids the hardest part of that pattern entirely.
+- **Detection is wrap-based, not width-measured**: the address+badge cluster
+  and the icon cluster sit in the same `flex-wrap` row. A `ResizeObserver` on
+  the parent element (`useLayoutEffect`-set-up) checks whether the icon
+  cluster's `offsetTop` exceeds the address cluster's `offsetTop` — if so, it
+  wrapped to a second line, meaning there's not enough room; collapse to `⋮`.
+- **Hysteresis to prevent flicker**: on collapse, record the pixel width that
+  was needed (address cluster + icon cluster, measured just before
+  collapsing). Only re-expand once the parent's `clientWidth` exceeds that
+  recorded width plus a small slack margin.
+- **SSR/hydration-safe default**: initial render state is **collapsed**
+  (`⋮` only) — deterministic on server and client, no mismatch.
+  `useLayoutEffect` expands to inline icons before first paint if space
+  allows, so there's no visible flicker in the common case.
+- Guard the ResizeObserver callback with a compare-before-`setState` (and
+  wrap in `requestAnimationFrame`) to avoid resize-observer loop warnings/
+  layout thrash in dense tables with many `ShortAddress` instances.
 
 ### Show XLM Balance behavior
 
-- Clicking this item does **not** close the menu (Radix `onSelect` calls
-  `e.preventDefault()`).
-- The item's own label swaps in place: `"Show XLM Balance"` → spinner →
-  `"12,345.67 XLM"` (2dp, via existing `formatXlm`-style formatting) or
+- Result renders as a **small inline chip next to the badge**, not trapped
+  inside the menu — so it survives the menu closing (click-away, Escape,
+  scroll) and works identically whether triggered from an inline icon or a
+  menu item.
+- Chip states: hidden until triggered → spinner → `"12,345.67 XLM"` (2dp) or
   `"Error"` / `"Unfunded"` on failure/404.
 - Fetch via the existing `fetchXlmBalance(horizonUrl, address, signal)` from
   `lib/horizon-balance.ts` — the same fetcher `ProceedsDestinationsTable`'s
-  "Holds Now" column already uses. No new fetch logic.
+  "Holds Now" column already uses. No new fetch logic. Abort in-flight fetch
+  on unmount.
 - `horizonUrl` resolved via `useSettings()` + `resolveHorizonUrl(settings)`
   (same pattern used throughout the codebase) — `ShortAddress` does not
   currently import `useSettings`, this is a new dependency for the component.
-- Result is component-local state, not cached/shared across renders — re-
-  opening the menu re-fetches. No persistence.
+- Result is component-local state, not cached/shared across renders — a new
+  fetch is triggered each time the action is invoked. No persistence.
 
 ### New shared UI primitive
 
