@@ -1418,12 +1418,28 @@ export default function PaymentsPage() {
                                 size="sm"
                                 className="h-9 px-2 text-xs shrink-0"
                                 onClick={() => updateLeg(leg.id, { amount: maxAmt })}
+                                title={`Max spendable: ${maxAmt}`}
                               >
                                 Max
                               </Button>
                             );
                           })()}
                         </div>
+                        {(() => {
+                          const bal = accountBalances.find((b) => b.key === leg.assetKey);
+                          if (!bal) return null;
+                          const raw = parseFloat(bal.balance);
+                          const sellingLiab = parseFloat(bal.sellingLiabilities || "0");
+                          const estOps = legs.length + legs.filter((l) => l.removeTrustline && l.assetKey !== "native").length;
+                          const maxAmt = leg.assetKey === "native"
+                            ? nativeMaxSpendable(bal, Number(fee) || 100, estOps)
+                            : Math.max(0, raw - sellingLiab).toFixed(7);
+                          return (
+                            <p className="text-xs text-muted-foreground">
+                              Max spendable: {parseFloat(maxAmt).toLocaleString(undefined, { maximumFractionDigits: 7 })} {bal.assetCode}
+                            </p>
+                          );
+                        })()}
                         {leg.amount && Number(leg.amount) <= 0 && (
                           <p className="text-xs text-destructive flex items-center gap-1">
                             <AlertTriangle className="h-3 w-3 shrink-0" />
