@@ -239,8 +239,11 @@ export default function PaymentsPage() {
   const [innerTxParseError, setInnerTxParseError] = useState<string | null>(null);
   const [feeBumpBaseFee, setFeeBumpBaseFee] = useState("200");
 
-  // -- Memo (plain text; empty = no memo)
+  // -- Memo (plain text; empty = no memo). Required unless explicitly skipped —
+  // memos matter for exchange/custodial destinations, so submit stays blocked
+  // on an empty memo until the user consciously opts out.
   const [memoValue, setMemoValue] = useState("");
+  const [memoSkipped, setMemoSkipped] = useState(false);
 
   // -- Fee
   const [fee, setFee] = useState("100");
@@ -486,6 +489,7 @@ export default function PaymentsPage() {
   // ---------------------------------------------------------------------------
 
   function isFormValid(): boolean {
+    if (activeTab !== "feebump" && !memoValue.trim() && !memoSkipped) return false;
     if (activeTab === "send") {
       return legs.length > 0 && legs.every(isLegValid);
     }
@@ -1028,6 +1032,7 @@ export default function PaymentsPage() {
     setInnerTxParseError(null);
     setFeeBumpBaseFee("200");
     setMemoValue("");
+    setMemoSkipped(false);
     setFee("100");
     setSecretKeyDisplay("");
     secretKeyRef.current = "";
@@ -2131,15 +2136,32 @@ export default function PaymentsPage() {
       {activeTab !== "feebump" && (
         <Card>
           <CardContent className="grid grid-cols-2 gap-4 px-4 py-3">
-            {/* Memo */}
+            {/* Memo — required to submit unless explicitly skipped */}
             <div className="space-y-2">
               <Label className="text-sm">Memo</Label>
-              <Input
-                className="h-8 text-sm"
-                placeholder="Memo text (optional)…"
-                value={memoValue}
-                onChange={(e) => setMemoValue(e.target.value)}
-              />
+              <div className="flex gap-2">
+                <Input
+                  className="h-8 text-sm"
+                  placeholder="Memo text…"
+                  value={memoValue}
+                  onChange={(e) => setMemoValue(e.target.value)}
+                />
+                <Button
+                  type="button"
+                  variant={memoSkipped ? "default" : "outline"}
+                  size="sm"
+                  className="h-8 px-2 text-xs shrink-0"
+                  onClick={() => setMemoSkipped((v) => !v)}
+                >
+                  {memoSkipped ? "Memo skipped" : "Skip memo"}
+                </Button>
+              </div>
+              {!memoValue.trim() && !memoSkipped && (
+                <p className="text-xs text-destructive flex items-center gap-1">
+                  <AlertTriangle className="h-3 w-3 shrink-0" />
+                  Memo required — enter one or press &quot;Skip memo&quot; to continue without.
+                </p>
+              )}
             </div>
 
             {/* Fee */}
