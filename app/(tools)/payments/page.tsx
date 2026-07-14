@@ -44,6 +44,7 @@ import {
   Loader2,
   AlertTriangle,
   ShieldAlert,
+  ShieldOff,
   Eye,
   EyeOff,
   Copy,
@@ -76,6 +77,7 @@ import { useWalletsV2 } from "@/hooks/use-wallets-v2";
 import { useAutoSaveSigningKey } from "@/hooks/use-auto-save-signing-key";
 import { useHorizonServer } from "@/hooks/use-horizon-server";
 import { ShortAddress } from "@/components/shared/ShortAddress";
+import { RevokeSponsorshipPanel } from "@/components/shared/sponsorship/RevokeSponsorshipPanel";
 import { WalletSelect } from "@/components/ui/wallet-select";
 import { calcAvailableXlm } from "@/lib/stellar-reserve";
 import { checkSignerCanPay, type SignerCheckResult } from "@/lib/stellar-signer-check";
@@ -91,7 +93,7 @@ type TxStatus =
   | "submitting"
   | "success"
   | "error";
-type PaymentTab = "send" | "path" | "claimable" | "feebump";
+type PaymentTab = "send" | "path" | "claimable" | "feebump" | "sponsorship";
 type PathMode = "strict-receive" | "strict-send";
 
 interface PaymentLeg {
@@ -366,6 +368,21 @@ export default function PaymentsPage() {
     return null;
   }, [signingWalletId, wallets, secretKeyDisplay]);
 
+  // Same secret-key resolution as currentPublicKey, but keeping the Keypair
+  // itself — the Sponsorship tab signs its own transactions independently of
+  // the shared handleSubmit flow.
+  const signerKeypair = useMemo<Keypair | null>(() => {
+    try {
+      if (signingWalletId) {
+        const w = wallets.find((w) => w.id === signingWalletId);
+        return w?.secretKey ? Keypair.fromSecret(w.secretKey) : null;
+      }
+      const sk = secretKeyDisplay.trim();
+      if (sk.startsWith("S") && sk.length > 10) return Keypair.fromSecret(sk);
+    } catch {}
+    return null;
+  }, [signingWalletId, wallets, secretKeyDisplay]);
+
   // ---------------------------------------------------------------------------
   // Load account balances
   // ---------------------------------------------------------------------------
@@ -489,7 +506,7 @@ export default function PaymentsPage() {
   // ---------------------------------------------------------------------------
 
   function isFormValid(): boolean {
-    if (activeTab !== "feebump" && !memoValue.trim() && !memoSkipped) return false;
+    if (activeTab !== "feebump" && activeTab !== "sponsorship" && !memoValue.trim() && !memoSkipped) return false;
     if (activeTab === "send") {
       return legs.length > 0 && legs.every(isLegValid);
     }
@@ -1264,7 +1281,7 @@ export default function PaymentsPage() {
       <Card>
         <CardContent className="px-4 py-3">
           <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as PaymentTab)}>
-            <TabsList className="w-full grid grid-cols-4">
+            <TabsList className="w-full grid grid-cols-5">
               <TabsTrigger value="send" className="gap-1.5">
                 <Send className="h-3.5 w-3.5" />
                 Send
@@ -1280,6 +1297,10 @@ export default function PaymentsPage() {
               <TabsTrigger value="feebump" className="gap-1.5">
                 <Zap className="h-3.5 w-3.5" />
                 Fee Bump
+              </TabsTrigger>
+              <TabsTrigger value="sponsorship" className="gap-1.5">
+                <ShieldOff className="h-3.5 w-3.5" />
+                Sponsorship
               </TabsTrigger>
             </TabsList>
 
@@ -2132,14 +2153,30 @@ export default function PaymentsPage() {
                 )}
               </div>
             </TabsContent>
+
+            <TabsContent value="sponsorship" className="space-y-3 mt-3">
+              {currentPublicKey ? (
+                <RevokeSponsorshipPanel
+                  sponsorPublicKey={currentPublicKey}
+                  signerKeypair={signerKeypair}
+                  horizonServer={horizonServer}
+                  horizonUrl={horizonUrl}
+                  network={network}
+                />
+              ) : (
+                <p className="text-sm text-muted-foreground">
+                  Connect a wallet or enter a secret key above to check and revoke sponsorships.
+                </p>
+              )}
+            </TabsContent>
           </Tabs>
         </CardContent>
       </Card>
 
       {/* ================================================================== */}
-      {/* Memo + Fee side-by-side — not shown for fee bump                 */}
+      {/* Memo + Fee side-by-side — not shown for fee bump or sponsorship  */}
       {/* ================================================================== */}
-      {activeTab !== "feebump" && (
+      {activeTab !== "feebump" && activeTab !== "sponsorship" && (
         <Card>
           <CardContent className="grid grid-cols-2 gap-4 px-4 py-3">
             {/* Memo — required to submit unless explicitly skipped */}
@@ -2294,8 +2331,10 @@ export default function PaymentsPage() {
       </Card>
 
       {/* ================================================================== */}
-      {/* Submit Button                                                      */}
+      {/* Submit Button — Sponsorship tab signs/submits itself, no shared    */}
+      {/* confirm-dialog flow                                                */}
       {/* ================================================================== */}
+      {activeTab !== "sponsorship" && (
       <div className="flex justify-end">
         <Button
           onClick={handleOpenConfirm}
@@ -2324,6 +2363,7 @@ export default function PaymentsPage() {
                     : "Sign & Submit"}
         </Button>
       </div>
+      )}
 
       {/* ================================================================== */}
       {/* Error display                                                      */}

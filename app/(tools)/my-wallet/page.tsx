@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { Horizon } from "stellar-sdk";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Horizon, Keypair } from "stellar-sdk";
 import {
   Wallet,
   Globe,
@@ -30,6 +30,7 @@ import { timeAgo } from "@/lib/stellar-helpers";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ShortAddress } from "@/components/shared/ShortAddress";
+import { RevokeSponsorshipPanel } from "@/components/shared/sponsorship/RevokeSponsorshipPanel";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -315,6 +316,18 @@ export default function MyWalletPage() {
   const { activeWallet } = useActiveWallet();
   const { settings } = useSettings();
   const horizonUrl = resolveHorizonUrl(settings);
+  const horizonServer = useMemo(
+    () => new Horizon.Server(horizonUrl, { allowHttp: horizonUrl.startsWith("http://") }),
+    [horizonUrl],
+  );
+  const signerKeypair = useMemo(() => {
+    if (!activeWallet?.secretKey) return null;
+    try {
+      return Keypair.fromSecret(activeWallet.secretKey);
+    } catch {
+      return null;
+    }
+  }, [activeWallet?.secretKey]);
 
   const [details, setDetails] = useState<WalletDetails | null>(null);
   const [loading, setLoading] = useState(false);
@@ -1148,6 +1161,21 @@ export default function MyWalletPage() {
                 ) : (
                   <p className="text-sm text-green-500 font-medium">Account merged successfully. All XLM sent to destination.</p>
                 )}
+              </div>
+            </Section>
+          )}
+
+          {/* Sponsorship revoke — full wallet only, needs a signing key */}
+          {isFullWallet && (
+            <Section title="Sponsorships" defaultOpen={false}>
+              <div className="p-4">
+                <RevokeSponsorshipPanel
+                  sponsorPublicKey={activeWallet.publicKey}
+                  signerKeypair={signerKeypair}
+                  horizonServer={horizonServer}
+                  horizonUrl={horizonUrl}
+                  network={settings.network}
+                />
               </div>
             </Section>
           )}
