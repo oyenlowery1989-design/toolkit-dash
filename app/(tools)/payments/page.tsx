@@ -1241,6 +1241,12 @@ export default function PaymentsPage() {
                   {showSecret ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                 </Button>
               </div>
+              {currentPublicKey && (
+                <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                  <span>Public key:</span>
+                  <ShortAddress address={currentPublicKey} network={network} />
+                </div>
+              )}
             </div>
           )}
 
