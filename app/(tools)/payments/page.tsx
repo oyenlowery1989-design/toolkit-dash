@@ -78,6 +78,7 @@ import { useHorizonServer } from "@/hooks/use-horizon-server";
 import { ShortAddress } from "@/components/shared/ShortAddress";
 import { WalletSelect } from "@/components/ui/wallet-select";
 import { calcAvailableXlm } from "@/lib/stellar-reserve";
+import { checkSignerCanPay, type SignerCheckResult } from "@/lib/stellar-signer-check";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -204,6 +205,7 @@ export default function PaymentsPage() {
   const [accountBalances, setAccountBalances] = useState<AccountBalance[]>([]);
   const [balancesLoading, setBalancesLoading] = useState(false);
   const [balancesError, setBalancesError] = useState<string | null>(null);
+  const [signerCheck, setSignerCheck] = useState<SignerCheckResult | null>(null);
 
   // -- Path payment fields
   const [pathMode, setPathMode] = useState<PathMode>("strict-receive");
@@ -413,10 +415,17 @@ export default function PaymentsPage() {
       // fetch was in flight, in which case currentPublicKey has moved on.
       if (pubKey !== currentPublicKey) return;
       setAccountBalances(balances);
+      setSignerCheck(
+        checkSignerCanPay(
+          { signers: account.signers, thresholds: account.thresholds },
+          pubKey,
+        ),
+      );
     } catch (e) {
       if (pubKey !== currentPublicKey) return;
       setBalancesError(getErrorMessage(e));
       setAccountBalances([]);
+      setSignerCheck(null);
       loadBalancesRef.current = null;
     } finally {
       if (pubKey === currentPublicKey) setBalancesLoading(false);
@@ -429,6 +438,7 @@ export default function PaymentsPage() {
     } else {
       setAccountBalances([]);
       setBalancesError(null);
+      setSignerCheck(null);
       loadBalancesRef.current = null;
     }
   }, [currentPublicKey, loadBalances]);
@@ -1310,6 +1320,15 @@ export default function PaymentsPage() {
                       </Button>
                     </>
                   )}
+                </div>
+              )}
+
+              {!balancesLoading && signerCheck?.locked && (
+                <div className="flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+                  <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-px" />
+                  <span>
+                    <strong>Account locked for this key.</strong> {signerCheck.reason}
+                  </span>
                 </div>
               )}
 

@@ -1,11 +1,14 @@
 import { calcAvailableXlm, type RawHorizonAccount } from "@/lib/stellar-reserve";
+import { checkSignerCanPay, type RawHorizonAccountSigners } from "@/lib/stellar-signer-check";
 
 const FETCH_TIMEOUT_MS = 15_000;
+
+type FullHorizonAccount = RawHorizonAccount & RawHorizonAccountSigners;
 
 export type AddressBalanceResult =
   | { status: "unfunded" }
   | { status: "error" }
-  | { status: "ok"; total: number; available: number };
+  | { status: "ok"; total: number; available: number; locked: boolean; lockReason: string | null };
 
 /**
  * Fetches the raw Horizon account JSON directly (not via fetchXlmBalance,
@@ -31,9 +34,10 @@ export async function fetchAddressBalance(
     });
     if (res.status === 404) return { status: "unfunded" };
     if (!res.ok) return { status: "error" };
-    const data = (await res.json()) as RawHorizonAccount;
+    const data = (await res.json()) as FullHorizonAccount;
     const { total, available } = calcAvailableXlm(data);
-    return { status: "ok", total, available };
+    const { locked, reason } = checkSignerCanPay(data, address);
+    return { status: "ok", total, available, locked, lockReason: reason };
   } catch {
     return { status: "error" };
   } finally {

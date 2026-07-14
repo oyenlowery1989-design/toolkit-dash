@@ -57,6 +57,8 @@ interface AddressRow {
   total?: number;
   available?: number;
   error?: string;
+  locked?: boolean;
+  lockReason?: string | null;
 }
 
 const SCAN_KEY = "address-balances";
@@ -225,7 +227,13 @@ export function AddressBalancesPanel() {
         const result = await fetchAddressBalance(horizonUrl, address, signal);
         if (signal.aborted) return;
         if (result.status === "ok") {
-          updateRow(i, { status: "done", total: result.total, available: result.available });
+          updateRow(i, {
+            status: "done",
+            total: result.total,
+            available: result.available,
+            locked: result.locked,
+            lockReason: result.lockReason,
+          });
         } else if (result.status === "unfunded") {
           updateRow(i, { status: "unfunded" });
         } else {
@@ -486,6 +494,15 @@ export function AddressBalancesPanel() {
                     <StatusBadge status={row.status} />
                     {row.status === "error" && row.error && (
                       <p className="text-xs text-destructive mt-1">{row.error}</p>
+                    )}
+                    {row.status === "done" && row.locked && (
+                      <p
+                        className="text-xs text-destructive mt-1 flex items-center gap-1"
+                        title={row.lockReason ?? undefined}
+                      >
+                        <AlertTriangle className="h-3 w-3 shrink-0" />
+                        Locked
+                      </p>
                     )}
                   </TableCell>
                   <TableCell className="text-right font-mono text-sm">
