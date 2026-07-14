@@ -126,6 +126,7 @@ export function AddressBalancesPanel() {
   const [parseError, setParseError] = useState<string | null>(null);
   const [interrupted, setInterrupted] = useState(false);
   const [minUsdFilter, setMinUsdFilter] = useState<number | null>(null);
+  const [lockedFilter, setLockedFilter] = useState<"all" | "locked" | "unlocked">("all");
   const [sortOrder, setSortOrder] = useState<"none" | "desc" | "asc">("none");
   const abortRef = useRef<AbortController | null>(null);
   const scanState = useBulkScanState<AddressRow>(SCAN_KEY);
@@ -276,15 +277,17 @@ export function AddressBalancesPanel() {
   const errorCount = rows.filter((r) => r.status === "error").length;
   const pendingCount = rows.filter((r) => r.status === "pending" || r.status === "loading").length;
 
-  const filteredRows =
-    minUsdFilter === null || xlmUsdPrice === null
-      ? rows
-      : rows.filter(
-          (r) =>
-            r.status === "done" &&
-            r.total !== undefined &&
-            r.total * xlmUsdPrice >= minUsdFilter,
-        );
+  const filteredRows = rows
+    .filter((r) => {
+      if (lockedFilter === "all") return true;
+      if (r.status !== "done") return false;
+      return lockedFilter === "locked" ? !!r.locked : !r.locked;
+    })
+    .filter((r) =>
+      minUsdFilter === null || xlmUsdPrice === null
+        ? true
+        : r.status === "done" && r.total !== undefined && r.total * xlmUsdPrice >= minUsdFilter,
+    );
 
   const totalBalance = filteredRows.reduce(
     (sum, r) => sum + (r.status === "done" && r.total !== undefined ? r.total : 0),
@@ -453,6 +456,28 @@ export function AddressBalancesPanel() {
               (loading USD price…)
             </span>
           )}
+          <span className="text-xs text-muted-foreground ml-4">Locked:</span>
+          <Button
+            variant={lockedFilter === "all" ? "default" : "outline"}
+            size="sm"
+            onClick={() => setLockedFilter("all")}
+          >
+            All
+          </Button>
+          <Button
+            variant={lockedFilter === "locked" ? "default" : "outline"}
+            size="sm"
+            onClick={() => setLockedFilter(lockedFilter === "locked" ? "all" : "locked")}
+          >
+            Locked only
+          </Button>
+          <Button
+            variant={lockedFilter === "unlocked" ? "default" : "outline"}
+            size="sm"
+            onClick={() => setLockedFilter(lockedFilter === "unlocked" ? "all" : "unlocked")}
+          >
+            Hide locked
+          </Button>
           <span className="text-xs text-muted-foreground ml-4">Sort:</span>
           <Button
             variant={sortOrder === "desc" ? "default" : "outline"}
