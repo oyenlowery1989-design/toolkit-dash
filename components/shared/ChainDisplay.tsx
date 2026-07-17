@@ -75,7 +75,11 @@ export async function fetchHomeDomain(
   signal: AbortSignal,
 ): Promise<string | undefined> {
   try {
-    const res = await fetch(`${horizonUrl}/accounts/${address}`, { signal });
+    // A hung/slow Horizon response here must never block callers (e.g. Groups'
+    // autoCreate flow) for minutes — cap the wait, degrade to undefined like
+    // any other failure.
+    const combined = AbortSignal.any([signal, AbortSignal.timeout(5000)]);
+    const res = await fetch(`${horizonUrl}/accounts/${address}`, { signal: combined });
     if (!res.ok) return undefined;
     const data = await res.json();
     return (data.home_domain as string | undefined) || undefined;
