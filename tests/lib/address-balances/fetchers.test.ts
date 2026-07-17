@@ -20,11 +20,13 @@ describe("fetchAddressBalance", () => {
         num_sponsoring: 0,
         num_sponsored: 0,
         balances: [{ asset_type: "native", balance: "50.0000000" }],
+        signers: [{ key: ADDR, weight: 10 }],
+        thresholds: { low_threshold: 0, med_threshold: 1, high_threshold: 1 },
       }),
     });
 
     const result = await fetchAddressBalance("https://horizon.example", ADDR);
-    expect(result).toEqual({ status: "ok", total: 50, available: 49 });
+    expect(result).toEqual({ status: "ok", total: 50, available: 49, locked: false, lockReason: null });
   });
 
   it("returns unfunded on 404", async () => {

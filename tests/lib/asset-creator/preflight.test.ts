@@ -29,12 +29,22 @@ describe("checkAccountExists", () => {
     expect(result.status).toBe("pass");
   });
 
-  it("returns fail when loadAccount throws 404", async () => {
+  it("returns warning (non-blocking) when loadAccount throws 404 — account will be created by the fund-accounts step", async () => {
     const server = makeServer({
       loadAccount: vi.fn().mockRejectedValue({ response: { status: 404 } }),
     });
     const result = await checkAccountExists("GABC", server, noop, signal);
+    expect(result.status).toBe("warning");
+    expect(result.blocking).toBe(false);
+  });
+
+  it("returns fail (blocking) when loadAccount throws a non-404 error", async () => {
+    const server = makeServer({
+      loadAccount: vi.fn().mockRejectedValue({ response: { status: 500 } }),
+    });
+    const result = await checkAccountExists("GABC", server, noop, signal);
     expect(result.status).toBe("fail");
+    expect(result.blocking).toBe(true);
   });
 
   it("logs the GET URL", async () => {
