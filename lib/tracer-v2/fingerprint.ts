@@ -2,6 +2,7 @@ import type { AssetGroup, GroupMemberRole } from "@/lib/asset-groups/types";
 import type { SavedAnalysis } from "@/hooks/use-saved-analyses";
 import type { CreatorChild } from "@/lib/intermediary-tracer/types";
 import type { EvidenceItem, FingerprintInput, OperatorMatch, OperatorTier } from "./types";
+import { shortAddr } from "@/lib/format";
 
 // ---------------------------------------------------------------------------
 // Locked scoring model constants (see docs/superpowers/plans/2026-07-06-tracer-v2.md)
@@ -42,11 +43,6 @@ function isWalletServiceDomain(domain: string): boolean {
 // IDF dampening: k = number of groups (or distinct assets for signal 2) containing the entity
 const damp = (k: number) => 1 / (1 + Math.log2(Math.max(k, 2) / 2));
 // k=2→1.0, k=4→0.5, k=8→0.33, k=16→0.25
-
-function shortAddr(address: string): string {
-  if (address.length <= 8) return address;
-  return `${address.slice(0, 4)}…${address.slice(-4)}`;
-}
 
 function assetKeyOf(code: string, issuer: string): string {
   return `${code}:${issuer}`;

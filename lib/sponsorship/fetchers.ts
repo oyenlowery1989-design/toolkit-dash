@@ -1,3 +1,5 @@
+import { shortAddr } from "@/lib/format";
+
 const FETCH_TIMEOUT_MS = 15_000;
 
 export interface RevokableItem {
@@ -75,7 +77,7 @@ export async function scanSponsoredEntries(
           kind: "signer",
           address,
           signerKey: s.key,
-          label: `Signer ${s.key.slice(0, 4)}…${s.key.slice(-4)}`,
+          label: `Signer ${shortAddr(s.key)}`,
         });
       }
     }

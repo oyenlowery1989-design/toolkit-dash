@@ -105,6 +105,25 @@ const tables = {
   wallet_folders: db.prepare("SELECT * FROM wallet_folders").all(),
   wallets: db.prepare("SELECT * FROM wallets").all(),
   app_state: db.prepare("SELECT * FROM app_state").all(),
+  persons: db.prepare("SELECT * FROM persons").all(),
+  person_addresses: db.prepare("SELECT * FROM person_addresses").all(),
+  person_relationships: db.prepare("SELECT * FROM person_relationships").all(),
+  creator_children: db.prepare("SELECT * FROM creator_children").all().map(r => ({
+    ...r,
+    issued_assets: parseJsonField(r.issued_assets),
+    distributed_assets: parseJsonField(r.distributed_assets),
+  })),
+  auto_send_groups: db.prepare("SELECT * FROM auto_send_groups").all(),
+  auto_send_destinations: db.prepare("SELECT * FROM auto_send_destinations").all(),
+  auto_send_run_log: db.prepare("SELECT * FROM auto_send_run_log").all(),
+  tiered_reward_configs: db.prepare("SELECT * FROM tiered_reward_configs").all(),
+  tiered_reward_tiers: db.prepare("SELECT * FROM tiered_reward_tiers").all(),
+  tiered_reward_assets: db.prepare("SELECT * FROM tiered_reward_assets").all(),
+  tiered_reward_run_log: db.prepare("SELECT * FROM tiered_reward_run_log").all(),
+  bulk_scan_state: db.prepare("SELECT * FROM bulk_scan_state").all().map(r => ({
+    ...r,
+    rows_json: parseJsonField(r.rows_json),
+  })),
 };
 
 db.close();

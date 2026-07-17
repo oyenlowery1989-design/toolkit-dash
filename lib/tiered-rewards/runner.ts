@@ -35,7 +35,6 @@ const NETWORK_PASSPHRASES: Record<string, string> = {
 };
 
 const BATCH_SIZE = 100;
-export const FEE_BUDGET = 1.0; // must match calculator.ts
 
 function extractError(err: unknown): string {
   const msg = getErrorMessage(err);

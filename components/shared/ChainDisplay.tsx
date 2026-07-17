@@ -18,6 +18,7 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import { shortAddr } from "@/lib/format";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -696,7 +697,7 @@ export function ChainDisplay({
           >
             <Loader2 className="h-2.5 w-2.5 animate-spin" />
             {chain.searching
-              ? `tracing ${chain.searching.slice(0, 4)}…${chain.searching.slice(-4)}`
+              ? `tracing ${shortAddr(chain.searching)}`
               : "searching…"}
           </div>
         )}

@@ -11,6 +11,7 @@ import { useSettings, NETWORK_LABELS, type Network } from "@/lib/settings";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { menuItems, isSeparator, isSection } from "@/lib/navigation";
 import { useSavedSearches } from "@/hooks/use-saved-searches";
+import { shortAddr } from "@/lib/format";
 
 export function Sidebar() {
   const pathname = usePathname();
@@ -157,7 +158,7 @@ export function Sidebar() {
                       const isIntermediary = entry.type === "intermediary-scan" || entry.type === "intermediary-trace";
                       const Icon = isAddress ? UserSearch : isIntermediary ? GitFork : Database;
                       const label = isAddress
-                        ? `${entry.value.slice(0, 4)}…${entry.value.slice(-4)}`
+                        ? shortAddr(entry.value)
                         : entry.value.split(":")[0];
                       const sub = isAddress
                         ? undefined
