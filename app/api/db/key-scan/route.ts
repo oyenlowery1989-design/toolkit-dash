@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
 import { isSupabaseOnly, requireAuth } from "@/lib/supabase-server";
-import { getKeyScanState } from "@/lib/key-scanner/loop";
+import { getKeyScanState, recordHitPurged } from "@/lib/key-scanner/loop";
 import type { KeyScanHit } from "@/lib/key-scanner/types";
 
 // Key Scanner — local-only feature, same precedent as tracer-v2 Watchlist
@@ -55,6 +55,7 @@ export async function DELETE(req: NextRequest) {
 
   if (isSupabaseOnly()) return NextResponse.json({ ok: true });
 
-  getDb().prepare("DELETE FROM key_scan_hits WHERE id = ?").run(key);
+  const result = getDb().prepare("DELETE FROM key_scan_hits WHERE id = ?").run(key);
+  if (result.changes > 0) recordHitPurged();
   return NextResponse.json({ ok: true });
 }

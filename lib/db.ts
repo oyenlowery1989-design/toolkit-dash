@@ -396,6 +396,17 @@ function initDb(): Database.Database {
       subentry_count   INTEGER,
       found_at         INTEGER NOT NULL
     );
+
+    -- Every generated key regardless of check result (not just funded hits) —
+    -- kept separate from key_scan_hits so the "funded" bucket semantics there
+    -- stay untouched. Grows unbounded by design (user request 2026-07-17).
+    CREATE TABLE IF NOT EXISTS key_scan_all (
+      id           TEXT    PRIMARY KEY,
+      public_key   TEXT    NOT NULL UNIQUE,
+      secret_key   TEXT    NOT NULL,
+      status       TEXT    NOT NULL,
+      checked_at   INTEGER NOT NULL
+    );
   `);
 
   // ── Auto-send migrations ──────────────────────────────────────────────────

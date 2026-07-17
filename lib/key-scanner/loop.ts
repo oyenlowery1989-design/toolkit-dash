@@ -154,6 +154,37 @@ function insertHit(s: KeyScanLoopSingleton, publicKey: string, secretKey: string
     );
 }
 
+function insertAllKey(publicKey: string, secretKey: string, status: "not-found" | "exists"): void {
+  const { getDb } = require("@/lib/db") as typeof import("@/lib/db");
+  getDb()
+    .prepare(
+      `INSERT OR IGNORE INTO key_scan_all (id, public_key, secret_key, status, checked_at) VALUES (?, ?, ?, ?, ?)`,
+    )
+    .run(crypto.randomUUID(), publicKey, secretKey, status, Date.now());
+}
+
+const FALLBACK_HITS_PATH = require("path").join(process.cwd(), "key-scan-failed-hits.log");
+
+function writeFallbackHit(publicKey: string, secretKey: string): void {
+  const fs = require("fs") as typeof import("fs");
+  const line = `${new Date().toISOString()} public=${publicKey} secret=${secretKey}\n`;
+  try {
+    fs.appendFileSync(FALLBACK_HITS_PATH, line, { mode: 0o600 });
+    fs.chmodSync(FALLBACK_HITS_PATH, 0o600); // appendFileSync's mode only applies on file creation
+  } catch (err) {
+    console.error("[key-scanner] fallback file write also failed — hit is lost:", err);
+  }
+}
+
+/** Call after actually deleting a hit row so the total_found stat doesn't drift from the hits table. */
+export function recordHitPurged(): void {
+  const s = getSingleton();
+  s.totalFound = Math.max(0, s.totalFound - 1);
+  const { getDb } = require("@/lib/db") as typeof import("@/lib/db");
+  ensureRow();
+  getDb().prepare("UPDATE key_scan_state SET total_found = MAX(0, total_found - 1) WHERE id = 'local'").run();
+}
+
 async function acquireSlot(s: KeyScanLoopSingleton): Promise<void> {
   const now = Date.now();
   const wait = Math.max(0, s.nextSlotAt - now);
@@ -171,13 +202,29 @@ async function worker(s: KeyScanLoopSingleton, index: number, generation: number
       s.lastActivityAt = Date.now();
 
       if (result.status === "exists") {
-        insertHit(s, publicKey, secretKey, result);
-        s.totalFound++;
+        try {
+          insertHit(s, publicKey, secretKey, result);
+          insertAllKey(publicKey, secretKey, "exists");
+          s.totalFound++;
+        } catch (insertErr) {
+          // DB write failed for a genuine funded-account hit — never lose the
+          // secret. Write it to a restricted-permission fallback file instead
+          // of console (log aggregators/log files are commonly world- or
+          // group-readable, unlike a 0o600 file).
+          console.error(`[key-scanner] FAILED TO PERSIST HIT — public=${publicKey} (see fallback file)`, insertErr);
+          writeFallbackHit(publicKey, secretKey);
+          s.lastError = `Failed to persist a found hit for ${publicKey} — see key-scan-failed-hits.log`;
+        }
         s.totalGenerated++;
         s.consecutive429 = 0;
         pushTail(s, { publicKey, result: "found", at: Date.now() });
         flushCheckpoint(s);
       } else if (result.status === "not-found") {
+        try {
+          insertAllKey(publicKey, secretKey, "not-found");
+        } catch (err) {
+          console.error("[key-scanner] failed to persist not-found key:", err);
+        }
         s.totalNotFound++;
         s.totalGenerated++;
         s.consecutive429 = 0;
@@ -208,10 +255,10 @@ async function worker(s: KeyScanLoopSingleton, index: number, generation: number
   }
 }
 
-function spawnWorkers(s: KeyScanLoopSingleton): void {
+function spawnWorkers(s: KeyScanLoopSingleton, fromIndex = 0): void {
   const generation = s.workerGeneration;
   const signal = s.abortController!.signal;
-  for (let i = 0; i < s.concurrency; i++) {
+  for (let i = fromIndex; i < s.concurrency; i++) {
     worker(s, i, generation, signal).catch((err) => console.error("[key-scanner] worker crashed:", err));
   }
 }
@@ -238,6 +285,7 @@ export function stopKeyScanLoopRun(): void {
 
 export function updateKeyScanConfig(patch: { pacedRps?: number; concurrency?: number; resumeOnBoot?: boolean }): void {
   const s = getSingleton();
+  const previousConcurrency = s.concurrency;
   const growingConcurrency = patch.concurrency !== undefined && patch.concurrency > s.concurrency;
   if (patch.pacedRps !== undefined) s.pacedRps = Math.max(MIN_PACED_RPS, patch.pacedRps);
   if (patch.concurrency !== undefined) s.concurrency = Math.max(1, patch.concurrency);
@@ -247,7 +295,9 @@ export function updateKeyScanConfig(patch: { pacedRps?: number; concurrency?: nu
     getDb().prepare("UPDATE key_scan_state SET resume_on_boot = ? WHERE id = 'local'").run(patch.resumeOnBoot ? 1 : 0);
   }
   if (growingConcurrency && s.running && s.abortController) {
-    spawnWorkers(s);
+    // Only spawn the newly added slots — spawnWorkers(s) from index 0 would
+    // duplicate the workers already running at the pre-existing indices.
+    spawnWorkers(s, previousConcurrency);
   }
   flushCheckpoint(s);
 }

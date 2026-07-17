@@ -29,3 +29,6 @@ Full `autoCreate` URL param spec:
 - Auto-infer distrib: Asset Sales `handleRun` calls `inferDistribLite` automatically if `accountsText` is empty, populates the field and proceeds without extra click
 - Home domain: pass **separate** `issuerHomeDomain` and `distribHomeDomain` params — never share one domain for both
 - Cross-group correlation: shared intermediary/bank/withdrawal address across multiple groups = same operator fingerprint
+
+## TODO — autoCreate perceived slowness
+`?autoCreate=1` save-to-group navigation feels slow (user report: "loads all groups for minutes"): full page nav loads GroupsPanel + all groups via `useAssetGroups()` before the autoCreate effect even starts, then does 3 parallel `fetchHomeDomain()` calls straight to Horizon (`components/shared/ChainDisplay.tsx` — plain `fetch`, no timeout/AbortSignal.timeout, so an unresponsive Horizon account lookup just hangs the whole create). Not currently backgrounded/service-based — investigate: (a) an API route that does create+home-domain-fetch server-side and returns immediately with a job id / optimistic group id so the tab can redirect instantly, or (b) add a timeout race to `fetchHomeDomain` so a slow lookup can't block group creation past a few seconds.

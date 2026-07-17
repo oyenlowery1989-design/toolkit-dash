@@ -41,6 +41,9 @@ import {
   Settings,
   ChevronDown,
   ChevronRight,
+  Radar,
+  Search,
+  Contact,
 } from "lucide-react";
 import { useSettings, NETWORK_LABELS } from "@/lib/settings";
 import { timeAgo, getErrorMessage } from "@/lib/stellar-helpers";
@@ -126,6 +129,14 @@ const MODULE_SECTIONS: ModuleSection[] = [
           "Browse and decode raw Stellar transactions. Inspect operations, effects, and ledger state for any account or transaction hash.",
         added: "2026-03-10",
       },
+      {
+        title: "Tracer v2",
+        href: "/tracer-v2",
+        icon: Fingerprint,
+        description:
+          "Operator fingerprinting across asset groups, concurrent bulk origin trace, create_account watchlist, and interactive flow graph.",
+        added: "2026-07-06",
+      },
     ],
   },
   {
@@ -186,6 +197,14 @@ const MODULE_SECTIONS: ModuleSection[] = [
         description:
           "Live XLM balance snapshot across all saved wallets. Filter by folder or asset group, sort by balance, and act on any wallet inline.",
         added: "2026-04-26",
+      },
+      {
+        title: "Address Balances",
+        href: "/address-balances",
+        icon: Search,
+        description:
+          "Paste any list of Stellar addresses to see XLM balance and reserve/liabilities-aware available-to-withdraw per address.",
+        added: "2026-07-06",
       },
     ],
   },
@@ -259,6 +278,14 @@ const MODULE_SECTIONS: ModuleSection[] = [
         added: "2026-03-10",
       },
       {
+        title: "Persons",
+        href: "/persons",
+        icon: Contact,
+        description:
+          "Registry of named people with linked addresses, attributable to Asset Groups. Includes Telegram-channel clustering across groups.",
+        added: "2026-07-08",
+      },
+      {
         title: "Saved Analyses",
         href: "/saved-analyses",
         icon: BookmarkCheck,
@@ -302,6 +329,14 @@ const MODULE_SECTIONS: ModuleSection[] = [
         description:
           "Organise wallets in folders, store secret keys in SQLite, connect/disconnect the active wallet, and sync across tabs.",
         added: "2026-03-08",
+      },
+      {
+        title: "Key Scanner",
+        href: "/key-scanner",
+        icon: Radar,
+        description:
+          "Continuously generates random Stellar keypairs and checks each via Horizon, sorting into no-balance / has-balance buckets until stopped.",
+        added: "2026-07-13",
       },
       {
         title: "Settings",

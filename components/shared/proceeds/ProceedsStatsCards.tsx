@@ -7,6 +7,7 @@ interface ProceedsStatsCardsProps {
   result: AssetProceedsResult;
   assetCode: string;
   xlmUsdPrice?: number | null;
+  showAssetSold?: boolean;
 }
 
 export function StatCard({
@@ -33,7 +34,7 @@ export function StatCard({
 }
 
 /** Standard 4-up stats grid for an AssetProceedsResult: proceeds, asset sold, outgoing, on-hand. */
-export function ProceedsStatsCards({ result, assetCode, xlmUsdPrice }: ProceedsStatsCardsProps) {
+export function ProceedsStatsCards({ result, assetCode, xlmUsdPrice, showAssetSold = true }: ProceedsStatsCardsProps) {
   const fmtUsd = (n: number) =>
     (n * (xlmUsdPrice ?? 0)).toLocaleString(undefined, { maximumFractionDigits: 0 });
 
@@ -44,7 +45,9 @@ export function ProceedsStatsCards({ result, assetCode, xlmUsdPrice }: ProceedsS
         value={formatXlm(result.totalXlmProceeds)}
         usdValue={xlmUsdPrice != null ? fmtUsd(result.totalXlmProceeds) : undefined}
       />
-      <StatCard label={`${assetCode} Sold`} value={formatXlm(result.totalAssetSold)} />
+      {showAssetSold && (
+        <StatCard label={`${assetCode} Sold`} value={formatXlm(result.totalAssetSold)} />
+      )}
       <StatCard label="Total Outgoing XLM" value={formatXlm(result.totalOutgoingXlm)} />
       <StatCard
         label="Estimated On-Hand"

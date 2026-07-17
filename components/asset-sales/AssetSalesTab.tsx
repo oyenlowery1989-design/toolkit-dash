@@ -29,7 +29,7 @@ import {
   TrendingDown,
   X,
 } from "lucide-react";
-import { useSettings, resolveHorizonUrl, type Network } from "@/lib/settings";
+import { useSettings, resolveHorizonUrl, NETWORK_LABELS, type Network } from "@/lib/settings";
 import { useProceedsHistory } from "./useProceedsHistory";
 import { getErrorMessage } from "@/lib/stellar-helpers";
 import { ShortAddress } from "@/components/shared/ShortAddress";
@@ -250,17 +250,19 @@ function SinceLastSave({
       ) : (
         <>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-3">
-            {diff.fields.map((f) => (
-              <FieldDeltaCard
-                key={f.key}
-                label={f.label}
-                before={f.before}
-                after={f.after}
-                delta={f.delta}
-                xlmUsdPrice={xlmUsdPrice}
-                isXlmAmount={f.key !== "totalAssetSold"}
-              />
-            ))}
+            {diff.fields
+              .filter((f) => f.key !== "totalAssetSold")
+              .map((f) => (
+                <FieldDeltaCard
+                  key={f.key}
+                  label={f.label}
+                  before={f.before}
+                  after={f.after}
+                  delta={f.delta}
+                  xlmUsdPrice={xlmUsdPrice}
+                  isXlmAmount
+                />
+              ))}
           </div>
 
           <div className="mt-4">
@@ -732,7 +734,15 @@ export function AssetSalesTab() {
             Recent searches
           </div>
           <div className="flex flex-wrap gap-2">
-            {searchHistory.map((entry) => (
+            {searchHistory.map((entry) => {
+              const pairs = parseAssetPairs(entry.assetsText);
+              const label =
+                pairs.length === 0
+                  ? `${entry.assetCount} asset${entry.assetCount === 1 ? "" : "s"}`
+                  : pairs.length === 1
+                    ? pairs[0].assetCode
+                    : `${pairs[0].assetCode} +${pairs.length - 1} more`;
+              return (
               <div
                 key={entry.timestamp}
                 className="flex items-center gap-1 rounded-md border border-border bg-muted/40 pl-2 pr-1 py-1 text-xs"
@@ -748,9 +758,11 @@ export function AssetSalesTab() {
                   title={entry.assetsText}
                 >
                   <span className="font-mono font-semibold text-foreground">
-                    {entry.assetCount} asset{entry.assetCount === 1 ? "" : "s"}
+                    {label}
                   </span>
-                  <span className="opacity-50">{entry.network}</span>
+                  <span className="opacity-50">
+                    {NETWORK_LABELS[entry.network as keyof typeof NETWORK_LABELS] ?? entry.network}
+                  </span>
                 </Button>
                 <Button
                   variant="ghost"
@@ -762,7 +774,8 @@ export function AssetSalesTab() {
                   <X className="h-3 w-3" />
                 </Button>
               </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}
@@ -993,20 +1006,6 @@ export function AssetSalesTab() {
                   )}
                 </div>
 
-                {/* Asset sold */}
-                <div className="w-36 text-right shrink-0">
-                  {row.result ? (
-                    <span className="font-mono text-sm">
-                      {formatXlm(row.result.totalAssetSold)}{" "}
-                      <span className="text-xs text-muted-foreground">
-                        {row.assetCode}
-                      </span>
-                    </span>
-                  ) : (
-                    <span className="text-muted-foreground text-xs">—</span>
-                  )}
-                </div>
-
                 {/* Status + Save to Group */}
                 <div className="shrink-0 flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
                   {row.elapsedMs !== undefined && (
@@ -1076,6 +1075,7 @@ export function AssetSalesTab() {
                     result={row.result}
                     assetCode={row.assetCode}
                     xlmUsdPrice={xlmUsdPrice}
+                    showAssetSold={false}
                   />
 
                   <div className="mt-3">
