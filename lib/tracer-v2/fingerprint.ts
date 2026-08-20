@@ -1,6 +1,4 @@
 import type { AssetGroup, GroupMemberRole } from "@/lib/asset-groups/types";
-import type { SavedAnalysis } from "@/hooks/use-saved-analyses";
-import type { CreatorChild } from "@/lib/intermediary-tracer/types";
 import type { EvidenceItem, FingerprintInput, OperatorMatch, OperatorTier } from "./types";
 import { shortAddr } from "@/lib/format";
 

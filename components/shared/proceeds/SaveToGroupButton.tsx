@@ -57,7 +57,6 @@ function buildGroupUrl(opts: {
   if (opts.bankAddress) {
     params.set("addAddress", opts.bankAddress);
     params.set("addRole", "bank");
-    params.set("addLabel", "Bank");
   }
   return `/groups?${params.toString()}`;
 }

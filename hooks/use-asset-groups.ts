@@ -2,11 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { createDbCache, dbPost, dbPatch, authHeaders, debounce } from "@/lib/db-client";
-import type {
-  AssetGroup,
-  GroupMember,
-  GroupMemberRole,
-} from "@/lib/asset-groups/types";
+import type { AssetGroup, GroupMember } from "@/lib/asset-groups/types";
 
 const ENDPOINT = "/api/db/groups";
 

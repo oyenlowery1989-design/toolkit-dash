@@ -383,7 +383,6 @@ export function AssetSalesTab() {
     if (urlAutorun && (bulkAssets || (urlAsset && urlIssuer))) {
       pendingAutorunRef.current = true;
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
 
   // Abort any in-flight scan on unmount — without this, navigating away

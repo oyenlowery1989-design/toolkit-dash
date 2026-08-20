@@ -53,8 +53,11 @@ import { ShortAddress } from "@/components/shared/ShortAddress";
 import { useSavedSearches } from "@/hooks/use-saved-searches";
 import { useKnownIntermediaries } from "@/hooks/use-known-intermediaries";
 import { useAssetGroups } from "@/hooks/use-asset-groups";
-import type { GroupMemberRole } from "@/lib/asset-groups/types";
-import { ROLE_LABELS } from "@/lib/asset-groups/types";
+import {
+  ROLE_LABELS,
+  defaultGroupMemberLabel,
+  type GroupMemberRole,
+} from "@/lib/asset-groups/types";
 import {
   Dialog,
   DialogContent,
@@ -1171,7 +1174,12 @@ export function AddressInvestigatorTab() {
                   disabled={!dialogGroupId}
                   onClick={() => {
                     if (!groupDialog || !dialogGroupId) return;
-                    upsertMember(dialogGroupId, { address: groupDialog.address, role: dialogRole });
+                    const assetCode = groups.find((g) => g.id === dialogGroupId)?.assetCode;
+                    upsertMember(dialogGroupId, {
+                      address: groupDialog.address,
+                      role: dialogRole,
+                      label: defaultGroupMemberLabel(dialogRole, assetCode),
+                    });
                     setGroupDialog(null);
                   }}
                 >

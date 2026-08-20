@@ -29,8 +29,10 @@ export function CreatorTreeTab() {
 
   // Abort any in-flight enrichment requests when this tab unmounts
   useEffect(() => {
+    const controllers = abortRefs.current;
     return () => {
-      abortRefs.current.forEach((ac) => ac.abort());
+      controllers.forEach((ac) => ac.abort());
+      controllers.clear();
     };
   }, []);
 

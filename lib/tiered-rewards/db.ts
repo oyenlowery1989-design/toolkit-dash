@@ -22,7 +22,6 @@ function mapAssets(rows: Row[]): RewardAsset[] {
   }));
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 function mapTiers(db: any, tierRows: Row[]): Tier[] {
   return tierRows.map((t) => {
     const assets = db.prepare("SELECT * FROM tiered_reward_assets WHERE tier_id = ?").all(t.id) as Row[];
@@ -63,7 +62,6 @@ function rowToConfig(c: Row, tiers: Tier[], includeSecret = false): TieredReward
   };
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Db = any;
 
 /** Load all configs ordered by created_at DESC. */

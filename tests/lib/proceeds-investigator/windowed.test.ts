@@ -3,7 +3,6 @@ import { getWindowedSalesTotals } from "@/lib/proceeds-investigator/windowed";
 import type { ProceedsLedgerEntry } from "@/lib/proceeds-investigator/types";
 
 const NOW = new Date("2026-07-12T12:00:00Z").getTime();
-const DAY_MS = 24 * 60 * 60 * 1000;
 
 function entry(hoursAgo: number, amountXlm: number, assetSoldAmount: number, successful = true): ProceedsLedgerEntry {
   return {

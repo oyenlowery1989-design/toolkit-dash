@@ -33,6 +33,19 @@ export const ROLE_COLORS: Record<GroupMemberRole, string> = {
   other:        "text-gray-400 bg-gray-400/10",
 };
 
+/** Asset-specific label for roles whose meaning belongs to one asset group. */
+export function defaultGroupMemberLabel(
+  role: GroupMemberRole,
+  assetCode?: string,
+): string | undefined {
+  const code = assetCode?.trim();
+  if (!code) return undefined;
+  if (role === "issuer") return `Issuer ${code}`;
+  if (role === "distributor") return `Distrib ${code}`;
+  if (role === "bank") return `Bank ${code}`;
+  return undefined;
+}
+
 export interface GroupMember {
   id: string;
   groupId: string;

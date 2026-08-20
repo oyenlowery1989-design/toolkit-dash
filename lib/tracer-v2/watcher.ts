@@ -1,7 +1,6 @@
 import type { WatchEvent } from "./types";
 
 declare global {
-  // eslint-disable-next-line no-var
   var _tracerWatchStarted: boolean | undefined;
 }
 

@@ -45,7 +45,6 @@ export default function SettingsPage() {
   const [notifications, setNotifications] = useState(settings.notifications);
 
   const [dbStatus, setDbStatus] = useState<DbStatus | null>(null);
-  const [syncStatus, setSyncStatus] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
   const [restoring, setRestoring] = useState(false);
   const [exporting, setExporting] = useState(false);
@@ -77,7 +76,6 @@ export default function SettingsPage() {
 
   const handlePushToSupabase = async () => {
     setSyncing(true);
-    setSyncStatus(null);
     try {
       const r = await fetch("/api/db/restore", {
         method: "POST",
@@ -86,14 +84,11 @@ export default function SettingsPage() {
       });
       const data = await r.json();
       if (data.ok) {
-        setSyncStatus("success");
         toast.success("Local data pushed to Supabase");
       } else {
-        setSyncStatus("error");
         toast.error("Push failed: " + (data.errors?.join(", ") ?? "unknown error"));
       }
     } catch {
-      setSyncStatus("error");
       toast.error("Push failed — network error");
     } finally {
       setSyncing(false);
@@ -102,7 +97,6 @@ export default function SettingsPage() {
 
   const handleRestoreFromSupabase = async () => {
     setRestoring(true);
-    setSyncStatus(null);
     try {
       const r = await fetch("/api/db/restore", {
         method: "POST",
@@ -111,14 +105,11 @@ export default function SettingsPage() {
       });
       const data = await r.json();
       if (data.ok) {
-        setSyncStatus("success");
         toast.success("Restored from Supabase to local SQLite");
       } else {
-        setSyncStatus("error");
         toast.error("Restore failed");
       }
     } catch {
-      setSyncStatus("error");
       toast.error("Restore failed — network error");
     } finally {
       setRestoring(false);

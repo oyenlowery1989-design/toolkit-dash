@@ -269,6 +269,30 @@ export function BulkPaymentsPanel() {
   const [saveName, setSaveName] = useState("");
   const savedLists = forNetwork(network);
 
+  const getExcludeSet = useCallback(
+    (): Set<string> => new Set(parseValidAddresses(excludeText)),
+    [excludeText],
+  );
+
+  const getSenderPublicKey = useCallback((): string | null => {
+    try {
+      return Keypair.fromSecret(effectiveSecretKey.trim()).publicKey();
+    } catch {
+      return null;
+    }
+  }, [effectiveSecretKey]);
+
+  // Shared by handlePreview's group branch and handleSaveList, so "Save
+  // List" works right after picking a group without requiring Preview first.
+  const deriveGroupAddresses = useCallback((): string[] | null => {
+    const grp = groups.find((g) => g.id === selectedGroupId);
+    if (!grp || grp.members.length === 0) return null;
+    const senderPub = getSenderPublicKey();
+    const excludeSet = getExcludeSet();
+    if (senderPub) excludeSet.add(senderPub);
+    return grp.members.map((m) => m.address).filter((a) => !excludeSet.has(a));
+  }, [getExcludeSet, getSenderPublicKey, groups, selectedGroupId]);
+
   const handleSaveList = useCallback(() => {
     const addresses =
       sourceTab === "manual"
@@ -335,10 +359,6 @@ export function BulkPaymentsPanel() {
   // Validation
   // ---------------------------------------------------------------------------
 
-  function getExcludeSet(): Set<string> {
-    return new Set(parseValidAddresses(excludeText));
-  }
-
   function validateForm(): string | null {
     if (memoBytes > MEMO_MAX_BYTES)
       return `Memo exceeds ${MEMO_MAX_BYTES} bytes (currently ${memoBytes}).`;
@@ -372,25 +392,6 @@ export function BulkPaymentsPanel() {
 
     setRecipients(filtered);
     return null;
-  }
-
-  function getSenderPublicKey(): string | null {
-    try {
-      return Keypair.fromSecret(effectiveSecretKey.trim()).publicKey();
-    } catch {
-      return null;
-    }
-  }
-
-  // Shared by handlePreview's group branch and handleSaveList, so "Save
-  // List" works right after picking a group without requiring Preview first.
-  function deriveGroupAddresses(): string[] | null {
-    const grp = groups.find((g) => g.id === selectedGroupId);
-    if (!grp || grp.members.length === 0) return null;
-    const senderPub = getSenderPublicKey();
-    const excludeSet = getExcludeSet();
-    if (senderPub) excludeSet.add(senderPub);
-    return grp.members.map((m) => m.address).filter((a) => !excludeSet.has(a));
   }
 
   // ---------------------------------------------------------------------------

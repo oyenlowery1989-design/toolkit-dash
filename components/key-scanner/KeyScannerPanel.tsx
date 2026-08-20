@@ -103,30 +103,42 @@ export function KeyScannerPanel() {
   const [concurrency, setConcurrency] = useState(3);
   const [resumeOnBoot, setResumeOnBoot] = useState(true);
   const [throughput, setThroughput] = useState(0);
+  const [now, setNow] = useState(0);
   const prevSampleRef = useRef<{ count: number; at: number } | null>(null);
   const configDebounceRef = useRef<{ timer: ReturnType<typeof setTimeout>; patch: Record<string, unknown> } | null>(null);
+  const persistedRunning = state?.running;
+  const persistedPacedRps = state?.pacedRps;
+  const persistedConcurrency = state?.concurrency;
+  const persistedResumeOnBoot = state?.resumeOnBoot;
+  const totalGenerated = state?.totalGenerated;
 
   // Seed local controls from persisted server config whenever the running
   // state flips (covers first load and an auto-resume-on-boot) without
   // fighting the user's in-progress edits on every poll tick.
   useEffect(() => {
-    if (!state) return;
-    setPacedRps(state.pacedRps);
-    setConcurrency(state.concurrency);
-    setResumeOnBoot(state.resumeOnBoot);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state?.running]);
+    if (persistedPacedRps === undefined || persistedConcurrency === undefined || persistedResumeOnBoot === undefined) return;
+    setPacedRps(persistedPacedRps);
+    setConcurrency(persistedConcurrency);
+    setResumeOnBoot(persistedResumeOnBoot);
+  }, [persistedRunning, persistedPacedRps, persistedConcurrency, persistedResumeOnBoot]);
 
   useEffect(() => {
-    if (!state) return;
+    if (totalGenerated === undefined) return;
     const now = Date.now();
     if (prevSampleRef.current) {
       const dt = (now - prevSampleRef.current.at) / 1000;
-      const dCount = state.totalGenerated - prevSampleRef.current.count;
+      const dCount = totalGenerated - prevSampleRef.current.count;
       if (dt > 0.5) setThroughput(Math.max(0, dCount / dt));
     }
-    prevSampleRef.current = { count: state.totalGenerated, at: now };
-  }, [state?.totalGenerated]);
+    prevSampleRef.current = { count: totalGenerated, at: now };
+  }, [totalGenerated]);
+
+  useEffect(() => {
+    setNow(Date.now());
+    if (!persistedRunning) return;
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [persistedRunning]);
 
   const pushConfig = (patch: Record<string, unknown>) => {
     if (configDebounceRef.current) clearTimeout(configDebounceRef.current.timer);
@@ -159,7 +171,7 @@ export function KeyScannerPanel() {
 
   const running = !!state?.running;
   const throttled = !!state?.lastError?.startsWith("Throttled");
-  const uptimeSec = state?.startedAt ? Math.floor((Date.now() - state.startedAt) / 1000) : 0;
+  const uptimeSec = state?.startedAt && now ? Math.floor((now - state.startedAt) / 1000) : 0;
 
   return (
     <div className="space-y-6">

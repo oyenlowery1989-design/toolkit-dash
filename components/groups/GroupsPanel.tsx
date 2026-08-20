@@ -59,7 +59,11 @@ import { AlertTriangle, Info } from "lucide-react";
 import { useSettings, resolveHorizonUrl } from "@/lib/settings";
 import type { Network } from "@/lib/settings";
 import { fetchHomeDomain } from "@/components/shared/ChainDisplay";
-import { ROLE_LABELS, ROLE_COLORS } from "@/lib/asset-groups/types";
+import {
+  ROLE_LABELS,
+  ROLE_COLORS,
+  defaultGroupMemberLabel,
+} from "@/lib/asset-groups/types";
 import { normalizeExternalUrl, resolveTelegramUrl } from "@/lib/asset-groups/links";
 import type {
   AssetGroup,
@@ -110,13 +114,14 @@ function AddMemberForm({
   const otherGroupMatches = trimmed
     ? groups.filter((g) => g.id !== groupId && g.members.some((m) => m.address === trimmed))
     : [];
+  const groupAssetCode = groups.find((g) => g.id === groupId)?.assetCode;
 
   function handleSubmit() {
     if (!trimmed || sameGroupDuplicate) return;
     onAdd(groupId, {
       address: trimmed,
       role,
-      label: label.trim() || undefined,
+      label: label.trim() || defaultGroupMemberLabel(role, groupAssetCode),
       notes: notes.trim() || undefined,
       homeDomain: homeDomain.trim() || undefined,
     });
@@ -968,7 +973,7 @@ function GroupCard({
                           })()}
                         </td>
                         <td className="px-3 py-2 text-muted-foreground">
-                          {m.label ?? "—"}
+                          {m.label ?? defaultGroupMemberLabel(m.role, group.assetCode) ?? "—"}
                         </td>
                         <td className="px-3 py-2">
                           {m.homeDomain ? (
@@ -1372,7 +1377,9 @@ export function GroupsPanel() {
             upsertMember(existing.id, {
               address: paramAddAddress,
               role,
-              label: paramAddLabel ?? undefined,
+              label:
+                paramAddLabel ??
+                defaultGroupMemberLabel(role, existing.assetCode ?? paramAssetCode ?? undefined),
               homeDomain: addDomain,
             });
           } else if (!addMember.homeDomain && addDomain) {
@@ -1416,7 +1423,9 @@ export function GroupsPanel() {
         upsertMember(id, {
           address: paramAddAddress,
           role,
-          label: paramAddLabel ?? undefined,
+          label:
+            paramAddLabel ??
+            defaultGroupMemberLabel(role, paramAssetCode ?? undefined),
           homeDomain: addDomain,
         });
       }

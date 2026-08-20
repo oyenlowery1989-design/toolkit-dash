@@ -4,9 +4,7 @@ import { generateKeypair, checkAccount } from "./engine";
 type ExistsResult = Extract<CheckResult, { status: "exists" }>;
 
 declare global {
-  // eslint-disable-next-line no-var
   var _keyScanLoop: KeyScanLoopSingleton | undefined;
-  // eslint-disable-next-line no-var
   var _keyScanStarted: boolean | undefined;
 }
 
