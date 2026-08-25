@@ -5,8 +5,6 @@ const { Server } = Horizon;
 
 const HORIZON_URLS: Record<string, string> = {
   public: "https://horizon.stellar.org",
-  testnet: "https://horizon-testnet.stellar.org",
-  futurenet: "https://horizon-futurenet.stellar.org",
 };
 
 const MAX_ATTEMPTS = 3;
@@ -24,7 +22,8 @@ export async function fetchHolders(
   signal?: AbortSignal,
   onLog?: (msg: string) => void
 ): Promise<HolderEntry[]> {
-  const horizonUrl = HORIZON_URLS[network] ?? HORIZON_URLS.public;
+  const horizonUrl = HORIZON_URLS[network];
+  if (!horizonUrl) throw new Error(`Unsupported payment network: ${network}`);
   const server = new Server(horizonUrl);
 
   const holders: HolderEntry[] = [];

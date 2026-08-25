@@ -52,11 +52,16 @@ export function buildGraph(input: GraphInput): GraphData {
 
   // Creator children
   for (const cc of creatorChildren) {
+    ensureNode(nodes, cc.creatorAddress, "creator", cc.network);
     ensureNode(nodes, cc.childAddress, "creator-child", cc.network);
+    if (cc.viaIntermediary) ensureNode(nodes, cc.viaIntermediary, "intermediary", cc.network);
   }
 
   // Saved-analysis top destinations
   for (const a of analyses) {
+    for (const distrib of a.distribAddresses) {
+      ensureNode(nodes, distrib, "group-member", a.network, "distrib");
+    }
     for (const dest of a.result?.topDestinations ?? []) {
       ensureNode(nodes, dest.address, "destination", a.network);
     }

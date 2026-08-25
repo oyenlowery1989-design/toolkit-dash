@@ -4,10 +4,11 @@ import { useEffect, useRef, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { ShortAddress } from "@/components/shared/ShortAddress";
 import { downloadCSV } from "@/lib/csv-export";
 import { useConfirmClick } from "@/hooks/use-confirm-click";
-import { Eye, Trash2, Download, ShieldAlert, X, Copy, ClipboardCheck, Trophy } from "lucide-react";
+import { Eye, Trash2, Download, ShieldAlert, Copy, ClipboardCheck, Trophy } from "lucide-react";
 import { toast } from "sonner";
 import type { KeyScanHit } from "@/lib/key-scanner/types";
 
@@ -24,14 +25,6 @@ function SecretRevealModal({ hit, onClose }: { hit: KeyScanHit; onClose: () => v
       navigator.clipboard.writeText("").catch(() => {});
     };
   }, []);
-
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [onClose]);
 
   const handleCopy = () => {
     navigator.clipboard
@@ -58,24 +51,16 @@ function SecretRevealModal({ hit, onClose }: { hit: KeyScanHit; onClose: () => v
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4" onClick={onClose}>
-      <div
-        className="relative w-full max-w-lg rounded-xl border border-yellow-500/40 bg-card shadow-2xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-center justify-between border-b border-border p-4">
-          <div className="flex items-center gap-2 text-yellow-500">
+    <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
+      <DialogContent className="max-w-lg gap-0 overflow-hidden border-yellow-500/40 p-0">
+        <DialogHeader className="border-b border-border p-4 pr-12 text-left">
+          <DialogTitle className="flex items-center gap-2 text-base text-yellow-500">
             <ShieldAlert className="h-5 w-5" />
-            <span className="font-semibold">Secret Key — Live Funded Account</span>
-          </div>
-          <Button onClick={onClose} variant="ghost" size="icon" className="h-auto w-auto p-1 text-muted-foreground hover:text-foreground" aria-label="Close">
-            <X className="h-4 w-4" />
-          </Button>
-        </div>
-        <div className="px-4 pt-4 pb-2 text-xs text-muted-foreground">
-          <p className="text-foreground font-medium mb-1">{hit.publicKey}</p>
-          <p>This key controls real funds on {hit.network}. Handle it like any other live signing key.</p>
-        </div>
+            Secret Key — Live Funded Account
+          </DialogTitle>
+          <DialogDescription className="break-all font-mono text-xs">{hit.publicKey}</DialogDescription>
+        </DialogHeader>
+        <p className="px-4 pt-4 text-xs text-muted-foreground">This key controls real funds on {hit.network}. Handle it like any other live signing key.</p>
         <div className="px-4 py-3">
           <Label className="text-xs text-muted-foreground uppercase">Secret Key</Label>
           <code className="mt-1 block w-full rounded-md border border-border bg-muted p-3 text-xs font-mono break-all leading-relaxed select-all">
@@ -97,8 +82,8 @@ function SecretRevealModal({ hit, onClose }: { hit: KeyScanHit; onClose: () => v
             )}
           </Button>
         </div>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 

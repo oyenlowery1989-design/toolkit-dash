@@ -8,6 +8,7 @@ import { useActiveWallet } from "@/hooks/use-active-wallet";
 import { useAssetGroups } from "@/hooks/use-asset-groups";
 import { useSettings } from "@/lib/settings";
 import { shortAddr } from "@/lib/format";
+import { defaultGroupMemberLabel } from "@/lib/asset-groups/types";
 import type { AssetCreatorForm, StepResult } from "@/lib/asset-creator/types";
 import { Step1Accounts } from "./steps/Step1Accounts";
 import { Step2AssetConfig } from "./steps/Step2AssetConfig";
@@ -106,13 +107,13 @@ export function AssetCreatorPanel() {
       upsertMember(gId, {
         address: form.issuerPublicKey,
         role: "issuer",
-        label: "Issuer",
+        label: defaultGroupMemberLabel("issuer", form.assetCode),
         homeDomain: form.homeDomain || undefined,
       });
       upsertMember(gId, {
         address: form.distributorPublicKey,
         role: "distributor",
-        label: "Distributor",
+        label: defaultGroupMemberLabel("distributor", form.assetCode),
       });
       setGroupId(gId);
     }

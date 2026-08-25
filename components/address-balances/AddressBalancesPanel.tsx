@@ -119,7 +119,7 @@ function StatusBadge({ status }: { status: AddressRowStatus }) {
 // ---------------------------------------------------------------------------
 
 export function AddressBalancesPanel() {
-  const { settings } = useSettings();
+  const { settings, updateSettings } = useSettings();
   const [addressesText, setAddressesText] = useState("");
   const [rows, setRows] = useState<AddressRow[]>([]);
   const [running, setRunning] = useState(false);
@@ -129,7 +129,8 @@ export function AddressBalancesPanel() {
   const [lockedFilter, setLockedFilter] = useState<"all" | "locked" | "unlocked">("all");
   const [sortOrder, setSortOrder] = useState<"none" | "desc" | "asc">("none");
   const abortRef = useRef<AbortController | null>(null);
-  const scanState = useBulkScanState<AddressRow>(SCAN_KEY);
+  const scanState = useBulkScanState<AddressRow>(`${SCAN_KEY}:${settings.network}`);
+  const loadScanState = scanState.load;
   const { price: xlmUsdPrice, ensure: ensureXlmUsdPrice } = useXlmUsdPrice();
   const { upsert: upsertSearch } = useSavedSearches();
   const searchParams = useSearchParams();
@@ -140,11 +141,14 @@ export function AddressBalancesPanel() {
 
   useEffect(() => {
     const fromHistory = searchParams.get("addresses");
+    const fromNetwork = searchParams.get("network");
+    if (fromNetwork === "public") {
+      updateSettings({ network: "public" });
+    }
     if (fromHistory) {
       setAddressesText(fromHistory.split(",").join("\n"));
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [searchParams, updateSettings]);
 
   // Abort any in-flight scan on unmount — without this, navigating away
   // mid-scan leaves the worker pool running invisibly in the background
@@ -158,7 +162,7 @@ export function AddressBalancesPanel() {
 
   useEffect(() => {
     let cancelled = false;
-    scanState.load().then((persisted) => {
+    loadScanState().then((persisted) => {
       if (cancelled || !persisted || persisted.rows.length === 0) return;
       const wasInterrupted = persisted.rows.some(
         (r) => r.status === "pending" || r.status === "loading",
@@ -174,8 +178,7 @@ export function AddressBalancesPanel() {
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [loadScanState]);
 
   const updateRow = (index: number, patch: Partial<AddressRow>) => {
     setRows((prev) => {

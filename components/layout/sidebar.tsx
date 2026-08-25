@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { Menu, X, Rocket, Sun, Moon, Database, UserSearch, GitFork, ChevronDown, ChevronRight, Clock } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTheme } from "next-themes";
 import { Button } from "@/components/ui/button";
 import { useSettings, NETWORK_LABELS, type Network } from "@/lib/settings";
@@ -12,6 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { menuItems, isSeparator, isSection } from "@/lib/navigation";
 import { useSavedSearches } from "@/hooks/use-saved-searches";
 import { shortAddr } from "@/lib/format";
+import { savedSearchHref } from "@/lib/search-navigation";
 
 export function Sidebar() {
   const pathname = usePathname();
@@ -20,7 +21,7 @@ export function Sidebar() {
   const [recentOpen, setRecentOpen] = useState(false);
   const { settings, updateSettings } = useSettings();
 
-  const VISIBLE_NETWORKS: Network[] = ["public", "testnet"];
+  const VISIBLE_NETWORKS: Network[] = ["public"];
   const NETWORK_DOTS: Record<Network, string> = {
     public: "bg-blue-500",
     testnet: "bg-yellow-500",
@@ -30,23 +31,40 @@ export function Sidebar() {
   const { theme, setTheme } = useTheme();
   const { history: savedSearches, remove: removeSearch } = useSavedSearches();
   const [isMac, setIsMac] = useState(false);
+  const menuButtonRef = useRef<HTMLButtonElement>(null);
+  const sidebarRef = useRef<HTMLElement>(null);
 
   useEffect(() => {
     setIsMac(/Mac|iPod|iPhone|iPad/.test(navigator.platform));
   }, []);
 
-  const handleSearchClick = (type: string, value: string) => {
-    setIsOpen(false);
-    if (type === "address") {
-      router.push(`/address-investigator?address=${encodeURIComponent(value)}`);
-    } else if (type === "intermediary-scan") {
-      router.push(`/intermediary-tracer?tab=scan&address=${encodeURIComponent(value)}`);
-    } else if (type === "intermediary-trace") {
-      router.push(`/intermediary-tracer?tab=trace&address=${encodeURIComponent(value)}`);
-    } else {
-      const [code, issuer] = value.split(":");
-      router.push(`/asset-lookup?code=${encodeURIComponent(code)}&issuer=${encodeURIComponent(issuer)}`);
+  useEffect(() => {
+    const aside = sidebarRef.current;
+    if (!aside) return;
+    const media = window.matchMedia("(min-width: 768px)");
+    const syncInert = () => { aside.inert = !media.matches && !isOpen; };
+    syncInert();
+    media.addEventListener("change", syncInert);
+    if (isOpen) {
+      aside.querySelector<HTMLElement>("a, button, [tabindex='0']")?.focus();
     }
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && isOpen && !media.matches) {
+        setIsOpen(false);
+        menuButtonRef.current?.focus();
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      media.removeEventListener("change", syncInert);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [isOpen]);
+
+  const handleSearchClick = (entry: (typeof savedSearches)[number]) => {
+    setIsOpen(false);
+    const href = savedSearchHref(entry);
+    if (href) router.push(href);
   };
 
   return (
@@ -54,10 +72,14 @@ export function Sidebar() {
       {/* Mobile Menu Button */}
       <div className="md:hidden fixed top-4 left-4 z-50">
         <Button
+          ref={menuButtonRef}
           variant="outline"
           size="icon"
           onClick={() => setIsOpen(!isOpen)}
           className="bg-background border-border"
+          aria-label={isOpen ? "Close navigation menu" : "Open navigation menu"}
+          aria-expanded={isOpen}
+          aria-controls="primary-sidebar"
         >
           {isOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
         </Button>
@@ -65,6 +87,8 @@ export function Sidebar() {
 
       {/* Sidebar Container */}
       <aside
+        ref={sidebarRef}
+        id="primary-sidebar"
         className={cn(
           "fixed inset-y-0 left-0 z-40 w-64 bg-card border-r border-border transform transition-transform duration-200 ease-in-out md:translate-x-0 md:static md:h-screen",
           isOpen ? "translate-x-0" : "-translate-x-full",
@@ -172,7 +196,7 @@ export function Sidebar() {
                           <Icon className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
                           <button
                             className="flex-1 min-w-0 text-left"
-                            onClick={() => handleSearchClick(entry.type, entry.value)}
+                            onClick={() => handleSearchClick(entry)}
                           >
                             <span className="text-xs font-mono text-foreground truncate block">
                               {label}

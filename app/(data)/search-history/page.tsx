@@ -10,6 +10,7 @@ import { useSavedSearches } from "@/hooks/use-saved-searches";
 import { formatXlm } from "@/lib/format";
 import { timeAgo } from "@/lib/stellar-helpers";
 import { NETWORK_LABELS } from "@/lib/settings";
+import { savedSearchHref } from "@/lib/search-navigation";
 
 export default function SearchHistoryPage() {
   const router = useRouter();
@@ -17,20 +18,8 @@ export default function SearchHistoryPage() {
   const [query, setQuery] = useState("");
 
   const handleClick = (entry: (typeof history)[number]) => {
-    if (entry.type === "address") {
-      router.push(`/address-investigator?address=${encodeURIComponent(entry.value)}`);
-    } else if (entry.type === "asset") {
-      const [code, issuer] = entry.value.split(":");
-      router.push(`/asset-lookup?code=${encodeURIComponent(code)}&issuer=${encodeURIComponent(issuer)}`);
-    } else if (entry.type === "intermediary-trace") {
-      router.push(`/intermediary-tracer?address=${encodeURIComponent(entry.value)}&tab=trace`);
-    } else if (entry.type === "intermediary-scan") {
-      router.push(`/intermediary-tracer?address=${encodeURIComponent(entry.value)}&tab=scan`);
-    } else if (entry.type === "address-balances") {
-      router.push(`/address-balances?addresses=${encodeURIComponent(entry.value)}`);
-    } else if (entry.type === "asset-sales-bulk") {
-      router.push(`/asset-sales?bulkAssets=${encodeURIComponent(entry.value)}`);
-    }
+    const href = savedSearchHref(entry);
+    if (href) router.push(href);
   };
 
   const handleRunSales = (value: string) => {

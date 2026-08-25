@@ -10,18 +10,33 @@ import type { AutoSendGroup, DestinationRunResult, GroupRunResult, GroupPreview 
 import { getDb } from "@/lib/db";
 import { withAccountLock } from "@/lib/stellar-submit";
 import { getErrorMessage } from "@/lib/stellar-helpers";
+import { acquireRunLease, releaseRunLease } from "@/lib/run-lease";
+import { validateMainnetRun } from "@/lib/mainnet-safety";
+import { autoSendXlmLast24Hours } from "@/lib/mainnet-usage";
 const { Server } = Horizon;
+
+declare global {
+  var _autoSendExecutingGroups: Set<string> | undefined;
+}
+
+if (!global._autoSendExecutingGroups) global._autoSendExecutingGroups = new Set<string>();
+const executingGroups = global._autoSendExecutingGroups;
+
+export class AutoSendRunInProgressError extends Error {
+  readonly code = "AUTO_SEND_RUN_IN_PROGRESS";
+
+  constructor() {
+    super("This auto-send group is already running. Try again after the current run finishes.");
+    this.name = "AutoSendRunInProgressError";
+  }
+}
 
 const HORIZON_URLS: Record<string, string> = {
   public: "https://horizon.stellar.org",
-  testnet: "https://horizon-testnet.stellar.org",
-  futurenet: "https://horizon-futurenet.stellar.org",
 };
 
 const NETWORK_PASSPHRASES: Record<string, string> = {
   public: "Public Global Stellar Network ; September 2015",
-  testnet: "Test SDF Network ; September 2015",
-  futurenet: "Test SDF Future Network ; October 2022",
 };
 
 const DEFAULT_MIN_RESERVE = 10.0;
@@ -68,27 +83,41 @@ function logResult(groupId: string, walletAddress: string, result: DestinationRu
 /** Compute how much each destination receives, handling remainder destinations and max caps. */
 export function calcAmounts(spendable: number, destinations: AutoSendGroup["destinations"]): Map<string, number> {
   const amounts = new Map<string, number>();
+  const available = Math.max(0, spendable);
   // First pass: fixed-% destinations
   let fixedTotal = 0;
-  let surplus = 0;
   for (const dest of destinations) {
     const key = dest.id ?? dest.destination;
     if (!dest.isRemainder && !dest.paused) {
-      const uncapped = calcAmount(spendable, dest.percentage);
+      const uncapped = calcAmount(available, Math.max(0, dest.percentage));
       let amt = uncapped;
       if (dest.maxCap > 0) {
         amt = Math.min(amt, dest.maxCap);
-        if (amt < uncapped) surplus += uncapped - amt;
       }
       amounts.set(key, amt);
       fixedTotal += amt;
     }
   }
+  // Defend against invalid/stale configurations whose fixed percentages exceed
+  // 100%. Scale proportionally instead of constructing an underfunded payment.
+  if (fixedTotal > available && fixedTotal > 0) {
+    const scale = available / fixedTotal;
+    fixedTotal = 0;
+    for (const dest of destinations) {
+      if (dest.isRemainder || dest.paused) continue;
+      const key = dest.id ?? dest.destination;
+      const scaled = Math.floor(((amounts.get(key) ?? 0) * scale) * 1e7) / 1e7;
+      amounts.set(key, scaled);
+      fixedTotal += scaled;
+    }
+  }
   // Second pass: remainder destinations (split remaining equally if multiple)
-  // Surplus from capped fixed destinations flows into the remainder pool
+  // fixedTotal contains the capped amounts, so spendable - fixedTotal already
+  // includes any amount released by caps. Adding that surplus again would
+  // create money and could build an underfunded transaction.
   const remainderDests = destinations.filter((d) => d.isRemainder && !d.paused);
   if (remainderDests.length > 0) {
-    const leftover = Math.max(0, spendable - fixedTotal) + surplus;
+    const leftover = Math.max(0, available - fixedTotal);
     const share = Math.floor((leftover / remainderDests.length) * 1e7) / 1e7;
     for (const dest of remainderDests) {
       let amt = share;
@@ -101,7 +130,8 @@ export function calcAmounts(spendable: number, destinations: AutoSendGroup["dest
 
 /** Calculate what would be sent without submitting any transactions. */
 export async function previewGroup(group: AutoSendGroup): Promise<GroupPreview | { error: string }> {
-  const horizonUrl = HORIZON_URLS[group.network] ?? HORIZON_URLS.public;
+  const horizonUrl = HORIZON_URLS[group.network];
+  if (!horizonUrl) return { error: `Unsupported payment network: ${group.network}` };
   const server = new Server(horizonUrl);
 
   let keypair: Keypair;
@@ -121,7 +151,7 @@ export async function previewGroup(group: AutoSendGroup): Promise<GroupPreview |
     const isNotFound = raw.includes("Not Found") || raw.includes("404");
     return {
       error: isNotFound
-        ? `Account not found on ${group.network} — fund it with Friendbot (testnet) or send XLM to activate it`
+        ? "Account not found on mainnet — send XLM to activate it"
         : raw.slice(0, 150),
     };
   }
@@ -174,22 +204,46 @@ export async function previewGroup(group: AutoSendGroup): Promise<GroupPreview |
  *  Wrapped below in a per-account mutex so concurrent runs (manual + scheduler) can't race
  *  on the same account's sequence number. */
 export async function runGroup(group: AutoSendGroup): Promise<GroupRunResult> {
-  let keypair: Keypair;
+  if (executingGroups.has(group.id)) throw new AutoSendRunInProgressError();
+  executingGroups.add(group.id);
+  let leaseToken: string | null = null;
   try {
-    keypair = Keypair.fromSecret(group.secretKey);
-  } catch {
-    // Invalid secret key — let runGroupInner produce the same error result; no account to lock.
-    return runGroupInner(group);
+    leaseToken = await acquireRunLease("auto_send_run_leases", group.id);
+    if (!leaseToken) throw new AutoSendRunInProgressError();
+    let keypair: Keypair;
+    try {
+      keypair = Keypair.fromSecret(group.secretKey);
+    } catch {
+      // Invalid secret key — let runGroupInner produce the same error result; no account to lock.
+      return await runGroupInner(group);
+    }
+    return await withAccountLock(keypair.publicKey(), () => runGroupInner(group));
+  } finally {
+    if (leaseToken) await releaseRunLease("auto_send_run_leases", group.id, leaseToken);
+    executingGroups.delete(group.id);
   }
-  return withAccountLock(keypair.publicKey(), () => runGroupInner(group));
 }
 
 async function runGroupInner(group: AutoSendGroup): Promise<GroupRunResult> {
-  const horizonUrl = HORIZON_URLS[group.network] ?? HORIZON_URLS.public;
-  const networkPassphrase = NETWORK_PASSPHRASES[group.network] ?? NETWORK_PASSPHRASES.public;
-  const server = new Server(horizonUrl);
   const ranAt = Date.now();
   const results: DestinationRunResult[] = [];
+
+  const horizonUrl = HORIZON_URLS[group.network];
+  const networkPassphrase = NETWORK_PASSPHRASES[group.network];
+  if (!horizonUrl || !networkPassphrase) {
+    return {
+      groupId: group.id,
+      walletAddress: "unsupported-network",
+      ranAt,
+      results: group.destinations.map((d) => ({
+        destination: d.destination,
+        label: d.label,
+        status: "failed" as const,
+        error: `Unsupported payment network: ${group.network}`,
+      })),
+    };
+  }
+  const server = new Server(horizonUrl);
 
   let keypair: Keypair;
   try {
@@ -220,7 +274,7 @@ async function runGroupInner(group: AutoSendGroup): Promise<GroupRunResult> {
     const raw = extractError(err);
     const isNotFound = raw.includes("Not Found") || raw.includes("404");
     const message = isNotFound
-      ? `Account not found on ${group.network} — fund it with Friendbot (testnet) or send XLM to activate it`
+      ? "Account not found on mainnet — send XLM to activate it"
       : raw;
     return {
       groupId: group.id,
@@ -259,6 +313,36 @@ async function runGroupInner(group: AutoSendGroup): Promise<GroupRunResult> {
     for (const [key] of amounts) {
       amounts.set(key, 0.0000001);
     }
+  }
+
+  const intended = group.destinations
+    .map((dest) => ({ dest, amount: amounts.get(dest.id ?? dest.destination) ?? 0 }))
+    .filter(({ dest, amount }) => !skipReason(spendable, amount, group.testMode ? 0 : dest.minThreshold, dest.paused));
+  let sentLast24Hours: number;
+  try {
+    sentLast24Hours = await autoSendXlmLast24Hours(walletAddress);
+  } catch (error) {
+    sentLast24Hours = Number.POSITIVE_INFINITY;
+    console.error("[auto-send] unable to verify daily mainnet usage:", error);
+  }
+  const safetyErrors = validateMainnetRun({
+    destinations: intended.map(({ dest }) => dest.destination),
+    operationCount: intended.length,
+    xlmAmount: intended.reduce((sum, { amount }) => sum + amount, 0),
+    xlmSentLast24Hours: sentLast24Hours,
+  });
+  if (safetyErrors.length > 0) {
+    const error = safetyErrors.join("; ");
+    return {
+      groupId: group.id,
+      walletAddress,
+      ranAt,
+      results: group.destinations.map((dest) => {
+        const result: DestinationRunResult = { destination: dest.destination, label: dest.label, status: "failed", error };
+        logResult(group.id, walletAddress, result, ranAt);
+        return result;
+      }),
+    };
   }
 
   if (group.batchSend) {

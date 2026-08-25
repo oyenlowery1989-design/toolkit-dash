@@ -3,7 +3,7 @@ import { checkSacDeployed } from "@/lib/soroban/sac";
 type Network = "public" | "testnet" | "futurenet" | "local";
 import { getErrorMessage } from "@/lib/stellar-helpers";
 
-const VALID_NETWORKS = new Set<Network>(["public", "testnet", "futurenet", "local"]);
+const VALID_NETWORKS = new Set<Network>(["public"]);
 
 export async function POST(req: NextRequest) {
   try {

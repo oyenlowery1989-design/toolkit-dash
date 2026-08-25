@@ -2,7 +2,11 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { createDbCache, dbPost, dbPatch, authHeaders, debounce } from "@/lib/db-client";
-import type { AssetGroup, GroupMember } from "@/lib/asset-groups/types";
+import {
+  resolveGroupMemberLabel,
+  type AssetGroup,
+  type GroupMember,
+} from "@/lib/asset-groups/types";
 
 const ENDPOINT = "/api/db/groups";
 
@@ -301,6 +305,24 @@ export function useAssetGroups() {
     );
     dbDeleteMember(memberId);
   }, []);
+
+  // Groups created before asset-aware defaults used labels such as "Bank".
+  // Upgrade only those exact defaults; any descriptive user label is retained.
+  useEffect(() => {
+    if (!_cache.isLoaded()) return;
+    for (const group of groups) {
+      for (const member of group.members) {
+        const resolvedLabel = resolveGroupMemberLabel(
+          member.role,
+          member.label,
+          group.assetCode,
+        );
+        if (resolvedLabel && resolvedLabel !== member.label) {
+          updateMember(group.id, member.id, { label: resolvedLabel });
+        }
+      }
+    }
+  }, [groups, updateMember]);
 
   return {
     groups,

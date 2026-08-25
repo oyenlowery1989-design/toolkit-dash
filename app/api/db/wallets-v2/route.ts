@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
-import { getSupabase, isSupabaseOnly, syncToSupabase, requireAuth } from "@/lib/supabase-server";
+import { checkSupabaseRowOwnership, getSupabase, isSupabaseOnly, syncToSupabase, requireAuth } from "@/lib/supabase-server";
+import { decryptStoredSecret, encryptStoredSecret } from "@/lib/secret-storage";
 
 type WalletRow = {
   id: string; folder_id: string; name: string;
@@ -8,12 +9,15 @@ type WalletRow = {
 };
 
 function mapRow(r: WalletRow) {
+  const browserSigningEnabled = process.env.NODE_ENV !== "production" || process.env.ALLOW_BROWSER_SIGNING_KEYS === "true";
   return {
     id: r.id,
     folderId: r.folder_id,
     name: r.name,
     publicKey: r.public_key,
-    secretKey: r.secret_key, // intentional: personal app, accepted risk
+    secretKey: browserSigningEnabled ? decryptStoredSecret(r.secret_key) : "",
+    hasKey: Boolean(r.secret_key),
+    browserSigningEnabled,
     position: r.position,
   };
 }
@@ -66,9 +70,25 @@ export async function POST(req: NextRequest) {
   const trimName = (name as string).trim();
   const trimPublicKey = (publicKey as string).trim();
   const trimSecretKey = (secretKey as string).trim(); // empty string = watch-only, intentional
+  let storedSecretKey: string;
+  try {
+    storedSecretKey = encryptStoredSecret(trimSecretKey);
+  } catch (error) {
+    console.error("[wallets-v2] Signing-key encryption unavailable:", error);
+    return NextResponse.json({ error: "Signing-key encryption is not configured" }, { status: 503 });
+  }
 
   if (isSupabaseOnly()) {
     const sb = getSupabase()!;
+    const ownership = await checkSupabaseRowOwnership("wallets", trimId, userId!);
+    if (!ownership.ok) return NextResponse.json({ error: ownership.error }, { status: ownership.status });
+    const { data: ownedFolder } = await sb
+      .from("wallet_folders")
+      .select("id")
+      .eq("id", trimFolderId)
+      .eq("user_id", userId!)
+      .single();
+    if (!ownedFolder) return NextResponse.json({ error: "Not authorized" }, { status: 403 });
     const { data: dup } = await sb
       .from("wallets")
       .select("id, name")
@@ -84,7 +104,7 @@ export async function POST(req: NextRequest) {
       folder_id: trimFolderId,
       name: trimName,
       public_key: trimPublicKey,
-      secret_key: trimSecretKey,
+      secret_key: storedSecretKey,
       position: position as number,
     });
     if (error) {
@@ -99,7 +119,7 @@ export async function POST(req: NextRequest) {
     if (dup) return NextResponse.json({ error: `Already saved as "${dup.name}".` }, { status: 409 });
     getDb().prepare(
       "INSERT INTO wallets (id, folder_id, name, public_key, secret_key, position) VALUES (?, ?, ?, ?, ?, ?)"
-    ).run(trimId, trimFolderId, trimName, trimPublicKey, trimSecretKey, position);
+    ).run(trimId, trimFolderId, trimName, trimPublicKey, storedSecretKey, position);
   } catch {
     return NextResponse.json({ error: "DB error" }, { status: 500 });
   }
@@ -111,7 +131,7 @@ export async function POST(req: NextRequest) {
       folder_id: trimFolderId,
       name: trimName,
       public_key: trimPublicKey,
-      secret_key: trimSecretKey,
+      secret_key: storedSecretKey,
       position: position as number,
     }),
   );
@@ -142,7 +162,15 @@ export async function PATCH(req: NextRequest) {
     const trimFolderId = (folderId as string).trim();
 
     if (isSupabaseOnly()) {
-      const { error } = await getSupabase()!.from("wallets").update({ folder_id: trimFolderId }).eq("id", trimId).eq("user_id", userId!);
+      const sb = getSupabase()!;
+      const { data: ownedFolder } = await sb
+        .from("wallet_folders")
+        .select("id")
+        .eq("id", trimFolderId)
+        .eq("user_id", userId!)
+        .single();
+      if (!ownedFolder) return NextResponse.json({ error: "Not authorized" }, { status: 403 });
+      const { error } = await sb.from("wallets").update({ folder_id: trimFolderId }).eq("id", trimId).eq("user_id", userId!);
       if (error) {
         console.error("[wallets-v2] PATCH folderId failed:", error);
         return NextResponse.json({ error: error.message }, { status: 500 });

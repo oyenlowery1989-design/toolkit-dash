@@ -192,7 +192,7 @@ export function TierConfigCard({ config, onUpdate, onDelete, onUpsertTier, onDel
       const res = await fetch("/api/tiered-rewards/run", {
         method: "POST",
         headers: { "Content-Type": "application/json", ...authHeaders() },
-        body: JSON.stringify({ mode: "run", configId: config.id }),
+        body: JSON.stringify({ mode: "run", configId: config.id, previewToken: preview?.previewToken }),
       });
       const data = await res.json() as { error?: string; totalSent?: number; totalFailed?: number };
       if (data.error) {
@@ -213,40 +213,9 @@ export function TierConfigCard({ config, onUpdate, onDelete, onUpsertTier, onDel
     } finally {
       setExecuting(false);
     }
-  }, [config.id, onUpdate]);
+  }, [config.id, onUpdate, preview?.previewToken]);
 
-  const handleRunNow = useCallback(async () => {
-    setPreview(null);
-    setPreviewError(null);
-    setPreviewOpen(true);
-    setExecuting(true);
-    try {
-      await waitForAuth();
-      const res = await fetch("/api/tiered-rewards/run", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...authHeaders() },
-        body: JSON.stringify({ mode: "run", configId: config.id }),
-      });
-      const data = await res.json() as { error?: string; totalSent?: number; totalFailed?: number };
-      if (data.error) {
-        setPreviewError(data.error);
-      } else if ((data.totalFailed ?? 0) > 0) {
-        // No top-level error, but some payments in this run failed — surface that instead of
-        // silently reporting success. Leave lastFailureAt untouched (only cleared on a fully clean run).
-        setPreviewError(`Run completed with failures — ${data.totalSent ?? 0} sent, ${data.totalFailed} failed. Check History for details.`);
-        onUpdate(config.id, { lastRunAt: Date.now() });
-        setHistoryRefreshKey((k) => k + 1);
-      } else {
-        setPreviewOpen(false);
-        onUpdate(config.id, { lastRunAt: Date.now(), lastFailureAt: undefined });
-        setHistoryRefreshKey((k) => k + 1);
-      }
-    } catch (err) {
-      setPreviewError(err instanceof Error ? err.message : "Run failed");
-    } finally {
-      setExecuting(false);
-    }
-  }, [config.id, onUpdate]);
+  const handleRunNow = handlePreview;
 
   function handleSaveKey() {
     const key = keyDraft.trim();

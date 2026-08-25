@@ -73,10 +73,34 @@ describe("calcAmounts", () => {
       dest({ id: "capped", percentage: 50, maxCap: 100 }),
       dest({ id: "rem", isRemainder: true }),
     ]);
-    // uncapped = 500, clamped to 100 → surplus of 400
+    // uncapped = 500, clamped to 100
     expect(amounts.get("capped")).toBe(100);
-    // leftover = (1000 - 100) + surplus 400 = 1300 → all to the single remainder
-    expect(amounts.get("rem")).toBe(1300);
+    // spendable - actual fixed amount = 900. The cap saving is already in this value.
+    expect(amounts.get("rem")).toBe(900);
+  });
+
+  it("never allocates more than the spendable balance", () => {
+    const amounts = calcAmounts(1000, [
+      dest({ id: "capped", percentage: 80, maxCap: 100 }),
+      dest({ id: "r1", isRemainder: true }),
+      dest({ id: "r2", isRemainder: true }),
+    ]);
+    expect([...amounts.values()].reduce((sum, amount) => sum + amount, 0)).toBeLessThanOrEqual(1000);
+  });
+
+  it("scales invalid fixed percentages above 100% to the available balance", () => {
+    const amounts = calcAmounts(1000, [
+      dest({ id: "a", percentage: 80 }),
+      dest({ id: "b", percentage: 80 }),
+    ]);
+    expect(amounts.get("a")).toBe(500);
+    expect(amounts.get("b")).toBe(500);
+    expect([...amounts.values()].reduce((sum, amount) => sum + amount, 0)).toBeLessThanOrEqual(1000);
+  });
+
+  it("never produces negative payments when the reserve exceeds the balance", () => {
+    const amounts = calcAmounts(-5, [dest({ id: "a", percentage: 100 })]);
+    expect(amounts.get("a")).toBe(0);
   });
 
   it("clamps a remainder destination to its own maxCap", () => {

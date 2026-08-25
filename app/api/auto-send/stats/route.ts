@@ -20,10 +20,19 @@ export async function GET(req: NextRequest) {
     if (isSupabaseOnly()) {
       const sb = getSupabase()!;
 
-      const { data: logRows, error: le } = await sb
-        .from("auto_send_run_log")
-        .select("ran_at, group_id, status, amount_sent")
+      const { data: ownedGroups, error: oge } = await sb
+        .from("auto_send_groups")
+        .select("id")
         .eq("user_id", auth.userId!);
+      if (oge) return NextResponse.json({ error: oge.message }, { status: 500 });
+      const ownedGroupIds = (ownedGroups ?? []).map((group) => group.id as string);
+
+      const { data: logRows, error: le } = ownedGroupIds.length > 0
+        ? await sb
+          .from("auto_send_run_log")
+          .select("ran_at, group_id, status, amount_sent")
+          .in("group_id", ownedGroupIds)
+        : { data: [], error: null };
       if (le) return NextResponse.json({ error: le.message }, { status: 500 });
 
       const rows = logRows ?? [];

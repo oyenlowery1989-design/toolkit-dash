@@ -197,7 +197,8 @@ function WalletRow({ wallet, allFolders }: { wallet: WalletEntry; allFolders: Wa
   const [movingTo, setMovingTo] = useState<string>("");
   const [showMove, setShowMove] = useState(false);
   const isActive = activeWallet?.id === wallet.id;
-  const isWatchOnly = !wallet.secretKey;
+  const isWatchOnly = !wallet.secretKey && !wallet.hasKey;
+  const isServerCustodied = Boolean(wallet.hasKey && !wallet.secretKey);
 
   const horizonUrl = resolveHorizonUrl(settings);
 
@@ -243,7 +244,7 @@ function WalletRow({ wallet, allFolders }: { wallet: WalletEntry; allFolders: Wa
       <div className="flex items-center gap-3">
         {isWatchOnly
           ? <span title="Watch only"><Eye className={`h-4 w-4 shrink-0 ${isActive ? "text-green-500" : "text-muted-foreground"}`} /></span>
-          : <span title="Full wallet"><KeyRound className={`h-4 w-4 shrink-0 ${isActive ? "text-green-500" : "text-muted-foreground"}`} /></span>
+          : <span title={isServerCustodied ? "Server-custodied signing wallet" : "Full wallet"}><KeyRound className={`h-4 w-4 shrink-0 ${isActive ? "text-green-500" : "text-muted-foreground"}`} /></span>
         }
 
         <div className="flex-1 min-w-0">
@@ -391,6 +392,10 @@ function WalletRow({ wallet, allFolders }: { wallet: WalletEntry; allFolders: Wa
           {isWatchOnly ? (
             <p className="text-xs text-muted-foreground italic flex items-center gap-1.5">
               <Eye className="h-3 w-3" /> Watch only — no secret key stored
+            </p>
+          ) : isServerCustodied ? (
+            <p className="text-xs text-muted-foreground italic flex items-center gap-1.5">
+              <KeyRound className="h-3 w-3" /> Signing key is encrypted and available only to server-side automation
             </p>
           ) : (
             <div className="flex items-center justify-between gap-2">

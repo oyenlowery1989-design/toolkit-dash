@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
-import { getSupabase, isSupabaseOnly, syncToSupabase, requireAuth } from "@/lib/supabase-server";
+import { checkSupabaseRowOwnership, getSupabase, isSupabaseOnly, syncToSupabase, requireAuth } from "@/lib/supabase-server";
 
 function mapRow(r: { id: string; name: string; position: number }) {
   return { id: r.id, name: r.name, position: r.position };
@@ -53,6 +53,8 @@ export async function POST(req: NextRequest) {
   const trimmedName = (name as string).trim();
 
   if (isSupabaseOnly()) {
+    const ownership = await checkSupabaseRowOwnership("wallet_folders", trimmedId, userId!);
+    if (!ownership.ok) return NextResponse.json({ error: ownership.error }, { status: ownership.status });
     const { error } = await getSupabase()!.from("wallet_folders").upsert({
       id: trimmedId,
       user_id: userId,

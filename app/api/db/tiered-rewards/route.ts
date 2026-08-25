@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
-import { getSupabase, isSupabaseOnly, requireAuth } from "@/lib/supabase-server";
+import { checkSupabaseRowOwnership, getSupabase, isSupabaseOnly, requireAuth } from "@/lib/supabase-server";
 import { refreshTieredRewardsScheduler } from "@/lib/tiered-rewards/scheduler";
 import { loadAllConfigs } from "@/lib/tiered-rewards/db";
 import type { TieredRewardConfig } from "@/lib/tiered-rewards/types";
+import { encryptStoredSecret } from "@/lib/secret-storage";
 
 type Row = Record<string, unknown>;
 
@@ -55,7 +56,7 @@ async function supabaseGet(userId: string): Promise<TieredRewardConfig[]> {
       name: c.name,
       assetCode: c.asset_code,
       assetIssuer: c.asset_issuer,
-      network: c.network ?? "public",
+      network: "public",
       secretKey: null,
       hasKey: !!(c.secret_key || ""),
       intervalMinutes: c.interval_minutes ?? null,
@@ -94,6 +95,13 @@ function validateNoOverlap(tiers: Array<{ minTokens: number; maxTokens?: number 
   return null;
 }
 
+async function assertMutation(
+  query: PromiseLike<{ error: { message: string } | null }>,
+): Promise<void> {
+  const { error } = await query;
+  if (error) throw new Error(error.message);
+}
+
 // ── Routes ────────────────────────────────────────────────────────────────────
 
 export async function GET(req: NextRequest) {
@@ -115,6 +123,12 @@ export async function POST(req: NextRequest) {
   try { body = await req.json(); } catch { return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 }); }
 
   const { type, action, data } = body as { type: string; action: string; data: Row };
+  if (!data || typeof data !== "object") {
+    return NextResponse.json({ error: "data required" }, { status: 400 });
+  }
+  if (type === "config" && data.network !== undefined && data.network !== "public") {
+    return NextResponse.json({ error: "Only mainnet is supported" }, { status: 400 });
+  }
 
   if (isSupabaseOnly()) {
     const sb = getSupabase()!;
@@ -123,15 +137,19 @@ export async function POST(req: NextRequest) {
     try {
       if (type === "config") {
         if (action === "create") {
-          await sb.from("tiered_reward_configs").insert({
+          if (!data.id || typeof data.id !== "string") return NextResponse.json({ error: "id required" }, { status: 400 });
+          const ownership = await checkSupabaseRowOwnership("tiered_reward_configs", data.id, userId);
+          if (!ownership.ok) return NextResponse.json({ error: ownership.error }, { status: ownership.status });
+          await assertMutation(sb.from("tiered_reward_configs").insert({
             id: data.id, user_id: userId, name: data.name, asset_code: data.assetCode,
-            asset_issuer: data.assetIssuer, network: data.network, secret_key: data.secretKey ?? "",
+            asset_issuer: data.assetIssuer, network: "public",
+            secret_key: encryptStoredSecret(typeof data.secretKey === "string" ? data.secretKey : ""),
             interval_minutes: data.intervalMinutes ?? null, enabled: !!data.enabled,
             min_reserve: data.minReserve ?? 10.0, min_sender_threshold: data.minSenderThreshold ?? 0,
             preview_only: !!data.previewOnly, batch_send: data.batchSend !== false,
             memo: data.memo ?? null, fee_multiplier: data.feeMultiplier ?? 1.0,
             exclude_addresses: data.excludeAddresses ?? [], created_at: Date.now(),
-          });
+          }));
         } else if (action === "update") {
           // Build partial update — only touch fields present in the request
           const updates: Row = {};
@@ -140,7 +158,7 @@ export async function POST(req: NextRequest) {
           if (data.assetIssuer !== undefined) updates.asset_issuer = data.assetIssuer;
           if (data.network !== undefined) updates.network = data.network;
           // Only update key when caller supplies a non-empty value (empty/undefined = keep existing)
-          if (data.secretKey !== undefined && data.secretKey !== "") updates.secret_key = data.secretKey;
+          if (typeof data.secretKey === "string" && data.secretKey !== "") updates.secret_key = encryptStoredSecret(data.secretKey);
           if (data.secretKey === null) updates.secret_key = ""; // explicit clear
           if (data.intervalMinutes !== undefined) updates.interval_minutes = data.intervalMinutes ?? null;
           if (data.enabled !== undefined) updates.enabled = !!data.enabled;
@@ -153,10 +171,10 @@ export async function POST(req: NextRequest) {
           if (data.excludeAddresses !== undefined) updates.exclude_addresses = data.excludeAddresses ?? [];
           if (data.lastFailureAt !== undefined) updates.last_failure_at = data.lastFailureAt ?? null;
           if (Object.keys(updates).length > 0) {
-            await sb.from("tiered_reward_configs").update(updates).eq("id", data.id).eq("user_id", userId);
+            await assertMutation(sb.from("tiered_reward_configs").update(updates).eq("id", data.id).eq("user_id", userId));
           }
         } else if (action === "delete") {
-          await sb.from("tiered_reward_configs").delete().eq("id", data.id).eq("user_id", userId);
+          await assertMutation(sb.from("tiered_reward_configs").delete().eq("id", data.id).eq("user_id", userId));
         }
       } else if (type === "tier") {
         // Resolve config_id from either data.configId (create) or the tier itself (update/delete)
@@ -184,10 +202,10 @@ export async function POST(req: NextRequest) {
           const overlapErr = validateNoOverlap(allTiers);
           if (overlapErr) return NextResponse.json({ error: overlapErr }, { status: 400 });
 
-          await sb.from("tiered_reward_tiers").insert({
+          await assertMutation(sb.from("tiered_reward_tiers").insert({
             id: data.id, config_id: data.configId, tier_number: data.tierNumber,
             min_tokens: data.minTokens, max_tokens: data.maxTokens ?? null, position: data.position,
-          });
+          }));
         } else if (action === "update") {
           const { data: otherTiers } = await sb
             .from("tiered_reward_tiers")
@@ -201,12 +219,12 @@ export async function POST(req: NextRequest) {
           const overlapErr = validateNoOverlap(allTiers);
           if (overlapErr) return NextResponse.json({ error: overlapErr }, { status: 400 });
 
-          await sb.from("tiered_reward_tiers").update({
+          await assertMutation(sb.from("tiered_reward_tiers").update({
             tier_number: data.tierNumber, min_tokens: data.minTokens,
             max_tokens: data.maxTokens ?? null, position: data.position,
-          }).eq("id", data.id);
+          }).eq("id", data.id));
         } else if (action === "delete") {
-          await sb.from("tiered_reward_tiers").delete().eq("id", data.id);
+          await assertMutation(sb.from("tiered_reward_tiers").delete().eq("id", data.id));
         }
       } else if (type === "asset") {
         // Resolve tier_id from data.tierId (create) or the asset itself (update/delete)
@@ -228,16 +246,16 @@ export async function POST(req: NextRequest) {
         if (!ownedConfig) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
         if (action === "create") {
-          await sb.from("tiered_reward_assets").insert({
+          await assertMutation(sb.from("tiered_reward_assets").insert({
             id: data.id, tier_id: data.tierId, asset_code: data.assetCode,
             asset_issuer: data.assetIssuer ?? null, amount: data.amount,
-          });
+          }));
         } else if (action === "update") {
-          await sb.from("tiered_reward_assets").update({
+          await assertMutation(sb.from("tiered_reward_assets").update({
             asset_code: data.assetCode, asset_issuer: data.assetIssuer ?? null, amount: data.amount,
-          }).eq("id", data.id);
+          }).eq("id", data.id));
         } else if (action === "delete") {
-          await sb.from("tiered_reward_assets").delete().eq("id", data.id);
+          await assertMutation(sb.from("tiered_reward_assets").delete().eq("id", data.id));
         }
       } else {
         return NextResponse.json({ error: "unknown type" }, { status: 400 });
@@ -246,6 +264,7 @@ export async function POST(req: NextRequest) {
       console.error("[tiered-rewards/supabase] POST unhandled:", e);
       return NextResponse.json({ error: "Internal server error" }, { status: 500 });
     }
+    refreshTieredRewardsScheduler();
     return NextResponse.json({ ok: true });
   }
 
@@ -260,8 +279,8 @@ export async function POST(req: NextRequest) {
            (id, name, asset_code, asset_issuer, network, secret_key, interval_minutes, enabled, min_reserve, min_sender_threshold, preview_only, batch_send, memo, fee_multiplier, exclude_addresses, created_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         ).run(
-          data.id, data.name, data.assetCode, data.assetIssuer, data.network,
-          data.secretKey ?? "", data.intervalMinutes ?? null, data.enabled ? 1 : 0,
+          data.id, data.name, data.assetCode, data.assetIssuer, "public",
+          encryptStoredSecret(typeof data.secretKey === "string" ? data.secretKey : ""), data.intervalMinutes ?? null, data.enabled ? 1 : 0,
           data.minReserve ?? 10.0, data.minSenderThreshold ?? 0, data.previewOnly ? 1 : 0,
           data.batchSend !== false ? 1 : 0, data.memo ?? null, data.feeMultiplier ?? 1.0,
           JSON.stringify(data.excludeAddresses ?? []), Date.now()
@@ -276,7 +295,7 @@ export async function POST(req: NextRequest) {
         if (data.assetIssuer !== undefined) { fields.push("asset_issuer = ?"); vals.push(data.assetIssuer); }
         if (data.network !== undefined) { fields.push("network = ?"); vals.push(data.network); }
         // Only update key when caller supplies a non-empty value (empty/undefined = keep existing)
-        if (data.secretKey !== undefined && data.secretKey !== "") { fields.push("secret_key = ?"); vals.push(data.secretKey ?? ""); }
+        if (typeof data.secretKey === "string" && data.secretKey !== "") { fields.push("secret_key = ?"); vals.push(encryptStoredSecret(data.secretKey)); }
         if (data.secretKey === null) { fields.push("secret_key = ?"); vals.push(""); } // explicit clear
         if (data.intervalMinutes !== undefined) { fields.push("interval_minutes = ?"); vals.push(data.intervalMinutes ?? null); }
         if (data.enabled !== undefined) { fields.push("enabled = ?"); vals.push(data.enabled ? 1 : 0); }

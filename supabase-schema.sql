@@ -54,6 +54,8 @@ CREATE TABLE IF NOT EXISTS auto_send_destinations (id TEXT PRIMARY KEY, group_id
 CREATE INDEX IF NOT EXISTS idx_auto_send_destinations_group ON auto_send_destinations(group_id);
 CREATE TABLE IF NOT EXISTS auto_send_run_log (id TEXT PRIMARY KEY, group_id TEXT NOT NULL, wallet_address TEXT NOT NULL, destination TEXT NOT NULL, amount_sent DOUBLE PRECISION, status TEXT NOT NULL, error TEXT, ran_at BIGINT NOT NULL, tx_hash TEXT);
 CREATE INDEX IF NOT EXISTS idx_auto_send_run_log_group ON auto_send_run_log(group_id, ran_at DESC);
+CREATE TABLE IF NOT EXISTS auto_send_run_leases (resource_id TEXT PRIMARY KEY, lease_token TEXT NOT NULL, expires_at BIGINT NOT NULL);
+CREATE TABLE IF NOT EXISTS tiered_reward_run_leases (resource_id TEXT PRIMARY KEY, lease_token TEXT NOT NULL, expires_at BIGINT NOT NULL);
 
 -- Row-Level Security — run supabase-rls-migration.sql to enable RLS + owner-scoped
 -- policies on every table above. Kept as a separate file (not inlined here) so it
@@ -77,3 +79,34 @@ ALTER TABLE persons ADD COLUMN IF NOT EXISTS telegram_username TEXT;
 CREATE TABLE IF NOT EXISTS person_relationships (id TEXT PRIMARY KEY, person_a_id TEXT NOT NULL REFERENCES persons(id) ON DELETE CASCADE, person_b_id TEXT NOT NULL REFERENCES persons(id) ON DELETE CASCADE, type TEXT NOT NULL, created_at BIGINT NOT NULL);
 CREATE INDEX IF NOT EXISTS idx_person_relationships_a ON person_relationships(person_a_id);
 CREATE INDEX IF NOT EXISTS idx_person_relationships_b ON person_relationships(person_b_id);
+
+-- Fail closed even if the policy migration has not been run yet. The service-role
+-- server client continues to work, while direct Data API access remains blocked
+-- until supabase-rls-migration.sql installs the owner policies.
+ALTER TABLE address_book ENABLE ROW LEVEL SECURITY;
+ALTER TABLE app_state ENABLE ROW LEVEL SECURITY;
+ALTER TABLE asset_group_members ENABLE ROW LEVEL SECURITY;
+ALTER TABLE asset_groups ENABLE ROW LEVEL SECURITY;
+ALTER TABLE auto_send_destinations ENABLE ROW LEVEL SECURITY;
+ALTER TABLE auto_send_groups ENABLE ROW LEVEL SECURITY;
+ALTER TABLE auto_send_run_log ENABLE ROW LEVEL SECURITY;
+ALTER TABLE bulk_recipients ENABLE ROW LEVEL SECURITY;
+ALTER TABLE bulk_run_history ENABLE ROW LEVEL SECURITY;
+ALTER TABLE bulk_scan_state ENABLE ROW LEVEL SECURITY;
+ALTER TABLE creator_children ENABLE ROW LEVEL SECURITY;
+ALTER TABLE known_creators ENABLE ROW LEVEL SECURITY;
+ALTER TABLE known_intermediaries ENABLE ROW LEVEL SECURITY;
+ALTER TABLE person_addresses ENABLE ROW LEVEL SECURITY;
+ALTER TABLE person_relationships ENABLE ROW LEVEL SECURITY;
+ALTER TABLE persons ENABLE ROW LEVEL SECURITY;
+ALTER TABLE proceeds_presets ENABLE ROW LEVEL SECURITY;
+ALTER TABLE saved_analyses ENABLE ROW LEVEL SECURITY;
+ALTER TABLE saved_searches ENABLE ROW LEVEL SECURITY;
+ALTER TABLE tiered_reward_assets ENABLE ROW LEVEL SECURITY;
+ALTER TABLE tiered_reward_configs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE tiered_reward_run_log ENABLE ROW LEVEL SECURITY;
+ALTER TABLE tiered_reward_tiers ENABLE ROW LEVEL SECURITY;
+ALTER TABLE wallet_folders ENABLE ROW LEVEL SECURITY;
+ALTER TABLE wallets ENABLE ROW LEVEL SECURITY;
+ALTER TABLE auto_send_run_leases ENABLE ROW LEVEL SECURITY;
+ALTER TABLE tiered_reward_run_leases ENABLE ROW LEVEL SECURITY;

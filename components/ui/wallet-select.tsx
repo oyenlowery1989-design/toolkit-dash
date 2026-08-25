@@ -11,6 +11,8 @@ export interface WalletEntry {
   id: string;
   name: string;
   secretKey: string;
+  hasKey?: boolean;
+  browserSigningEnabled?: boolean;
   publicKey: string;
 }
 

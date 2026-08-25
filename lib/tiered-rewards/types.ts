@@ -21,7 +21,7 @@ export interface TieredRewardConfig {
   name: string;
   assetCode: string;       // asset to scan holders for
   assetIssuer: string;
-  network: string;         // "testnet" | "public" | "futurenet"
+  network: string;         // "public" (mainnet-only deployment)
   secretKey: string | null;  // null on GET responses — key stays server-side
   /** True when a secret key is saved server-side; secretKey will be null on GET responses. */
   hasKey?: boolean;
@@ -67,6 +67,8 @@ export interface RewardsPreview {
   costItems: TierCostItem[];
   blocked: boolean;        // true if any shortfall or missing trustline
   blockReasons: string[];
+  previewToken?: string;
+  safetyWarnings?: string[];
   holderOnlyPreview?: true; // true when no secret key — cost/balance data unavailable
 }
 

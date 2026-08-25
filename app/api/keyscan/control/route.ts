@@ -24,6 +24,15 @@ export async function POST(req: NextRequest) {
   }
 
   const { action, pacedRps, concurrency, resumeOnBoot } = b ?? {};
+  if (pacedRps !== undefined && (typeof pacedRps !== "number" || !Number.isFinite(pacedRps) || pacedRps < 0.5 || pacedRps > 10)) {
+    return NextResponse.json({ ok: false, error: "pacedRps must be between 0.5 and 10" }, { status: 400 });
+  }
+  if (concurrency !== undefined && (typeof concurrency !== "number" || !Number.isInteger(concurrency) || concurrency < 1 || concurrency > 10)) {
+    return NextResponse.json({ ok: false, error: "concurrency must be an integer between 1 and 10" }, { status: 400 });
+  }
+  if (resumeOnBoot !== undefined && typeof resumeOnBoot !== "boolean") {
+    return NextResponse.json({ ok: false, error: "resumeOnBoot must be boolean" }, { status: 400 });
+  }
   if (pacedRps !== undefined || concurrency !== undefined || resumeOnBoot !== undefined) {
     updateKeyScanConfig({ pacedRps, concurrency, resumeOnBoot });
   }

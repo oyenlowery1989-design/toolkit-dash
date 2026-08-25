@@ -107,15 +107,13 @@ function nextRunLabel(lastRunAt: number | undefined, intervalMinutes: number | n
 
 
 function expertTxUrl(network: string, txHash: string): string {
-  const net = network === "testnet" ? "testnet" : network === "futurenet" ? "futurenet" : "public";
-  return `https://stellar.expert/explorer/${net}/tx/${txHash}`;
+  void network;
+  return `https://stellar.expert/explorer/public/tx/${txHash}`;
 }
 
-const NETWORKS = ["public", "testnet", "futurenet"] as const;
+const NETWORKS = ["public"] as const;
 const NETWORK_LABELS: Record<string, string> = {
   public: "Mainnet",
-  testnet: "Testnet",
-  futurenet: "Futurenet",
 };
 
 const INTERVAL_OPTIONS: { label: string; minutes: number | null }[] = [
@@ -572,10 +570,16 @@ function PreviewTable({
         </table>
       </div>
 
+      {(preview.safetyWarnings?.length ?? 0) > 0 && (
+        <div className="rounded-md border border-amber-500/40 bg-amber-500/10 p-2 text-xs text-amber-300">
+          {preview.safetyWarnings!.join("; ")}
+        </div>
+      )}
+
       <div className="flex gap-2 items-center">
         <Button
           onClick={onApprove}
-          disabled={approving || sendCount === 0}
+          disabled={approving || sendCount === 0 || !preview.previewToken || (preview.safetyWarnings?.length ?? 0) > 0}
           className="bg-green-600 hover:bg-green-500 text-white"
         >
           {approving ? <RefreshCw size={12} className="animate-spin mr-1.5" /> : <CheckCircle size={12} className="mr-1.5" />}
@@ -818,6 +822,7 @@ function GroupCard({ groupId, runAllStatus }: { groupId: string; runAllStatus?: 
   }
 
   async function handleRun() {
+    const previewToken = preview?.previewToken;
     setRunning(true);
     setPreview(null);
     setPreviewError(null);
@@ -828,7 +833,7 @@ function GroupCard({ groupId, runAllStatus }: { groupId: string; runAllStatus?: 
       const res = await fetch("/api/auto-send/run", {
         method: "POST",
         headers: { "Content-Type": "application/json", ...authHeaders() },
-        body: JSON.stringify({ groupId: group!.id }),
+        body: JSON.stringify({ groupId: group!.id, previewToken }),
         signal: controller.signal,
       });
       const data = await res.json();

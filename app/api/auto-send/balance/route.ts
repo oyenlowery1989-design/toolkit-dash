@@ -2,12 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
 import { getSupabase, isSupabaseOnly, requireAuth } from "@/lib/supabase-server";
 import { Keypair, Horizon } from "stellar-sdk";
+import { decryptStoredSecret } from "@/lib/secret-storage";
 const { Server } = Horizon;
 
 const HORIZON_URLS: Record<string, string> = {
   public: "https://horizon.stellar.org",
-  testnet: "https://horizon-testnet.stellar.org",
-  futurenet: "https://horizon-futurenet.stellar.org",
 };
 
 export async function GET(req: NextRequest) {
@@ -45,13 +44,14 @@ export async function GET(req: NextRequest) {
 
   let keypair: Keypair;
   try {
-    keypair = Keypair.fromSecret(secretKey);
+    keypair = Keypair.fromSecret(decryptStoredSecret(secretKey));
   } catch {
     return NextResponse.json({ error: "Invalid secret key stored in group" }, { status: 400 });
   }
 
   const address = keypair.publicKey();
-  const horizonUrl = HORIZON_URLS[network ?? "public"] ?? HORIZON_URLS.public;
+  const horizonUrl = HORIZON_URLS[network ?? "public"];
+  if (!horizonUrl) return NextResponse.json({ error: "Only mainnet is supported" }, { status: 400 });
   const server = new Server(horizonUrl);
 
   try {

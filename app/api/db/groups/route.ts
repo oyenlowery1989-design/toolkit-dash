@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
-import { getSupabase, isSupabaseOnly, syncToSupabase, requireAuth } from "@/lib/supabase-server";
+import { checkSupabaseRowOwnership, getSupabase, isSupabaseOnly, syncToSupabase, requireAuth } from "@/lib/supabase-server";
 import type { AssetGroup, GroupMember } from "@/lib/asset-groups/types";
 
 type GroupRow = Record<string, unknown>;
@@ -164,6 +164,8 @@ export async function POST(req: NextRequest) {
     } else {
       // Supabase-only mode
       const sb = getSupabase()!;
+      const ownership = await checkSupabaseRowOwnership("asset_groups", id, userId!);
+      if (!ownership.ok) return NextResponse.json({ error: ownership.error }, { status: ownership.status });
       if (assetCodeNorm && issuerNorm) {
         const { data: existing } = await sb
           .from("asset_groups")
@@ -304,6 +306,16 @@ export async function PATCH(req: NextRequest) {
     const { id, name, notes, assetCode, issuer, network, domain, telegramChannel, telegramLink, personId, clearPersonId } = body;
 
     if (isSupabaseOnly()) {
+      const sb = getSupabase()!;
+      if (personId !== undefined && personId !== null) {
+        const { data: ownedPerson } = await sb
+          .from("persons")
+          .select("id")
+          .eq("id", personId)
+          .eq("user_id", userId!)
+          .single();
+        if (!ownedPerson) return NextResponse.json({ error: "Not authorized" }, { status: 403 });
+      }
       const patch: Record<string, unknown> = { updated_at: now };
       if (name !== undefined) patch.name = name;
       if (notes !== undefined) patch.notes = notes;
@@ -315,7 +327,7 @@ export async function PATCH(req: NextRequest) {
       if (telegramLink !== undefined) patch.telegram_link = telegramLink;
       if (clearPersonId) patch.person_id = null;
       else if (personId !== undefined) patch.person_id = personId;
-      const { error } = await getSupabase()!.from("asset_groups").update(patch).eq("id", id).eq("user_id", userId!);
+      const { error } = await sb.from("asset_groups").update(patch).eq("id", id).eq("user_id", userId!);
       if (error) {
         if (error.code === "23503") return NextResponse.json({ ok: false, error: "group_not_found" }, { status: 409 });
         return NextResponse.json({ ok: false, error: error.message }, { status: 500 });

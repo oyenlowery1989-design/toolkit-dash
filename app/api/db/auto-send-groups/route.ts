@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
 import { getSupabase, isSupabaseOnly, requireAuth } from "@/lib/supabase-server";
 import type { AutoSendGroup, AutoSendDestination } from "@/lib/auto-send/types";
+import { encryptStoredSecret } from "@/lib/secret-storage";
 
 type Row = Record<string, unknown>;
 
@@ -31,7 +32,7 @@ function buildGroups(groups: Row[], allDests: Row[]): AutoSendGroup[] {
   return groups.map((g) => ({
     id: g.id as string,
     name: g.name as string,
-    network: (g.network as string) ?? "public",
+    network: "public",
     secretKey: "",
     hasKey: !!((g.secret_key as string) ?? ""),
     intervalMinutes: (g.interval_minutes as number) ?? null,
@@ -79,6 +80,13 @@ export async function POST(req: NextRequest) {
     if (body.type === "group") {
       const { id, name, network, secretKey, intervalMinutes, enabled } = body as Record<string, unknown>;
       if (!id || !name) return NextResponse.json({ error: "id and name required" }, { status: 400 });
+      if (network !== undefined && network !== "public") {
+        return NextResponse.json({ error: "Only mainnet is supported" }, { status: 400 });
+      }
+      if (secretKey !== undefined && typeof secretKey !== "string") {
+        return NextResponse.json({ error: "secretKey must be a string" }, { status: 400 });
+      }
+      const storedSecretKey = encryptStoredSecret(secretKey ?? "");
       const enabledFlag = enabled === undefined ? 1 : (enabled ? 1 : 0);
 
       if (isSupabaseOnly()) {
@@ -90,14 +98,14 @@ export async function POST(req: NextRequest) {
         }
         const { error } = await sb.from("auto_send_groups").upsert({
           id, user_id: auth.userId!, name: (name as string).trim(),
-          network: network ?? "public", secret_key: secretKey ?? "",
+          network: "public", secret_key: storedSecretKey,
           interval_minutes: intervalMinutes ?? null, enabled: enabledFlag, created_at: now,
         });
         if (error) return NextResponse.json({ error: error.message }, { status: 500 });
       } else {
         const db = getDb();
         db.prepare(`INSERT INTO auto_send_groups (id, name, network, secret_key, interval_minutes, enabled, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`)
-          .run(id, (name as string).trim(), network ?? "public", secretKey ?? "", intervalMinutes ?? null, enabledFlag, now);
+          .run(id, (name as string).trim(), "public", storedSecretKey, intervalMinutes ?? null, enabledFlag, now);
       }
       return NextResponse.json({ ok: true });
     }
@@ -116,7 +124,7 @@ export async function POST(req: NextRequest) {
         const { data: existing } = await sb.from("auto_send_destinations").select("id").eq("group_id", groupId).eq("destination", destination).single();
         const rowId = existing?.id ?? id;
         const { error } = await sb.from("auto_send_destinations").upsert({
-          id: rowId, user_id: auth.userId!, group_id: groupId, destination,
+          id: rowId, group_id: groupId, destination,
           percentage: percentage ?? 0, is_remainder: isRemainder ? 1 : 0,
           is_paused: paused ? 1 : 0, label: label ?? null, memo: memo ?? null,
           min_threshold: minThreshold ?? 0, max_cap: maxCap ?? 0, position: position ?? 0,
@@ -151,13 +159,19 @@ export async function PATCH(req: NextRequest) {
     if (body.type === "group") {
       const { id, name, network, secretKey, intervalMinutes, enabled, batchSend, batchMemo, minReserve, minSenderThreshold, previewOnly, lastFailureAt } = body;
       if (!id) return NextResponse.json({ error: "id required" }, { status: 400 });
+      if (network !== undefined && network !== "public") {
+        return NextResponse.json({ error: "Only mainnet is supported" }, { status: 400 });
+      }
+      if (secretKey !== undefined && secretKey !== null && typeof secretKey !== "string") {
+        return NextResponse.json({ error: "secretKey must be a string" }, { status: 400 });
+      }
 
       if (isSupabaseOnly()) {
         const updates: Row = {};
         if (name !== undefined) updates.name = (name as string).trim();
         if (network !== undefined) updates.network = network;
         // Only update key when caller supplies a non-empty value (empty = keep existing)
-        if (secretKey !== undefined && secretKey !== "") updates.secret_key = secretKey;
+        if (typeof secretKey === "string" && secretKey !== "") updates.secret_key = encryptStoredSecret(secretKey);
         if (intervalMinutes !== undefined) updates.interval_minutes = intervalMinutes ?? null;
         if (enabled !== undefined) updates.enabled = enabled ? 1 : 0;
         if (batchSend !== undefined) updates.batch_send = batchSend ? 1 : 0;
@@ -176,7 +190,7 @@ export async function PATCH(req: NextRequest) {
         if (name !== undefined) { fields.push("name = ?"); values.push((name as string).trim()); }
         if (network !== undefined) { fields.push("network = ?"); values.push(network); }
         // Only update key when caller supplies a non-empty value (empty = keep existing)
-        if (secretKey !== undefined && secretKey !== "") { fields.push("secret_key = ?"); values.push(secretKey); }
+        if (typeof secretKey === "string" && secretKey !== "") { fields.push("secret_key = ?"); values.push(encryptStoredSecret(secretKey)); }
         if (intervalMinutes !== undefined) { fields.push("interval_minutes = ?"); values.push(intervalMinutes ?? null); }
         if (enabled !== undefined) { fields.push("enabled = ?"); values.push(enabled ? 1 : 0); }
         if (batchSend !== undefined) { fields.push("batch_send = ?"); values.push(batchSend ? 1 : 0); }

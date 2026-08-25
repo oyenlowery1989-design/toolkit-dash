@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
-import { getSupabase, isSupabaseOnly, syncToSupabase, requireAuth } from "@/lib/supabase-server";
+import { checkSupabaseRowOwnership, getSupabase, isSupabaseOnly, syncToSupabase, requireAuth } from "@/lib/supabase-server";
 
 const MAX = 50;
 
@@ -60,6 +60,11 @@ export async function POST(req: NextRequest) {
     // (that helper is only correct for the local dual-write backup path
     // below, where SQLite already succeeded and Supabase is best-effort).
     const sb = getSupabase()!;
+    if (!b.id || typeof b.id !== "string") {
+      return NextResponse.json({ error: "id required" }, { status: 400 });
+    }
+    const ownership = await checkSupabaseRowOwnership("saved_analyses", b.id, userId!);
+    if (!ownership.ok) return NextResponse.json({ error: ownership.error }, { status: ownership.status });
     const { error: upsertError } = await sb.from("saved_analyses").upsert({
       id: b.id,
       user_id: userId,

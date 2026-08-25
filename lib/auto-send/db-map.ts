@@ -1,4 +1,5 @@
 import type { AutoSendGroup } from "./types";
+import { decryptStoredSecret } from "@/lib/secret-storage";
 
 type Row = Record<string, unknown>;
 
@@ -10,8 +11,8 @@ export function rowToGroup(g: Row, dests: Row[]): AutoSendGroup {
   return {
     id: g.id as string,
     name: g.name as string,
-    network: (g.network as string) ?? "public",
-    secretKey: (g.secret_key as string) ?? "",
+    network: "public",
+    secretKey: decryptStoredSecret(g.secret_key as string | undefined),
     intervalMinutes: (g.interval_minutes as number) ?? null,
     enabled: Number(g.enabled) === 1,
     batchSend: Number(g.batch_send) === 1,

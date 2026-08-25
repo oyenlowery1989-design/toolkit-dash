@@ -8,7 +8,9 @@
 import type Database from "better-sqlite3";
 import path from "path";
 
-const DB_PATH = path.join(process.cwd(), "stellar-toolkit.db");
+const DB_PATH = process.env.SQLITE_DB_PATH
+  ? path.resolve(process.env.SQLITE_DB_PATH)
+  : path.join(process.cwd(), "stellar-toolkit.db");
 
 declare global {
   var _stellarDb: Database.Database | undefined;
@@ -274,6 +276,12 @@ function initDb(): Database.Database {
     CREATE INDEX IF NOT EXISTS idx_auto_send_destinations_group ON auto_send_destinations(group_id);
     CREATE INDEX IF NOT EXISTS idx_auto_send_run_log_group ON auto_send_run_log(group_id, ran_at DESC);
 
+    CREATE TABLE IF NOT EXISTS auto_send_run_leases (
+      resource_id TEXT PRIMARY KEY,
+      lease_token TEXT NOT NULL,
+      expires_at  INTEGER NOT NULL
+    );
+
     -- ── Migration version tracking ────────────────────────────────────────────
     -- Single-row table. Future schema changes should:
     --   1. Increment CURRENT_SCHEMA_VERSION constant below.
@@ -337,6 +345,12 @@ function initDb(): Database.Database {
     CREATE INDEX IF NOT EXISTS idx_tiered_reward_tiers_config ON tiered_reward_tiers(config_id);
     CREATE INDEX IF NOT EXISTS idx_tiered_reward_assets_tier ON tiered_reward_assets(tier_id);
     CREATE INDEX IF NOT EXISTS idx_tiered_reward_run_log_config ON tiered_reward_run_log(config_id, ran_at DESC);
+
+    CREATE TABLE IF NOT EXISTS tiered_reward_run_leases (
+      resource_id TEXT PRIMARY KEY,
+      lease_token TEXT NOT NULL,
+      expires_at  INTEGER NOT NULL
+    );
 
     -- ── Tracer v2 — Watchlist (local-only; poller does not run on Vercel) ──────
     CREATE TABLE IF NOT EXISTS tracer_watchlist (

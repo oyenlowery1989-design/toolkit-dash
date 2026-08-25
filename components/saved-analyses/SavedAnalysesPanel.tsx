@@ -754,21 +754,22 @@ function CrossAssetDestinations({ analyses }: { analyses: SavedAnalysis[] }) {
   const [show, setShow] = useState(false);
 
   const aggregated = useMemo(() => {
-    const map = new Map<string, { totalXlm: number; assetCount: Set<string>; txCount: number }>();
+    const map = new Map<string, { address: string; network: string; totalXlm: number; assetCount: Set<string>; txCount: number }>();
     for (const a of analyses) {
       for (const d of a.result.topDestinations) {
-        const existing = map.get(d.address);
+        const key = `${a.network}:${d.address}`;
+        const existing = map.get(key);
         if (existing) {
           existing.totalXlm += d.totalXlm;
           existing.assetCount.add(`${a.assetCode}:${a.issuer}`);
           existing.txCount += d.count;
         } else {
-          map.set(d.address, { totalXlm: d.totalXlm, assetCount: new Set([`${a.assetCode}:${a.issuer}`]), txCount: d.count });
+          map.set(key, { address: d.address, network: a.network, totalXlm: d.totalXlm, assetCount: new Set([`${a.assetCode}:${a.issuer}`]), txCount: d.count });
         }
       }
     }
     return [...map.entries()]
-      .map(([address, v]) => ({ address, totalXlm: v.totalXlm, assetCount: v.assetCount.size, txCount: v.txCount }))
+      .map(([, v]) => ({ address: v.address, network: v.network, totalXlm: v.totalXlm, assetCount: v.assetCount.size, txCount: v.txCount }))
       .sort((a, b) => b.assetCount - a.assetCount || b.totalXlm - a.totalXlm);
   }, [analyses]);
 
@@ -811,12 +812,12 @@ function CrossAssetDestinations({ analyses }: { analyses: SavedAnalysis[] }) {
               <tbody>
                 {aggregated.slice(0, 20).map((row) => (
                   <tr
-                    key={row.address}
+                    key={`${row.network}:${row.address}`}
                     className={`border-b last:border-0 ${row.assetCount > 1 ? "bg-yellow-500/5" : ""}`}
                   >
                     <td className="px-3 py-2">
                       <div className="flex items-center gap-2">
-                        <ShortAddress address={row.address} network="public" />
+                        <ShortAddress address={row.address} network={row.network} />
                         {row.assetCount > 1 && (
                           <span className="text-[9px] uppercase tracking-wide font-semibold px-1 py-px rounded border border-yellow-400/40 bg-yellow-400/10 text-yellow-400">
                             shared

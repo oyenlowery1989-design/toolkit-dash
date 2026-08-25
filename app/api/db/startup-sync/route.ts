@@ -13,6 +13,7 @@ import {
   requireAuth,
   warnSyncSkippedOnce,
 } from "@/lib/supabase-server";
+import { encryptImportedStoredSecret } from "@/lib/secret-storage";
 
 export async function POST(req: NextRequest) {
   const auth = await requireAuth(req);
@@ -54,6 +55,9 @@ export async function POST(req: NextRequest) {
     { data: wallets },
     { data: appState },
     { data: autoSendGroups },
+    { data: persons },
+    { data: creatorChildren },
+    { data: bulkScanState },
     { data: tieredRewardConfigs },
   ] = await Promise.all([
     sb.from("address_book").select("*").eq("user_id", userId),
@@ -69,17 +73,23 @@ export async function POST(req: NextRequest) {
     sb.from("wallets").select("*").eq("user_id", userId),
     sb.from("app_state").select("*").eq("user_id", userId),
     sb.from("auto_send_groups").select("*").eq("user_id", userId),
+    sb.from("persons").select("*").eq("user_id", userId),
+    sb.from("creator_children").select("*").eq("user_id", userId),
+    sb.from("bulk_scan_state").select("*").eq("user_id", userId),
     sb.from("tiered_reward_configs").select("*").eq("user_id", userId),
   ]);
 
   // Child tables with no user_id column of their own — scoped through their parent instead
   const assetGroupIds = (assetGroups ?? []).map((g) => g.id as string);
   const autoSendGroupIds = (autoSendGroups ?? []).map((g) => g.id as string);
+  const personIds = (persons ?? []).map((p) => p.id as string);
   const tieredRewardConfigIds = (tieredRewardConfigs ?? []).map((c) => c.id as string);
   const [
     { data: assetGroupMembers },
     { data: autoSendDestinations },
     { data: autoSendRunLog },
+    { data: personAddresses },
+    { data: personRelationships },
     { data: tieredRewardTiers },
     { data: tieredRewardRunLog },
   ] = await Promise.all([
@@ -90,7 +100,13 @@ export async function POST(req: NextRequest) {
       ? sb.from("auto_send_destinations").select("*").in("group_id", autoSendGroupIds)
       : Promise.resolve({ data: [] as Record<string, unknown>[] }),
     autoSendGroupIds.length > 0
-      ? sb.from("auto_send_run_log").select("*").eq("user_id", userId)
+      ? sb.from("auto_send_run_log").select("*").in("group_id", autoSendGroupIds)
+      : Promise.resolve({ data: [] as Record<string, unknown>[] }),
+    personIds.length > 0
+      ? sb.from("person_addresses").select("*").in("person_id", personIds)
+      : Promise.resolve({ data: [] as Record<string, unknown>[] }),
+    personIds.length > 0
+      ? sb.from("person_relationships").select("*").in("person_a_id", personIds)
       : Promise.resolve({ data: [] as Record<string, unknown>[] }),
     tieredRewardConfigIds.length > 0
       ? sb.from("tiered_reward_tiers").select("*").in("config_id", tieredRewardConfigIds)
@@ -162,11 +178,29 @@ export async function POST(req: NextRequest) {
       ).run(r.id, r.network, r.memo, r.recipient_count, r.success_count, r.failed_count, r.ran_at);
       merged += result.changes;
     }
+    for (const r of persons ?? []) {
+      const result = db.prepare(
+        "INSERT OR IGNORE INTO persons (id, name, role, notes, telegram_channel, telegram_link, telegram_username, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+      ).run(r.id, r.name, r.role, r.notes, r.telegram_channel, r.telegram_link, r.telegram_username, r.created_at, r.updated_at);
+      merged += result.changes;
+    }
+    for (const r of personAddresses ?? []) {
+      const result = db.prepare(
+        "INSERT OR IGNORE INTO person_addresses (id, person_id, address, label, added_at) VALUES (?, ?, ?, ?, ?)"
+      ).run(r.id, r.person_id, r.address, r.label, r.added_at);
+      merged += result.changes;
+    }
+    for (const r of personRelationships ?? []) {
+      const result = db.prepare(
+        "INSERT OR IGNORE INTO person_relationships (id, person_a_id, person_b_id, type, created_at) VALUES (?, ?, ?, ?, ?)"
+      ).run(r.id, r.person_a_id, r.person_b_id, r.type, r.created_at);
+      merged += result.changes;
+    }
     // Groups — parents before children
     for (const r of assetGroups ?? []) {
       const result = db.prepare(
-        "INSERT OR IGNORE INTO asset_groups (id, name, asset_code, issuer, network, notes, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
-      ).run(r.id, r.name, r.asset_code, r.issuer, r.network, r.notes, r.created_at, r.updated_at);
+        "INSERT OR IGNORE INTO asset_groups (id, name, asset_code, issuer, network, notes, domain, telegram_channel, telegram_link, person_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+      ).run(r.id, r.name, r.asset_code, r.issuer, r.network, r.notes, r.domain, r.telegram_channel, r.telegram_link, r.person_id, r.created_at, r.updated_at);
       merged += result.changes;
     }
     for (const r of assetGroupMembers ?? []) {
@@ -185,7 +219,7 @@ export async function POST(req: NextRequest) {
     for (const r of wallets ?? []) {
       const result = db.prepare(
         "INSERT OR IGNORE INTO wallets (id, folder_id, name, public_key, secret_key, position) VALUES (?, ?, ?, ?, ?, ?)"
-      ).run(r.id, r.folder_id, r.name, r.public_key, r.secret_key, r.position);
+      ).run(r.id, r.folder_id, r.name, r.public_key, encryptImportedStoredSecret(r.secret_key), r.position);
       merged += result.changes;
     }
     for (const r of appState ?? []) {
@@ -198,7 +232,7 @@ export async function POST(req: NextRequest) {
     for (const r of autoSendGroups ?? []) {
       const result = db.prepare(
         "INSERT OR IGNORE INTO auto_send_groups (id, name, network, secret_key, interval_minutes, enabled, batch_send, batch_memo, min_reserve, min_sender_threshold, preview_only, last_failure_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
-      ).run(r.id, r.name, r.network, r.secret_key, r.interval_minutes, r.enabled, r.batch_send, r.batch_memo, r.min_reserve, r.min_sender_threshold, r.preview_only, r.last_failure_at, r.created_at);
+      ).run(r.id, r.name, "public", encryptImportedStoredSecret(r.secret_key), r.interval_minutes, r.enabled, r.batch_send, r.batch_memo, r.min_reserve, r.min_sender_threshold, r.preview_only, r.last_failure_at, r.created_at);
       merged += result.changes;
     }
     for (const r of autoSendDestinations ?? []) {
@@ -213,12 +247,28 @@ export async function POST(req: NextRequest) {
       ).run(r.id, r.group_id, r.wallet_address, r.destination, r.amount_sent, r.status, r.error, r.ran_at, r.tx_hash);
       merged += result.changes;
     }
+    for (const r of creatorChildren ?? []) {
+      const issuedAssets = r.issued_assets == null || typeof r.issued_assets === "string"
+        ? r.issued_assets : JSON.stringify(r.issued_assets);
+      const distributedAssets = r.distributed_assets == null || typeof r.distributed_assets === "string"
+        ? r.distributed_assets : JSON.stringify(r.distributed_assets);
+      const result = db.prepare(
+        "INSERT OR IGNORE INTO creator_children (id, creator_address, child_address, network, via_intermediary, created_on_chain, confidence, starting_balance, home_domain, issued_assets, distributed_assets, parent_address, discovered_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+      ).run(r.id, r.creator_address, r.child_address, "public", r.via_intermediary, r.created_on_chain, r.confidence, r.starting_balance, r.home_domain, issuedAssets, distributedAssets, r.parent_address, r.discovered_at);
+      merged += result.changes;
+    }
+    for (const r of bulkScanState ?? []) {
+      const result = db.prepare(
+        "INSERT OR IGNORE INTO bulk_scan_state (id, scan_key, rows_json, interrupted, updated_at) VALUES (?, ?, ?, ?, ?)"
+      ).run(`local:${r.scan_key}`, r.scan_key, r.rows_json, r.interrupted, r.updated_at);
+      merged += result.changes;
+    }
     // Tiered rewards — configs before tiers before assets
     for (const r of tieredRewardConfigs ?? []) {
       const excludeAddresses = JSON.stringify(r.exclude_addresses ?? []);
       const result = db.prepare(
         "INSERT OR IGNORE INTO tiered_reward_configs (id, name, asset_code, asset_issuer, network, secret_key, interval_minutes, enabled, min_reserve, min_sender_threshold, preview_only, batch_send, memo, fee_multiplier, exclude_addresses, last_run_at, last_failure_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
-      ).run(r.id, r.name, r.asset_code, r.asset_issuer, r.network, r.secret_key, r.interval_minutes, r.enabled, r.min_reserve, r.min_sender_threshold, r.preview_only, r.batch_send, r.memo, r.fee_multiplier, excludeAddresses, r.last_run_at, r.last_failure_at, r.created_at);
+      ).run(r.id, r.name, r.asset_code, r.asset_issuer, "public", encryptImportedStoredSecret(r.secret_key), r.interval_minutes, r.enabled, r.min_reserve, r.min_sender_threshold, r.preview_only, r.batch_send, r.memo, r.fee_multiplier, excludeAddresses, r.last_run_at, r.last_failure_at, r.created_at);
       merged += result.changes;
     }
     for (const r of tieredRewardTiers ?? []) {

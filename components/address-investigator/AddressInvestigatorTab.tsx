@@ -481,6 +481,8 @@ function exportCounterparties(
 export function AddressInvestigatorTab() {
   const searchParams = useSearchParams();
   const urlAddress = searchParams.get("address");
+  const rawUrlNetwork = searchParams.get("network");
+  const urlNetwork: Network | null = rawUrlNetwork === "public" ? "public" : null;
 
   const {
     history: searchHistory,
@@ -488,7 +490,7 @@ export function AddressInvestigatorTab() {
     remove: removeHistory,
   } = useAddressHistory();
 
-  const { settings } = useSettings();
+  const { settings, updateSettings } = useSettings();
   const { upsert: upsertSearch } = useSavedSearches();
   const { entries: knownIntermediaries } = useKnownIntermediaries();
   const { groups, upsertMember } = useAssetGroups();
@@ -567,8 +569,13 @@ export function AddressInvestigatorTab() {
   useEffect(() => {
     if (!settingsHydrated) return;
     if (!urlAddress) return;
-    if (lastUrlAddressRunRef.current === urlAddress) return;
-    lastUrlAddressRunRef.current = urlAddress;
+    if (urlNetwork && settings.network !== urlNetwork) {
+      updateSettings({ network: urlNetwork });
+      return;
+    }
+    const runKey = `${urlAddress}:${urlNetwork ?? settings.network}`;
+    if (lastUrlAddressRunRef.current === runKey) return;
+    lastUrlAddressRunRef.current = runKey;
 
     setAddress(urlAddress);
     setError(null);
@@ -597,7 +604,7 @@ export function AddressInvestigatorTab() {
     // (recreated each render) but re-invoking on its identity change would
     // defeat the "once per param value" guard above.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [urlAddress, settingsHydrated]);
+  }, [urlAddress, urlNetwork, settings.network, settingsHydrated, updateSettings]);
 
   const isCustomAssetSelection = paymentAssetSelection === "custom";
 

@@ -28,7 +28,6 @@ import {
   useSettings,
   NETWORK_LABELS,
   resolveHorizonUrl,
-  type Network,
 } from "@/lib/settings";
 
 interface DbStatus {
@@ -204,14 +203,13 @@ export default function SettingsPage() {
                 <Label>Default Network</Label>
                 <Select
                   value={settings.network}
-                  onValueChange={(v: Network) => updateSettings({ network: v })}
+                  onValueChange={() => updateSettings({ network: "public" })}
                 >
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="public">{NETWORK_LABELS.public}</SelectItem>
-                    <SelectItem value="testnet">{NETWORK_LABELS.testnet}</SelectItem>
                   </SelectContent>
                 </Select>
               </div>

@@ -327,7 +327,7 @@ const MODULE_SECTIONS: ModuleSection[] = [
         href: "/wallet-manager",
         icon: Wallet,
         description:
-          "Organise wallets in folders, store secret keys in SQLite, connect/disconnect the active wallet, and sync across tabs.",
+          "Organise wallets in folders, keep signing keys encrypted at rest, connect the active wallet, and sync across tabs.",
         added: "2026-03-08",
       },
       {
@@ -343,7 +343,7 @@ const MODULE_SECTIONS: ModuleSection[] = [
         href: "/settings",
         icon: Settings,
         description:
-          "Switch between Mainnet, Testnet, and Futurenet. Configure a custom Horizon URL and toggle light/dark theme.",
+          "Review the Mainnet connection, configure worker limits and notifications, and toggle light/dark theme.",
         added: "2026-03-10",
       },
     ],
@@ -708,7 +708,7 @@ export default function DashboardPage() {
       {/* Tracked assets + Quick links */}
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-7">
         {/* Tracked assets */}
-        <Card className="col-span-4">
+        <Card className="md:col-span-2 lg:col-span-4">
           <CardHeader>
             <CardTitle>Tracked Assets</CardTitle>
             <CardDescription>
@@ -779,7 +779,7 @@ export default function DashboardPage() {
         </Card>
 
         {/* Quick Links */}
-        <Card className="col-span-3">
+        <Card className="md:col-span-2 lg:col-span-3">
           <CardHeader>
             <CardTitle>Quick Links</CardTitle>
             <CardDescription>Jump to frequently used modules.</CardDescription>

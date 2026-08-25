@@ -110,6 +110,48 @@ async function setGroupLastFailure(groupId: string, userId: string | undefined, 
   } catch { /* non-fatal */ }
 }
 
+async function writeScheduledLogRows(
+  groupId: string,
+  walletAddress: string,
+  rows: Array<{ destination: string; amountSent?: number; status: string; error?: string; txHash?: string }>,
+  ranAt: number,
+): Promise<void> {
+  if (rows.length === 0) return;
+  if (isSupabaseOnly()) {
+    const sb = getSupabase();
+    if (!sb) return;
+    const { error } = await sb.from("auto_send_run_log").insert(rows.map((row) => ({
+      id: crypto.randomUUID(),
+      group_id: groupId,
+      wallet_address: walletAddress,
+      destination: row.destination,
+      amount_sent: row.amountSent ?? null,
+      status: row.status,
+      error: row.error ?? null,
+      ran_at: ranAt,
+      tx_hash: row.txHash ?? null,
+    })));
+    if (error) console.error("[auto-send] scheduled run-log insert failed:", error);
+    return;
+  }
+
+  const db = getDb();
+  const stmt = db.prepare(
+    `INSERT INTO auto_send_run_log
+     (id, group_id, wallet_address, destination, amount_sent, status, error, ran_at, tx_hash)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  );
+  const insertMany = db.transaction((items: typeof rows) => {
+    for (const row of items) {
+      stmt.run(
+        crypto.randomUUID(), groupId, walletAddress, row.destination,
+        row.amountSent ?? null, row.status, row.error ?? null, ranAt, row.txHash ?? null,
+      );
+    }
+  });
+  insertMany(rows);
+}
+
 function minutesToCronExpression(minutes: number): string {
   if (minutes < 60) return `*/${Math.max(1, minutes)} * * * *`;
   const hours = Math.floor(minutes / 60);
@@ -157,25 +199,24 @@ async function scheduleAll(): Promise<void> {
           if (fresh.previewOnly) {
             const result = await previewGroup(fresh);
             if (!("error" in result)) {
-              // Log each item as "preview" status
-              const db = getDb();
               const ranAt = Date.now();
-              const walletAddress = result.walletAddress;
-              for (const item of result.items) {
-                try {
-                  db.prepare(
-                    `INSERT INTO auto_send_run_log (id, group_id, wallet_address, destination, amount_sent, status, error, ran_at)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-                  ).run(
-                    crypto.randomUUID(), fresh.id, walletAddress, item.destination,
-                    item.wouldSkip ? null : item.amountXlm, "preview",
-                    item.wouldSkip ? item.skipReason ?? null : null, ranAt
-                  );
-                } catch { /* non-fatal */ }
-              }
+              await writeScheduledLogRows(
+                fresh.id,
+                result.walletAddress,
+                result.items.map((item) => ({
+                  destination: item.destination,
+                  amountSent: item.wouldSkip ? undefined : item.amountXlm,
+                  status: "preview",
+                  error: item.wouldSkip ? item.skipReason : undefined,
+                })),
+                ranAt,
+              );
             }
           } else {
             const result = await runGroup(fresh);
+            if (isSupabaseOnly()) {
+              await writeScheduledLogRows(fresh.id, result.walletAddress, result.results, result.ranAt);
+            }
             // Track failure/success for alert banner
             const hasFailed = result.results.some((r) => r.status === "failed");
             const nonSkipped = result.results.filter((r) => r.status !== "skipped");

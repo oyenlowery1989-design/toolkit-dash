@@ -20,8 +20,15 @@ import { useKnownIntermediaries } from "@/hooks/use-known-intermediaries";
 import { useKnownCreators } from "@/hooks/use-known-creators";
 import { useAssetGroups } from "@/hooks/use-asset-groups";
 import { usePersons } from "@/hooks/use-persons";
-import { resolveAddress } from "@/lib/address-resolver";
-import { useSettings, resolveHorizonUrl } from "@/lib/settings";
+import {
+  findAddressGroupMemberships,
+  resolveAddress,
+} from "@/lib/address-resolver";
+import {
+  ROLE_COLORS,
+  resolveGroupMemberLabel,
+} from "@/lib/asset-groups/types";
+import { useSettings, resolveHorizonUrl, type Network } from "@/lib/settings";
 import { fetchXlmBalance, type XlmBalanceValue } from "@/lib/horizon-balance";
 import {
   DropdownMenu,
@@ -29,6 +36,12 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 
 // Role styles for explicit role prop (issuer / distrib passed from parent)
 const ROLE_STYLES: Record<
@@ -116,7 +129,28 @@ export function ShortAddress({
   const [balance, setBalance] = useState<XlmBalanceValue | "loading" | null>(null);
   const balanceAbortRef = useRef<AbortController | null>(null);
 
-  const resolved = resolveAddress(address, bookEntries, intermediaries, creators, groups, persons);
+  const resolved = resolveAddress(
+    address,
+    bookEntries,
+    intermediaries,
+    creators,
+    groups,
+    persons,
+    network,
+  );
+  const groupLabels = findAddressGroupMemberships(address, groups, network).map(
+    ({ group, member }) => ({
+      id: `${group.id}:${member.id}`,
+      text:
+        resolveGroupMemberLabel(member.role, member.label, group.assetCode) ??
+        group.name,
+      description: `${member.role} in ${group.name}`,
+      colorClass: ROLE_COLORS[member.role],
+      role: member.role,
+    }),
+  );
+  const primaryGroupLabel = groupLabels[0];
+  const additionalGroupLabelCount = groupLabels.length - 1;
 
   // Address book entry for color
   const bookEntry = bookEntries.find((e) => e.publicKey === address);
@@ -126,7 +160,10 @@ export function ShortAddress({
   // Explicit role prop (issuer/distrib) only used when no higher-priority resolution
   const roleStyle = !entryColorStyle && !resolved.name && role ? ROLE_STYLES[role] : null;
 
-  const displayText = resolved.name ?? `${address.slice(0, 4)}…${address.slice(-4)}`;
+  const displayText =
+    primaryGroupLabel?.text ??
+    resolved.name ??
+    `${address.slice(0, 4)}…${address.slice(-4)}`;
 
   const textClass = entryColorStyle
     ? `${entryColorStyle.text} hover:text-foreground`
@@ -138,7 +175,7 @@ export function ShortAddress({
 
   const dotClass = entryColorStyle?.dot ?? roleStyle?.dot ?? null;
 
-  const explorerNetwork = network === "public" || network === "testnet" ? network : null;
+  const explorerNetwork = network === "public" ? network : null;
   const explorerUrl = explorerNetwork
     ? `https://stellar.expert/explorer/${explorerNetwork}/account/${address}`
     : null;
@@ -160,7 +197,7 @@ export function ShortAddress({
   };
 
   const handleInvestigate = () => {
-    router.push(`/address-investigator?address=${address}`);
+    router.push(`/address-investigator?address=${encodeURIComponent(address)}&network=public`);
   };
 
   const handleShowBalance = () => {
@@ -169,7 +206,8 @@ export function ShortAddress({
     balanceAbortRef.current?.abort();
     const controller = new AbortController();
     balanceAbortRef.current = controller;
-    const horizonUrl = resolveHorizonUrl(settings);
+    const requestedNetwork: Network = "public";
+    const horizonUrl = resolveHorizonUrl({ ...settings, network: requestedNetwork });
     fetchXlmBalance(horizonUrl, address, controller.signal).then((value) => {
       if (controller.signal.aborted) return;
       setBalance(value);
@@ -180,12 +218,14 @@ export function ShortAddress({
     return () => balanceAbortRef.current?.abort();
   }, []);
 
-  const tooltip = resolved.name
-    ? `${resolved.name} — ${address} (click to copy)`
+  const tooltip = primaryGroupLabel || resolved.name
+    ? `${primaryGroupLabel?.text ?? resolved.name} — ${address} (click to copy)`
     : `Click to copy: ${address}`;
 
-  // Which badge to show — resolver badge takes priority over role badge
-  const activeBadge = resolved.badge
+  // A group's primary label is the address text; use its role as the badge.
+  const activeBadge = primaryGroupLabel
+    ? { text: primaryGroupLabel.role.toUpperCase(), cls: primaryGroupLabel.colorClass }
+    : resolved.badge
     ? { text: resolved.badge, cls: resolved.badgeClass! }
     : roleStyle
       ? { text: roleStyle.badgeText, cls: roleStyle.badge }
@@ -290,7 +330,7 @@ export function ShortAddress({
         <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${dotClass}`} />
       )}
 
-      <span ref={addressClusterRef} className="inline-flex items-center gap-1.5">
+      <span ref={addressClusterRef} className="inline-flex min-w-0 items-center gap-1.5 flex-wrap">
         <button
           className={`inline-flex items-center gap-1 font-mono text-xs transition-colors group ${textClass}`}
           title={tooltip}
@@ -315,6 +355,37 @@ export function ShortAddress({
           >
             {activeBadge.text}
           </span>
+        )}
+
+        {additionalGroupLabelCount > 0 && (
+          <TooltipProvider delayDuration={150}>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  className="text-[10px] font-medium text-muted-foreground underline-offset-2 hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+                  aria-label={`Show all ${groupLabels.length} saved labels`}
+                >
+                  +{additionalGroupLabelCount} more
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="top" className="max-w-64 p-2">
+                <p className="mb-1 text-[10px] font-medium text-muted-foreground">
+                  Saved labels
+                </p>
+                <div className="flex flex-wrap gap-1">
+                  {groupLabels.map((groupLabel) => (
+                    <span
+                      key={groupLabel.id}
+                      className={`inline-flex items-center rounded border border-current/40 px-1 py-px text-[9px] font-semibold uppercase leading-none tracking-wide whitespace-nowrap ${groupLabel.colorClass}`}
+                    >
+                      {groupLabel.text}
+                    </span>
+                  ))}
+                </div>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
         )}
 
         {balance !== null && (

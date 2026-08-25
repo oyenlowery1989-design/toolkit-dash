@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { resolveAddress } from "@/lib/address-resolver";
+import {
+  findAddressGroupMemberships,
+  resolveAddress,
+} from "@/lib/address-resolver";
 import type { AddressBookEntry } from "@/hooks/use-address-book";
 import type { KnownIntermediary, KnownCreator } from "@/lib/intermediary-tracer/types";
 import type { AssetGroup, GroupMember } from "@/lib/asset-groups/types";
@@ -89,6 +92,26 @@ describe("resolveAddress", () => {
     const result = resolveAddress(ADDR_A, [], [], [], groups);
     expect(result.source).toBe("group");
     expect(result.name).toBe("Test Group");
+  });
+
+  it("finds every group membership for an address on the selected network", () => {
+    const publicGroup = {
+      ...makeGroup(ADDR_A, "issuer", "Issuer GYACHT"),
+      assetCode: "GYACHT",
+      network: "public",
+    };
+    const testnetGroup = {
+      ...makeGroup(ADDR_A, "issuer", "Issuer TEST"),
+      id: "g2",
+      assetCode: "TEST",
+      network: "testnet",
+      members: [{ ...makeGroup(ADDR_A, "issuer", "Issuer TEST").members[0], id: "m2", groupId: "g2" }],
+    };
+
+    expect(findAddressGroupMemberships(ADDR_A, [publicGroup, testnetGroup], "public"))
+      .toHaveLength(1);
+    expect(findAddressGroupMemberships(ADDR_A, [publicGroup, testnetGroup]))
+      .toHaveLength(2);
   });
 
   it('returns source: "creator" with badge "CREATOR" and green badgeClass', () => {

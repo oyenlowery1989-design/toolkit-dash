@@ -7,13 +7,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { ShortAddress } from "@/components/shared/ShortAddress";
 import { useAssetGroups } from "@/hooks/use-asset-groups";
 import { useKnownIntermediaries } from "@/hooks/use-known-intermediaries";
@@ -73,8 +66,6 @@ const ROLE_COLOR_HEX: Record<GroupMemberRole, string> = {
   other: "#9ca3af", // gray-400
 };
 
-const NETWORK_OPTIONS = ["public", "testnet", "futurenet", "local"] as const;
-const ALL_NETWORKS_SENTINEL = "__all__";
 const LARGE_GRAPH_THRESHOLD = 200;
 
 function clamp(min: number, value: number, max: number): number {
@@ -104,7 +95,7 @@ export function FlowGraphTab() {
   const { analyses } = useSavedAnalyses();
 
   // ---- Filters state ----
-  const [networkFilter, setNetworkFilter] = useState<string>(settings.network);
+  const networkFilter = "public";
   const [kindState, setKindState] = useState<Record<GraphNodeKind, boolean>>(() =>
     Object.fromEntries(ALL_KINDS.map((k) => [k, true])) as Record<GraphNodeKind, boolean>,
   );
@@ -128,7 +119,7 @@ export function FlowGraphTab() {
 
   const filters: GraphFilters = useMemo(
     () => ({
-      network: networkFilter === ALL_NETWORKS_SENTINEL ? undefined : networkFilter,
+      network: networkFilter,
       kinds: enabledKinds.length < ALL_KINDS.length ? enabledKinds : undefined,
       minEdgeWeight: minEdgeWeight > 0 ? minEdgeWeight : undefined,
       focusAddress: focusAddress.trim() || undefined,
@@ -154,10 +145,14 @@ export function FlowGraphTab() {
   // Recompute layout only when the filtered node/edge set actually changes
   // shape, not on every render (e.g. hover/drag/pan state changes).
   const layoutFiltersKey = JSON.stringify(filters);
+  const graphShapeKey = `${graph.nodes.map((node) => node.id).sort().join("|")}::${graph.edges
+    .map((edge) => `${edge.source}>${edge.target}:${edge.kind}:${edge.weight}`)
+    .sort()
+    .join("|")}`;
   const baseLayout = useMemo(
     () => layoutGraph(graph.nodes, graph.edges, { width: GRAPH_WIDTH, height: GRAPH_HEIGHT }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [graph.nodes.length, graph.edges.length, layoutFiltersKey],
+    [graphShapeKey, layoutFiltersKey],
   );
 
   const positions = useMemo(() => {
@@ -268,19 +263,9 @@ export function FlowGraphTab() {
           <div className="flex flex-wrap items-end gap-4">
             <div className="space-y-1">
               <Label className="text-xs text-muted-foreground">Network</Label>
-              <Select value={networkFilter} onValueChange={setNetworkFilter}>
-                <SelectTrigger className="w-40">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={ALL_NETWORKS_SENTINEL}>All networks</SelectItem>
-                  {NETWORK_OPTIONS.map((n) => (
-                    <SelectItem key={n} value={n}>
-                      {n}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <div className="h-9 min-w-28 rounded-md border bg-muted/30 px-3 py-2 text-sm">
+                Mainnet
+              </div>
             </div>
 
             <div className="space-y-1">
@@ -444,6 +429,15 @@ export function FlowGraphTab() {
                           onClick={(e) => {
                             e.stopPropagation();
                             setSelectedId(node.id);
+                          }}
+                          role="button"
+                          tabIndex={0}
+                          aria-label={`Select ${node.label ?? node.id}`}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" || e.key === " ") {
+                              e.preventDefault();
+                              setSelectedId(node.id);
+                            }
                           }}
                           className="cursor-pointer"
                         />

@@ -176,7 +176,7 @@ export function WatchlistTab() {
                         <ShortAddress address={w.address} network={settings.network} />
                       </td>
                       <td className="py-2 pr-4 text-muted-foreground">{w.label || "—"}</td>
-                      <td className="py-2 pr-4 text-muted-foreground">{w.network}</td>
+                      <td className="py-2 pr-4 text-muted-foreground">Mainnet</td>
                       <td className="py-2 pr-4">
                         <Switch
                           checked={w.enabled}

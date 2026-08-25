@@ -33,6 +33,8 @@ interface KeyScanLoopSingleton {
 const TAIL_CAP = 50;
 const CHECKPOINT_DEBOUNCE_MS = 1500;
 const MIN_PACED_RPS = 0.5;
+const MAX_PACED_RPS = 10;
+const MAX_CONCURRENCY = 10;
 
 // Mainnet only — checking for an existing balance only means something against
 // the real ledger, so testnet/futurenet were deliberately never exposed here.
@@ -152,15 +154,6 @@ function insertHit(s: KeyScanLoopSingleton, publicKey: string, secretKey: string
     );
 }
 
-function insertAllKey(publicKey: string, secretKey: string, status: "not-found" | "exists"): void {
-  const { getDb } = require("@/lib/db") as typeof import("@/lib/db");
-  getDb()
-    .prepare(
-      `INSERT OR IGNORE INTO key_scan_all (id, public_key, secret_key, status, checked_at) VALUES (?, ?, ?, ?, ?)`,
-    )
-    .run(crypto.randomUUID(), publicKey, secretKey, status, Date.now());
-}
-
 const FALLBACK_HITS_PATH = require("path").join(process.cwd(), "key-scan-failed-hits.log");
 
 function writeFallbackHit(publicKey: string, secretKey: string): void {
@@ -202,7 +195,6 @@ async function worker(s: KeyScanLoopSingleton, index: number, generation: number
       if (result.status === "exists") {
         try {
           insertHit(s, publicKey, secretKey, result);
-          insertAllKey(publicKey, secretKey, "exists");
           s.totalFound++;
         } catch (insertErr) {
           // DB write failed for a genuine funded-account hit — never lose the
@@ -218,11 +210,6 @@ async function worker(s: KeyScanLoopSingleton, index: number, generation: number
         pushTail(s, { publicKey, result: "found", at: Date.now() });
         flushCheckpoint(s);
       } else if (result.status === "not-found") {
-        try {
-          insertAllKey(publicKey, secretKey, "not-found");
-        } catch (err) {
-          console.error("[key-scanner] failed to persist not-found key:", err);
-        }
         s.totalNotFound++;
         s.totalGenerated++;
         s.consecutive429 = 0;
@@ -285,8 +272,12 @@ export function updateKeyScanConfig(patch: { pacedRps?: number; concurrency?: nu
   const s = getSingleton();
   const previousConcurrency = s.concurrency;
   const growingConcurrency = patch.concurrency !== undefined && patch.concurrency > s.concurrency;
-  if (patch.pacedRps !== undefined) s.pacedRps = Math.max(MIN_PACED_RPS, patch.pacedRps);
-  if (patch.concurrency !== undefined) s.concurrency = Math.max(1, patch.concurrency);
+  if (patch.pacedRps !== undefined && Number.isFinite(patch.pacedRps)) {
+    s.pacedRps = Math.min(MAX_PACED_RPS, Math.max(MIN_PACED_RPS, patch.pacedRps));
+  }
+  if (patch.concurrency !== undefined && Number.isFinite(patch.concurrency)) {
+    s.concurrency = Math.min(MAX_CONCURRENCY, Math.max(1, Math.floor(patch.concurrency)));
+  }
   if (patch.resumeOnBoot !== undefined) {
     const { getDb } = require("@/lib/db") as typeof import("@/lib/db");
     ensureRow();
@@ -331,8 +322,8 @@ export function startKeyScanLoop(): void {
   const s = getSingleton();
   const row = loadRow();
   s.network = (row.network as KeyScanNetwork) ?? "public";
-  s.pacedRps = (row.paced_rps as number) ?? 5;
-  s.concurrency = (row.concurrency as number) ?? 3;
+  s.pacedRps = Math.min(MAX_PACED_RPS, Math.max(MIN_PACED_RPS, (row.paced_rps as number) ?? 5));
+  s.concurrency = Math.min(MAX_CONCURRENCY, Math.max(1, Math.floor((row.concurrency as number) ?? 3)));
   s.totalGenerated = (row.total_generated as number) ?? 0;
   s.totalNotFound = (row.total_not_found as number) ?? 0;
   s.totalFound = (row.total_found as number) ?? 0;

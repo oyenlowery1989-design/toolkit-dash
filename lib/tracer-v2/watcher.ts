@@ -82,17 +82,7 @@ export async function pollWatch(
 // `useSyncExternalStore` hook, and this module runs server-side via instrumentation.ts,
 // so importing it would drag the client hook into the server bundle (RSC build error).
 // Keep in sync with HORIZON_URLS in lib/settings.ts.
-const HORIZON_BASE: Record<string, string> = {
-  public: "https://horizon.stellar.org",
-  testnet: "https://horizon-testnet.stellar.org",
-  futurenet: "https://horizon-futurenet.stellar.org",
-};
-
-function resolveHorizonBase(network: string): string {
-  // "local" network has no server-known Horizon URL (that's a per-browser setting) —
-  // fall back to testnet so the poller doesn't crash; local-network watches are a rare case.
-  return HORIZON_BASE[network] ?? HORIZON_BASE.testnet;
-}
+const HORIZON_BASE = "https://horizon.stellar.org";
 
 /** Polls every enabled watch once, persisting new events and advancing cursors. */
 export async function pollAllWatches(): Promise<void> {
@@ -108,11 +98,9 @@ export async function pollAllWatches(): Promise<void> {
     const watchId = w.id as string;
     try {
       const address = w.address as string;
-      const network = (w.network as string) ?? "public";
       const cursor = (w.poll_cursor as string | null) ?? null;
-      const horizonBase = resolveHorizonBase(network);
 
-      const result = await pollWatch((url: string) => fetchJson(url), horizonBase, address, cursor);
+      const result = await pollWatch((url: string) => fetchJson(url), HORIZON_BASE, address, cursor);
       const now = Date.now();
 
       if (result.events.length > 0) {

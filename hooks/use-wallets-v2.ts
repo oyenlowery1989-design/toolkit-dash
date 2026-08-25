@@ -9,6 +9,8 @@ export interface WalletEntry {
   name: string;
   publicKey: string;
   secretKey: string;
+  hasKey?: boolean;
+  browserSigningEnabled?: boolean;
   position: number;
 }
 

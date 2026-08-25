@@ -105,8 +105,6 @@ export function TieredRewardsPanel() {
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="public">Mainnet</SelectItem>
-                  <SelectItem value="testnet">Testnet</SelectItem>
-                  <SelectItem value="futurenet">Futurenet</SelectItem>
                 </SelectContent>
               </Select>
             </div>

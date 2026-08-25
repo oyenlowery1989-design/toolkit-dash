@@ -5,6 +5,7 @@
  */
 
 import type { TieredRewardConfig, Tier, RewardAsset } from "./types";
+import { decryptStoredSecret } from "@/lib/secret-storage";
 
 type Row = Record<string, unknown>;
 
@@ -43,8 +44,8 @@ function rowToConfig(c: Row, tiers: Tier[], includeSecret = false): TieredReward
     name: c.name as string,
     assetCode: c.asset_code as string,
     assetIssuer: c.asset_issuer as string,
-    network: (c.network as string) ?? "public",
-    secretKey: includeSecret ? ((c.secret_key as string) || null) : null,
+    network: "public",
+    secretKey: includeSecret ? (decryptStoredSecret(c.secret_key as string | undefined) || null) : null,
     hasKey: !!((c.secret_key as string) || ""),
     intervalMinutes: (c.interval_minutes as number | null) ?? null,
     enabled: Number(c.enabled) === 1,

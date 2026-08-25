@@ -63,6 +63,7 @@ import {
   ROLE_LABELS,
   ROLE_COLORS,
   defaultGroupMemberLabel,
+  resolveGroupMemberLabel,
 } from "@/lib/asset-groups/types";
 import { normalizeExternalUrl, resolveTelegramUrl } from "@/lib/asset-groups/links";
 import type {
@@ -973,7 +974,11 @@ function GroupCard({
                           })()}
                         </td>
                         <td className="px-3 py-2 text-muted-foreground">
-                          {m.label ?? defaultGroupMemberLabel(m.role, group.assetCode) ?? "—"}
+                          {resolveGroupMemberLabel(
+                            m.role,
+                            m.label,
+                            group.assetCode,
+                          ) ?? "—"}
                         </td>
                         <td className="px-3 py-2">
                           {m.homeDomain ? (
@@ -1186,9 +1191,6 @@ function CreateGroupForm({
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="public">Mainnet</SelectItem>
-                <SelectItem value="testnet">Testnet</SelectItem>
-                <SelectItem value="futurenet">Futurenet</SelectItem>
-                <SelectItem value="local">Local</SelectItem>
               </SelectContent>
             </Select>
           </div>

@@ -180,21 +180,30 @@ export function SaveToGroupButton({
             </p>
             <div className="space-y-1.5">
               {ambiguous.map((d) => (
-                <button
+                <div
                   key={d.address}
-                  type="button"
-                  onClick={() => setSelectedBank(d.address)}
                   className={`w-full flex items-center justify-between gap-2 rounded border px-2.5 py-1.5 text-xs transition-colors ${
                     selectedBank === d.address
                       ? "border-purple-400 bg-purple-400/10"
                       : "border-border hover:bg-muted/40"
                   }`}
                 >
-                  <ShortAddress address={d.address} network={network} />
+                  <input
+                    type="radio"
+                    name="bank-candidate"
+                    value={d.address}
+                    checked={selectedBank === d.address}
+                    onChange={() => setSelectedBank(d.address)}
+                    aria-label={`Select ${d.address} as bank`}
+                    className="shrink-0 accent-purple-500"
+                  />
+                  <span className="min-w-0 flex-1">
+                    <ShortAddress address={d.address} network={network} />
+                  </span>
                   <span className="font-mono tabular-nums text-muted-foreground">
                     {formatXlm(d.totalXlm)} XLM
                   </span>
-                </button>
+                </div>
               ))}
             </div>
             <DialogFooter className="gap-2 sm:gap-2">

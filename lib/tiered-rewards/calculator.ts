@@ -7,8 +7,6 @@ const { Server } = Horizon;
 
 const HORIZON_URLS: Record<string, string> = {
   public: "https://horizon.stellar.org",
-  testnet: "https://horizon-testnet.stellar.org",
-  futurenet: "https://horizon-futurenet.stellar.org",
 };
 
 /**
@@ -62,7 +60,8 @@ export async function calculatePreview(
   config: TieredRewardConfig,
   signal?: AbortSignal
 ): Promise<RewardsPreview | { error: string }> {
-  const horizonUrl = HORIZON_URLS[config.network] ?? HORIZON_URLS.public;
+  const horizonUrl = HORIZON_URLS[config.network];
+  if (!horizonUrl) return { error: `Unsupported payment network: ${config.network}` };
   const server = new Server(horizonUrl);
 
   // No key = holder-only preview (tier assignments without balance/cost check)

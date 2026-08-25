@@ -9,6 +9,7 @@ import { SaveToGroupButton } from "./SaveToGroupButton";
 import { useHorizonServer } from "@/hooks/use-horizon-server";
 import { fetchXlmBalance, type XlmBalanceValue } from "@/lib/horizon-balance";
 import type { DestinationSummary } from "@/lib/proceeds-investigator/types";
+import type { Network } from "@/lib/settings";
 
 const BALANCE_CHECK_BATCH = 10;
 
@@ -75,7 +76,8 @@ export function ProceedsDestinationsTable({
   const colSpan =
     3 + (showPercentColumn ? 1 : 0) + (hasActions ? 1 : 0) + (showBalanceColumn ? 1 : 0);
 
-  const { url: horizonUrl } = useHorizonServer();
+  const requestedNetwork: Network = "public";
+  const { url: horizonUrl } = useHorizonServer(requestedNetwork);
   const [balances, setBalances] = useState<Record<string, XlmBalanceValue | "loading">>({});
   const abortRef = useRef<AbortController | null>(null);
 
@@ -90,7 +92,7 @@ export function ProceedsDestinationsTable({
     abortRef.current = controller;
     setBalances({});
     return () => controller.abort();
-  }, [addressKey]);
+  }, [addressKey, horizonUrl]);
 
   async function checkBalance(address: string) {
     setBalances((prev) => ({ ...prev, [address]: "loading" }));

@@ -95,20 +95,59 @@ export type AuthResult =
   | { ok: true; userId: string | null } // local SQLite mode: SUPABASE_SYNC_USER_ID or null (sync skipped); cloud mode: always non-null
   | { ok: false; response: NextResponse };
 
+export type OwnershipCheck =
+  | { ok: true }
+  | { ok: false; status: 403 | 500; error: string };
+
+/**
+ * Service-role clients bypass RLS, so a client-supplied primary key must be checked
+ * before an upsert. Otherwise an attacker who learns another tenant's UUID can move
+ * that row to their own user_id.
+ */
+export async function checkSupabaseRowOwnership(
+  table: string,
+  id: string,
+  userId: string,
+): Promise<OwnershipCheck> {
+  const sb = getSupabase();
+  if (!sb) return { ok: false, status: 500, error: "Supabase is not configured" };
+  const { data, error } = await sb.from(table).select("user_id").eq("id", id).maybeSingle();
+  if (error) {
+    console.error(`[ownership] ${table}/${id}:`, error);
+    return { ok: false, status: 500, error: "Could not verify record ownership" };
+  }
+  if (data && data.user_id !== userId) {
+    return { ok: false, status: 403, error: "Not authorized" };
+  }
+  return { ok: true };
+}
+
 /**
  * Verify the Bearer JWT from the request and return the Supabase user id.
  *
- * In local SQLite mode (isSupabaseOnly() === false): always returns ok. userId is
- * resolved from SUPABASE_SYNC_USER_ID (used only to attribute optional local→Supabase
- * backup writes) — null if that env var isn't set, in which case sync is skipped
- * (see syncToSupabase). No auth is required to use the app locally either way.
+ * Authentication is bypassed only when ALLOW_UNAUTHENTICATED_LOCAL=true is explicitly
+ * configured outside production. Storage selection must never implicitly disable auth:
+ * a self-hosted SQLite deployment can still be reachable over a network.
  * In Supabase-only mode: reads Authorization header, verifies with Supabase auth,
  * returns 401 if missing or invalid.
  */
 export async function requireAuth(req: NextRequest): Promise<AuthResult> {
-  if (!isSupabaseOnly()) {
-    // Local dev — single user, no auth required
+  if (
+    !isSupabaseOnly()
+    && process.env.NODE_ENV !== "production"
+    && process.env.ALLOW_UNAUTHENTICATED_LOCAL === "true"
+  ) {
     return { ok: true, userId: resolveLocalSyncUserId() };
+  }
+
+  if (!isSupabaseConfigured()) {
+    return {
+      ok: false,
+      response: NextResponse.json(
+        { error: "Authentication is not configured" },
+        { status: 503 },
+      ),
+    };
   }
 
   const authHeader = req.headers.get("authorization");

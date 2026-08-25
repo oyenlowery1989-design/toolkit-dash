@@ -67,6 +67,8 @@ CREATE TABLE IF NOT EXISTS auto_send_run_log (
   tx_hash TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_auto_send_run_log_group ON auto_send_run_log(group_id, ran_at DESC);
+CREATE TABLE IF NOT EXISTS auto_send_run_leases (resource_id TEXT PRIMARY KEY, lease_token TEXT NOT NULL, expires_at BIGINT NOT NULL);
+CREATE TABLE IF NOT EXISTS tiered_reward_run_leases (resource_id TEXT PRIMARY KEY, lease_token TEXT NOT NULL, expires_at BIGINT NOT NULL);
 
 -- ── Enable RLS everywhere ────────────────────────────────────────────────────
 ALTER TABLE address_book ENABLE ROW LEVEL SECURITY;
@@ -94,6 +96,8 @@ ALTER TABLE tiered_reward_run_log ENABLE ROW LEVEL SECURITY;
 ALTER TABLE auto_send_groups ENABLE ROW LEVEL SECURITY;
 ALTER TABLE auto_send_destinations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE auto_send_run_log ENABLE ROW LEVEL SECURITY;
+ALTER TABLE auto_send_run_leases ENABLE ROW LEVEL SECURITY;
+ALTER TABLE tiered_reward_run_leases ENABLE ROW LEVEL SECURITY;
 
 -- ── Owner-scoped policies: tables with a direct user_id column ──────────────
 DROP POLICY IF EXISTS owner_all ON address_book;
@@ -130,7 +134,13 @@ CREATE POLICY owner_all ON bulk_run_history FOR ALL TO authenticated
 
 DROP POLICY IF EXISTS owner_all ON asset_groups;
 CREATE POLICY owner_all ON asset_groups FOR ALL TO authenticated
-  USING (auth.uid()::text = user_id) WITH CHECK (auth.uid()::text = user_id);
+  USING (auth.uid()::text = user_id)
+  WITH CHECK (
+    auth.uid()::text = user_id
+    AND (person_id IS NULL OR EXISTS (
+      SELECT 1 FROM persons p WHERE p.id = person_id AND auth.uid()::text = p.user_id
+    ))
+  );
 
 DROP POLICY IF EXISTS owner_all ON persons;
 CREATE POLICY owner_all ON persons FOR ALL TO authenticated
@@ -142,7 +152,13 @@ CREATE POLICY owner_all ON wallet_folders FOR ALL TO authenticated
 
 DROP POLICY IF EXISTS owner_all ON wallets;
 CREATE POLICY owner_all ON wallets FOR ALL TO authenticated
-  USING (auth.uid()::text = user_id) WITH CHECK (auth.uid()::text = user_id);
+  USING (auth.uid()::text = user_id)
+  WITH CHECK (
+    auth.uid()::text = user_id
+    AND (folder_id IS NULL OR EXISTS (
+      SELECT 1 FROM wallet_folders f WHERE f.id = folder_id AND auth.uid()::text = f.user_id
+    ))
+  );
 
 DROP POLICY IF EXISTS owner_all ON app_state;
 CREATE POLICY owner_all ON app_state FOR ALL TO authenticated
@@ -162,7 +178,13 @@ CREATE POLICY owner_all ON tiered_reward_configs FOR ALL TO authenticated
 
 DROP POLICY IF EXISTS owner_all ON tiered_reward_run_log;
 CREATE POLICY owner_all ON tiered_reward_run_log FOR ALL TO authenticated
-  USING (auth.uid()::text = user_id) WITH CHECK (auth.uid()::text = user_id);
+  USING (auth.uid()::text = user_id)
+  WITH CHECK (
+    auth.uid()::text = user_id
+    AND (config_id IS NULL OR EXISTS (
+      SELECT 1 FROM tiered_reward_configs c WHERE c.id = config_id AND auth.uid()::text = c.user_id
+    ))
+  );
 
 DROP POLICY IF EXISTS owner_all ON auto_send_groups;
 CREATE POLICY owner_all ON auto_send_groups FOR ALL TO authenticated
@@ -179,14 +201,18 @@ CREATE POLICY owner_all ON person_addresses FOR ALL TO authenticated
   USING (EXISTS (SELECT 1 FROM persons p WHERE p.id = person_id AND auth.uid()::text = p.user_id))
   WITH CHECK (EXISTS (SELECT 1 FROM persons p WHERE p.id = person_id AND auth.uid()::text = p.user_id));
 
--- person_relationships has no user_id and two person FKs (person_a_id, person_b_id).
--- Scoped through person_a_id only, matching app/api/db/persons/route.ts's DELETE
--- ownership check — both sides of a relationship are always the same user's
--- persons (enforced at creation time by that route's IDOR guard).
+-- Both ends must belong to the caller. This also protects direct PostgREST writes,
+-- which do not pass through the application's IDOR guard.
 DROP POLICY IF EXISTS owner_all ON person_relationships;
 CREATE POLICY owner_all ON person_relationships FOR ALL TO authenticated
-  USING (EXISTS (SELECT 1 FROM persons p WHERE p.id = person_a_id AND auth.uid()::text = p.user_id))
-  WITH CHECK (EXISTS (SELECT 1 FROM persons p WHERE p.id = person_a_id AND auth.uid()::text = p.user_id));
+  USING (
+    EXISTS (SELECT 1 FROM persons a WHERE a.id = person_a_id AND auth.uid()::text = a.user_id)
+    AND EXISTS (SELECT 1 FROM persons b WHERE b.id = person_b_id AND auth.uid()::text = b.user_id)
+  )
+  WITH CHECK (
+    EXISTS (SELECT 1 FROM persons a WHERE a.id = person_a_id AND auth.uid()::text = a.user_id)
+    AND EXISTS (SELECT 1 FROM persons b WHERE b.id = person_b_id AND auth.uid()::text = b.user_id)
+  );
 
 DROP POLICY IF EXISTS owner_all ON tiered_reward_tiers;
 CREATE POLICY owner_all ON tiered_reward_tiers FOR ALL TO authenticated
@@ -215,3 +241,16 @@ DROP POLICY IF EXISTS owner_all ON auto_send_run_log;
 CREATE POLICY owner_all ON auto_send_run_log FOR ALL TO authenticated
   USING (EXISTS (SELECT 1 FROM auto_send_groups g WHERE g.id = group_id AND auth.uid()::text = g.user_id))
   WITH CHECK (EXISTS (SELECT 1 FROM auto_send_groups g WHERE g.id = group_id AND auth.uid()::text = g.user_id));
+
+-- ── PostgREST privileges ────────────────────────────────────────────────────
+-- RLS policies do not grant table privileges by themselves. The application
+-- server uses service_role; direct authenticated access remains constrained by
+-- the policies above. Anonymous access stays denied.
+GRANT USAGE ON SCHEMA public TO authenticated, service_role;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO authenticated;
+GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO service_role;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO authenticated, service_role;
+REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM anon;
+
+-- Leases coordinate trusted schedulers and must never be client-visible.
+REVOKE ALL PRIVILEGES ON auto_send_run_leases, tiered_reward_run_leases FROM authenticated, anon;

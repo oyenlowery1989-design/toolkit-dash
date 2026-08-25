@@ -69,6 +69,8 @@ export interface GroupPreview {
   batchSend: boolean;
   estimatedFees: number;
   items: PreviewItem[];
+  previewToken?: string;
+  safetyWarnings?: string[];
 }
 
 export type RunStatus = "sent" | "skipped" | "failed" | "preview";

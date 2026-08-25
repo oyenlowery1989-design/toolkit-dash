@@ -46,6 +46,31 @@ export function defaultGroupMemberLabel(
   return undefined;
 }
 
+/**
+ * Adds asset context to an old generic default label without replacing a
+ * user-written label. Used to repair groups saved before asset-aware labels
+ * were introduced.
+ */
+export function resolveGroupMemberLabel(
+  role: GroupMemberRole,
+  label?: string,
+  assetCode?: string,
+): string | undefined {
+  const assetLabel = defaultGroupMemberLabel(role, assetCode);
+  const trimmed = label?.trim();
+  if (!assetLabel) return trimmed;
+  if (!trimmed) return assetLabel;
+
+  const genericLabels = [ROLE_LABELS[role]];
+  if (role === "distributor") genericLabels.push("Distrib");
+
+  return genericLabels.some(
+    (genericLabel) => genericLabel.toLowerCase() === trimmed.toLowerCase(),
+  )
+    ? assetLabel
+    : trimmed;
+}
+
 export interface GroupMember {
   id: string;
   groupId: string;

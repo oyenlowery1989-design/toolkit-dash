@@ -11,6 +11,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
 import { getSupabase, isSupabaseConfigured, requireAuth } from "@/lib/supabase-server";
+import { encryptImportedStoredSecret } from "@/lib/secret-storage";
+
+type SupabaseRead = { data: Record<string, unknown>[] | null; error?: { message: string } | null };
+
+function unwrapReads(results: SupabaseRead[], tables: string[]): Record<string, unknown>[][] {
+  const failures = results
+    .map((result, index) => result.error ? `${tables[index]}: ${result.error.message}` : null)
+    .filter(Boolean);
+  if (failures.length > 0) throw new Error(failures.join("; "));
+  return results.map((result) => result.data ?? []);
+}
 
 export async function POST(req: NextRequest) {
   const auth = await requireAuth(req);
@@ -26,25 +37,17 @@ export async function POST(req: NextRequest) {
   const sb = getSupabase()!;
 
   if (source === "supabase") {
+    try {
     // Pull from Supabase → upsert into local SQLite
     const db = getDb();
     const userId = auth.userId!;
-    const [
-      { data: addressBook },
-      { data: knownIntermediaries },
-      { data: knownCreators },
-      { data: savedAnalyses },
-      { data: bulkRecipients },
-      { data: proceedsPresets },
-      { data: savedSearches },
-      { data: bulkRunHistory },
-      { data: assetGroups },
-      { data: walletFolders },
-      { data: wallets },
-      { data: appState },
-      { data: autoSendGroups },
-      { data: autoSendRunLog },
-    ] = await Promise.all([
+    const parentTables = [
+      "address_book", "known_intermediaries", "known_creators", "saved_analyses",
+      "bulk_recipients", "proceeds_presets", "saved_searches", "bulk_run_history",
+      "asset_groups", "wallet_folders", "wallets", "app_state", "auto_send_groups",
+      "persons", "creator_children", "bulk_scan_state", "tiered_reward_configs",
+    ];
+    const parentReads = await Promise.all([
       sb.from("address_book").select("*").eq("user_id", userId),
       sb.from("known_intermediaries").select("*").eq("user_id", userId),
       sb.from("known_creators").select("*").eq("user_id", userId),
@@ -58,19 +61,60 @@ export async function POST(req: NextRequest) {
       sb.from("wallets").select("*").eq("user_id", userId),
       sb.from("app_state").select("*").eq("user_id", userId),
       sb.from("auto_send_groups").select("*").eq("user_id", userId),
-      sb.from("auto_send_run_log").select("*").eq("user_id", userId),
+      sb.from("persons").select("*").eq("user_id", userId),
+      sb.from("creator_children").select("*").eq("user_id", userId),
+      sb.from("bulk_scan_state").select("*").eq("user_id", userId),
+      sb.from("tiered_reward_configs").select("*").eq("user_id", userId),
     ]);
+    const [
+      addressBook, knownIntermediaries, knownCreators, savedAnalyses, bulkRecipients,
+      proceedsPresets, savedSearches, bulkRunHistory, assetGroups, walletFolders,
+      wallets, appState, autoSendGroups, persons, creatorChildren, bulkScanState,
+      tieredRewardConfigs,
+    ] = unwrapReads(parentReads as SupabaseRead[], parentTables);
     // Members and destinations are scoped through their parent tables (no user_id column)
     const assetGroupIds = (assetGroups ?? []).map((g) => g.id as string);
     const autoSendGroupIds = (autoSendGroups ?? []).map((g) => g.id as string);
-    const [{ data: assetGroupMembers }, { data: autoSendDestinations }] = await Promise.all([
+    const personIds = (persons ?? []).map((p) => p.id as string);
+    const tieredConfigIds = (tieredRewardConfigs ?? []).map((c) => c.id as string);
+    const childTables = [
+      "asset_group_members", "auto_send_destinations", "auto_send_run_log",
+      "person_addresses", "person_relationships", "tiered_reward_tiers", "tiered_reward_run_log",
+    ];
+    const childReads = await Promise.all([
       assetGroupIds.length > 0
         ? sb.from("asset_group_members").select("*").in("group_id", assetGroupIds)
-        : Promise.resolve({ data: [] }),
+        : Promise.resolve({ data: [], error: null }),
       autoSendGroupIds.length > 0
         ? sb.from("auto_send_destinations").select("*").in("group_id", autoSendGroupIds)
-        : Promise.resolve({ data: [] }),
+        : Promise.resolve({ data: [], error: null }),
+      autoSendGroupIds.length > 0
+        ? sb.from("auto_send_run_log").select("*").in("group_id", autoSendGroupIds)
+        : Promise.resolve({ data: [], error: null }),
+      personIds.length > 0
+        ? sb.from("person_addresses").select("*").in("person_id", personIds)
+        : Promise.resolve({ data: [], error: null }),
+      personIds.length > 0
+        ? sb.from("person_relationships").select("*").in("person_a_id", personIds)
+        : Promise.resolve({ data: [], error: null }),
+      tieredConfigIds.length > 0
+        ? sb.from("tiered_reward_tiers").select("*").in("config_id", tieredConfigIds)
+        : Promise.resolve({ data: [], error: null }),
+      tieredConfigIds.length > 0
+        ? sb.from("tiered_reward_run_log").select("*").in("config_id", tieredConfigIds)
+        : Promise.resolve({ data: [], error: null }),
     ]);
+    const [
+      assetGroupMembers, autoSendDestinations, autoSendRunLog, personAddresses,
+      personRelationships, tieredRewardTiers, tieredRewardRunLog,
+    ] = unwrapReads(childReads as SupabaseRead[], childTables);
+    const tierIds = (tieredRewardTiers ?? []).map((t) => t.id as string);
+    const tieredRewardAssetsRead = tierIds.length > 0
+      ? await sb.from("tiered_reward_assets").select("*").in("tier_id", tierIds)
+      : { data: [], error: null };
+    const [tieredRewardAssets] = unwrapReads(
+      [tieredRewardAssetsRead as SupabaseRead], ["tiered_reward_assets"],
+    );
 
     db.transaction(() => {
       for (const r of addressBook ?? []) {
@@ -113,10 +157,23 @@ export async function POST(req: NextRequest) {
         db.prepare(`INSERT OR REPLACE INTO bulk_run_history (id, network, memo, recipient_count, success_count, failed_count, ran_at) VALUES (?, ?, ?, ?, ?, ?, ?)`)
           .run(r.id, r.network, r.memo, r.recipient_count, r.success_count, r.failed_count, r.ran_at);
       }
+      // People must exist before groups that refer to them.
+      for (const r of persons ?? []) {
+        db.prepare(`INSERT OR REPLACE INTO persons (id, name, role, notes, telegram_channel, telegram_link, telegram_username, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+          .run(r.id, r.name, r.role, r.notes, r.telegram_channel, r.telegram_link, r.telegram_username, r.created_at, r.updated_at);
+      }
+      for (const r of personAddresses ?? []) {
+        db.prepare(`INSERT OR REPLACE INTO person_addresses (id, person_id, address, label, added_at) VALUES (?, ?, ?, ?, ?)`)
+          .run(r.id, r.person_id, r.address, r.label, r.added_at);
+      }
+      for (const r of personRelationships ?? []) {
+        db.prepare(`INSERT OR REPLACE INTO person_relationships (id, person_a_id, person_b_id, type, created_at) VALUES (?, ?, ?, ?, ?)`)
+          .run(r.id, r.person_a_id, r.person_b_id, r.type, r.created_at);
+      }
       // Asset groups (parents before children)
       for (const r of assetGroups ?? []) {
-        db.prepare(`INSERT OR REPLACE INTO asset_groups (id, name, asset_code, issuer, network, notes, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
-          .run(r.id, r.name, r.asset_code, r.issuer, r.network, r.notes, r.created_at, r.updated_at);
+        db.prepare(`INSERT OR REPLACE INTO asset_groups (id, name, asset_code, issuer, network, notes, domain, telegram_channel, telegram_link, person_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+          .run(r.id, r.name, r.asset_code, r.issuer, r.network, r.notes, r.domain, r.telegram_channel, r.telegram_link, r.person_id, r.created_at, r.updated_at);
       }
       for (const r of assetGroupMembers ?? []) {
         db.prepare(`INSERT OR REPLACE INTO asset_group_members (id, group_id, address, role, label, notes, home_domain, added_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
@@ -129,7 +186,7 @@ export async function POST(req: NextRequest) {
       }
       for (const r of wallets ?? []) {
         db.prepare(`INSERT OR REPLACE INTO wallets (id, folder_id, name, public_key, secret_key, position) VALUES (?, ?, ?, ?, ?, ?)`)
-          .run(r.id, r.folder_id, r.name, r.public_key, r.secret_key, r.position);
+          .run(r.id, r.folder_id, r.name, r.public_key, encryptImportedStoredSecret(r.secret_key), r.position);
       }
       for (const r of appState ?? []) {
         db.prepare(`INSERT OR REPLACE INTO app_state (key, value) VALUES (?, ?)`)
@@ -137,7 +194,7 @@ export async function POST(req: NextRequest) {
       }
       for (const r of autoSendGroups ?? []) {
         db.prepare(`INSERT OR REPLACE INTO auto_send_groups (id, name, network, secret_key, interval_minutes, enabled, batch_send, batch_memo, min_reserve, min_sender_threshold, preview_only, last_failure_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-          .run(r.id, r.name, r.network, r.secret_key, r.interval_minutes, r.enabled, r.batch_send, r.batch_memo, r.min_reserve, r.min_sender_threshold, r.preview_only, r.last_failure_at, r.created_at);
+          .run(r.id, r.name, "public", encryptImportedStoredSecret(r.secret_key), r.interval_minutes, r.enabled, r.batch_send, r.batch_memo, r.min_reserve, r.min_sender_threshold, r.preview_only, r.last_failure_at, r.created_at);
       }
       for (const r of autoSendDestinations ?? []) {
         db.prepare(`INSERT OR REPLACE INTO auto_send_destinations (id, group_id, destination, percentage, is_remainder, is_paused, label, memo, min_threshold, max_cap, position) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
@@ -147,9 +204,56 @@ export async function POST(req: NextRequest) {
         db.prepare(`INSERT OR REPLACE INTO auto_send_run_log (id, group_id, wallet_address, destination, amount_sent, status, error, ran_at, tx_hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
           .run(r.id, r.group_id, r.wallet_address, r.destination, r.amount_sent, r.status, r.error, r.ran_at, r.tx_hash);
       }
+      for (const r of creatorChildren ?? []) {
+        const issuedAssets = r.issued_assets == null || typeof r.issued_assets === "string"
+          ? r.issued_assets : JSON.stringify(r.issued_assets);
+        const distributedAssets = r.distributed_assets == null || typeof r.distributed_assets === "string"
+          ? r.distributed_assets : JSON.stringify(r.distributed_assets);
+        db.prepare(`INSERT OR REPLACE INTO creator_children (id, creator_address, child_address, network, via_intermediary, created_on_chain, confidence, starting_balance, home_domain, issued_assets, distributed_assets, parent_address, discovered_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+          .run(r.id, r.creator_address, r.child_address, "public", r.via_intermediary, r.created_on_chain, r.confidence, r.starting_balance, r.home_domain, issuedAssets, distributedAssets, r.parent_address, r.discovered_at);
+      }
+      for (const r of bulkScanState ?? []) {
+        db.prepare(`INSERT OR REPLACE INTO bulk_scan_state (id, scan_key, rows_json, interrupted, updated_at) VALUES (?, ?, ?, ?, ?)`)
+          .run(`local:${r.scan_key}`, r.scan_key, r.rows_json, r.interrupted, r.updated_at);
+      }
+      for (const r of tieredRewardConfigs ?? []) {
+        const excludeAddresses = typeof r.exclude_addresses === "string"
+          ? r.exclude_addresses : JSON.stringify(r.exclude_addresses ?? []);
+        db.prepare(`INSERT OR REPLACE INTO tiered_reward_configs (id, name, asset_code, asset_issuer, network, secret_key, interval_minutes, enabled, min_reserve, min_sender_threshold, preview_only, batch_send, memo, fee_multiplier, exclude_addresses, last_run_at, last_failure_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+          .run(r.id, r.name, r.asset_code, r.asset_issuer, "public", encryptImportedStoredSecret(r.secret_key), r.interval_minutes, r.enabled, r.min_reserve, r.min_sender_threshold, r.preview_only, r.batch_send, r.memo, r.fee_multiplier, excludeAddresses, r.last_run_at, r.last_failure_at, r.created_at);
+      }
+      for (const r of tieredRewardTiers ?? []) {
+        db.prepare(`INSERT OR REPLACE INTO tiered_reward_tiers (id, config_id, tier_number, min_tokens, max_tokens, position) VALUES (?, ?, ?, ?, ?, ?)`)
+          .run(r.id, r.config_id, r.tier_number, r.min_tokens, r.max_tokens, r.position);
+      }
+      for (const r of tieredRewardAssets ?? []) {
+        db.prepare(`INSERT OR REPLACE INTO tiered_reward_assets (id, tier_id, asset_code, asset_issuer, amount) VALUES (?, ?, ?, ?, ?)`)
+          .run(r.id, r.tier_id, r.asset_code, r.asset_issuer, r.amount);
+      }
+      for (const r of tieredRewardRunLog ?? []) {
+        db.prepare(`INSERT OR REPLACE INTO tiered_reward_run_log (id, config_id, tier_number, holder_address, asset_code, asset_issuer, amount_sent, status, tx_hash, error, ran_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+          .run(r.id, r.config_id, r.tier_number, r.holder_address, r.asset_code, r.asset_issuer, r.amount_sent, r.status, r.tx_hash, r.error, r.ran_at);
+      }
     })();
 
-    return NextResponse.json({ ok: true, message: "Restored from Supabase to local SQLite" });
+    const counts = Object.fromEntries([
+      ...parentTables.map((table, index) => [table, [
+        addressBook, knownIntermediaries, knownCreators, savedAnalyses, bulkRecipients,
+        proceedsPresets, savedSearches, bulkRunHistory, assetGroups, walletFolders,
+        wallets, appState, autoSendGroups, persons, creatorChildren, bulkScanState,
+        tieredRewardConfigs,
+      ][index].length]),
+      ...childTables.map((table, index) => [table, [
+        assetGroupMembers, autoSendDestinations, autoSendRunLog, personAddresses,
+        personRelationships, tieredRewardTiers, tieredRewardRunLog,
+      ][index].length]),
+      ["tiered_reward_assets", tieredRewardAssets.length],
+    ]);
+    return NextResponse.json({ ok: true, message: "Restored from Supabase to local SQLite", counts });
+    } catch (error) {
+      console.error("[db/restore] Supabase backup read failed:", error);
+      return NextResponse.json({ error: "Backup source read failed" }, { status: 502 });
+    }
   }
 
   if (source === "local") {
@@ -176,6 +280,9 @@ export async function POST(req: NextRequest) {
       { name: "proceeds_presets", rows: db.prepare("SELECT * FROM proceeds_presets").all() },
       { name: "saved_searches", rows: db.prepare("SELECT * FROM saved_searches").all() },
       { name: "bulk_run_history", rows: db.prepare("SELECT * FROM bulk_run_history").all() },
+      { name: "persons", rows: db.prepare("SELECT * FROM persons").all() },
+      { name: "person_addresses", rows: db.prepare("SELECT * FROM person_addresses").all() },
+      { name: "person_relationships", rows: db.prepare("SELECT * FROM person_relationships").all() },
       { name: "asset_groups", rows: db.prepare("SELECT * FROM asset_groups").all() },
       { name: "asset_group_members", rows: db.prepare("SELECT * FROM asset_group_members").all() },
       { name: "wallet_folders", rows: db.prepare("SELECT * FROM wallet_folders").all() },
@@ -184,6 +291,12 @@ export async function POST(req: NextRequest) {
       { name: "auto_send_groups", rows: db.prepare("SELECT * FROM auto_send_groups").all() },
       { name: "auto_send_destinations", rows: db.prepare("SELECT * FROM auto_send_destinations").all() },
       { name: "auto_send_run_log", rows: db.prepare("SELECT * FROM auto_send_run_log").all() },
+      { name: "creator_children", rows: db.prepare("SELECT * FROM creator_children").all() },
+      { name: "bulk_scan_state", rows: db.prepare("SELECT * FROM bulk_scan_state").all() },
+      { name: "tiered_reward_configs", rows: db.prepare("SELECT * FROM tiered_reward_configs").all() },
+      { name: "tiered_reward_tiers", rows: db.prepare("SELECT * FROM tiered_reward_tiers").all() },
+      { name: "tiered_reward_assets", rows: db.prepare("SELECT * FROM tiered_reward_assets").all() },
+      { name: "tiered_reward_run_log", rows: db.prepare("SELECT * FROM tiered_reward_run_log").all() },
     ];
 
     // Saved analyses: parse JSON fields back to objects for Supabase JSONB
@@ -197,9 +310,39 @@ export async function POST(req: NextRequest) {
       ...r,
       addresses: JSON.parse(r.addresses as string),
     }));
+    const creatorChildrenRows = (db.prepare("SELECT * FROM creator_children").all() as Record<string, unknown>[]).map((r) => ({
+      ...r,
+      network: "public",
+      issued_assets: r.issued_assets ? JSON.parse(r.issued_assets as string) : null,
+      distributed_assets: r.distributed_assets ? JSON.parse(r.distributed_assets as string) : null,
+    }));
+    const bulkScanStateRows = (db.prepare("SELECT * FROM bulk_scan_state").all() as Record<string, unknown>[]).map(({ id: _id, ...r }) => r);
+    const tieredRewardConfigRows = (db.prepare("SELECT * FROM tiered_reward_configs").all() as Record<string, unknown>[]).map((r) => ({
+      ...r,
+      network: "public",
+      secret_key: encryptImportedStoredSecret(r.secret_key),
+      exclude_addresses: r.exclude_addresses ? JSON.parse(r.exclude_addresses as string) : [],
+    }));
+    const walletRows = (db.prepare("SELECT * FROM wallets").all() as Record<string, unknown>[]).map((r) => ({
+      ...r,
+      secret_key: encryptImportedStoredSecret(r.secret_key),
+    }));
+    const autoSendGroupRows = (db.prepare("SELECT * FROM auto_send_groups").all() as Record<string, unknown>[]).map((r) => ({
+      ...r,
+      network: "public",
+      secret_key: encryptImportedStoredSecret(r.secret_key),
+    }));
 
     // Child tables scoped through their parent's group_id — no user_id column of their own
-    const NO_USER_ID_TABLES = new Set(["asset_group_members", "auto_send_destinations"]);
+    const NO_USER_ID_TABLES = new Set([
+      "person_addresses",
+      "person_relationships",
+      "asset_group_members",
+      "auto_send_destinations",
+      "auto_send_run_log",
+      "tiered_reward_tiers",
+      "tiered_reward_assets",
+    ]);
 
     const errors: string[] = [];
 
@@ -208,6 +351,11 @@ export async function POST(req: NextRequest) {
       const data =
         name === "saved_analyses" ? savedAnalysesRows :
         name === "bulk_recipients" ? bulkRecipientsRows :
+        name === "creator_children" ? creatorChildrenRows :
+        name === "bulk_scan_state" ? bulkScanStateRows :
+        name === "tiered_reward_configs" ? tieredRewardConfigRows :
+        name === "wallets" ? walletRows :
+        name === "auto_send_groups" ? autoSendGroupRows :
         rows;
 
       const skipUserId = NO_USER_ID_TABLES.has(name);

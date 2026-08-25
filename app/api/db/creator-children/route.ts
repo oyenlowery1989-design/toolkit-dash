@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
-import { getSupabase, isSupabaseOnly, syncToSupabase, requireAuth } from "@/lib/supabase-server";
+import { checkSupabaseRowOwnership, getSupabase, isSupabaseOnly, syncToSupabase, requireAuth } from "@/lib/supabase-server";
 import type { CreatorChild } from "@/lib/intermediary-tracer/types";
 
 function mapRow(r: Record<string, unknown>): CreatorChild {
@@ -66,6 +66,8 @@ export async function POST(req: NextRequest) {
   if (isSupabaseOnly()) {
     const sb = getSupabase()!;
     for (const c of items) {
+      const ownership = await checkSupabaseRowOwnership("creator_children", c.id, userId!);
+      if (!ownership.ok) return NextResponse.json({ error: ownership.error }, { status: ownership.status });
       const { error } = await sb.from("creator_children").upsert({
         user_id: userId,
         id: c.id,

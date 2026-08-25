@@ -182,6 +182,7 @@ export function BulkTraceTab() {
     setError(null);
     setLogs([]);
     setHasStarted(true);
+    setRows(addresses.map((address) => ({ address, status: "pending" })));
 
     try {
       const horizonUrl = resolveHorizonUrl(settings);
@@ -203,6 +204,13 @@ export function BulkTraceTab() {
     } finally {
       setRunning(false);
     }
+  };
+
+  const handleStop = () => {
+    abortRef.current?.abort();
+    setRows((previous) => previous.map((row) => row.status === "pending"
+      ? { ...row, status: "error", error: "Cancelled by user" }
+      : row));
   };
 
   // -------------------------------------------------------------------------
@@ -314,7 +322,7 @@ export function BulkTraceTab() {
             {parsedAddresses.length !== 1 ? "es" : ""}
           </Button>
           {running && (
-            <Button variant="outline" onClick={() => abortRef.current?.abort()}>
+            <Button variant="outline" onClick={handleStop}>
               Stop
             </Button>
           )}

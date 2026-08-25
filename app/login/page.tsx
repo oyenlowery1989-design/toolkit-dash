@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Loader2, Mail, Lock, Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -10,7 +10,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { getSupabaseBrowser } from "@/lib/supabase-client";
 import { setDbAuthToken } from "@/lib/db-client";
 
-type Mode = "password" | "magic" | "reset";
+type Mode = "password" | "magic" | "reset" | "update-password";
 
 function setLoggedInCookie(expiresIn: number) {
   document.cookie = `sb-logged-in=1; path=/; max-age=${expiresIn}; SameSite=Lax`;
@@ -21,10 +21,24 @@ export default function LoginPage() {
   const [mode, setMode] = useState<Mode>("password");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [magicSent, setMagicSent] = useState(false);
   const [resetSent, setResetSent] = useState(false);
+  const [passwordUpdated, setPasswordUpdated] = useState(false);
+
+  useEffect(() => {
+    const sb = getSupabaseBrowser();
+    if (new URLSearchParams(window.location.search).get("mode") === "update-password") {
+      setMode("update-password");
+    }
+    if (!sb) return;
+    const { data } = sb.auth.onAuthStateChange((event) => {
+      if (event === "PASSWORD_RECOVERY") setMode("update-password");
+    });
+    return () => data.subscription.unsubscribe();
+  }, []);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -39,6 +53,31 @@ export default function LoginPage() {
     }
 
     try {
+      if (mode === "update-password") {
+        if (password.length < 8) {
+          setError("Use at least 8 characters for the new password.");
+          setLoading(false);
+          return;
+        }
+        if (password !== confirmPassword) {
+          setError("Passwords do not match.");
+          setLoading(false);
+          return;
+        }
+        const { data, error } = await sb.auth.updateUser({ password });
+        if (error) setError(error.message);
+        else {
+          const { data: sessionData } = await sb.auth.getSession();
+          if (sessionData.session) {
+            setDbAuthToken(sessionData.session.access_token);
+            setLoggedInCookie(sessionData.session.expires_in ?? 3600);
+          }
+          setPasswordUpdated(!!data.user);
+        }
+        setLoading(false);
+        return;
+      }
+
       if (mode === "magic") {
         const { error } = await sb.auth.signInWithOtp({
           email,
@@ -116,6 +155,22 @@ export default function LoginPage() {
     );
   }
 
+  if (passwordUpdated) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background p-4">
+        <Card className="w-full max-w-sm">
+          <CardHeader className="text-center">
+            <CardTitle>Password updated</CardTitle>
+            <CardDescription>Your new password is ready to use.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Button className="w-full" onClick={() => router.push("/")}>Continue to workspace</Button>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen flex items-center justify-center bg-background p-4">
       <Card className="w-full max-w-sm">
@@ -128,7 +183,7 @@ export default function LoginPage() {
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-4">
-            <div className="space-y-2">
+            {mode !== "update-password" && <div className="space-y-2">
               <Label htmlFor="email">Email</Label>
               <div className="relative">
                 <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -143,11 +198,11 @@ export default function LoginPage() {
                   autoComplete="email"
                 />
               </div>
-            </div>
+            </div>}
 
-            {mode === "password" && (
+            {(mode === "password" || mode === "update-password") && (
               <div className="space-y-2">
-                <Label htmlFor="password">Password</Label>
+                <Label htmlFor="password">{mode === "update-password" ? "New password" : "Password"}</Label>
                 <div className="relative">
                   <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                   <Input
@@ -158,9 +213,23 @@ export default function LoginPage() {
                     onChange={(e) => setPassword(e.target.value)}
                     className="pl-9"
                     required
-                    autoComplete="current-password"
+                    autoComplete={mode === "update-password" ? "new-password" : "current-password"}
                   />
                 </div>
+              </div>
+            )}
+
+            {mode === "update-password" && (
+              <div className="space-y-2">
+                <Label htmlFor="confirm-password">Confirm new password</Label>
+                <Input
+                  id="confirm-password"
+                  type="password"
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  required
+                  autoComplete="new-password"
+                />
               </div>
             )}
 
@@ -172,7 +241,7 @@ export default function LoginPage() {
 
             <Button type="submit" className="w-full" disabled={loading}>
               {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              {mode === "password" ? "Sign in / Sign up" : mode === "magic" ? "Send magic link" : "Send reset link"}
+              {mode === "password" ? "Sign in / Sign up" : mode === "magic" ? "Send magic link" : mode === "reset" ? "Send reset link" : "Update password"}
             </Button>
 
             <div className="flex flex-col gap-1 pt-1 border-t border-border">

@@ -7,6 +7,7 @@
 import type { ScheduledTask } from "node-cron";
 import type { TieredRewardConfig, RunLogRow } from "./types";
 import { getSupabase, isSupabaseOnly } from "@/lib/supabase-server";
+import { decryptStoredSecret } from "@/lib/secret-storage";
 
 declare global {
   var _tieredRewardsTasks: Map<string, ScheduledTask> | undefined;
@@ -56,15 +57,17 @@ async function loadEnabledConfigsFromSupabase(): Promise<ScheduledConfig[]> {
 
   const result: ScheduledConfig[] = [];
   for (const c of configs as Record<string, unknown>[]) {
-    const { data: tiers } = await sb
+    const { data: tiers, error: tiersError } = await sb
       .from("tiered_reward_tiers")
       .select("*")
       .eq("config_id", c.id)
       .order("position", { ascending: true });
+    if (tiersError) throw new Error(`Could not load tiers for ${String(c.id)}: ${tiersError.message}`);
 
     const mappedTiers = await Promise.all(
       (tiers ?? []).map(async (t: Record<string, unknown>) => {
-        const { data: assets } = await sb.from("tiered_reward_assets").select("*").eq("tier_id", t.id);
+        const { data: assets, error: assetsError } = await sb.from("tiered_reward_assets").select("*").eq("tier_id", t.id);
+        if (assetsError) throw new Error(`Could not load assets for ${String(t.id)}: ${assetsError.message}`);
         return {
           id: t.id as string,
           configId: t.config_id as string,
@@ -88,8 +91,8 @@ async function loadEnabledConfigsFromSupabase(): Promise<ScheduledConfig[]> {
       name: c.name as string,
       assetCode: c.asset_code as string,
       assetIssuer: c.asset_issuer as string,
-      network: (c.network as string) ?? "public",
-      secretKey: (c.secret_key as string) || null,
+      network: "public",
+      secretKey: decryptStoredSecret(c.secret_key as string | undefined) || null,
       hasKey: !!((c.secret_key as string) || ""),
       intervalMinutes: (c.interval_minutes as number | null) ?? null,
       enabled: c.enabled === true || c.enabled === 1,

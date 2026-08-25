@@ -48,6 +48,17 @@ export async function GET(req: NextRequest) {
     const groupId = req.nextUrl.searchParams.get("groupId");
     if (!groupId) return NextResponse.json({ error: "groupId required" }, { status: 400 });
 
+    if (isSupabaseOnly()) {
+      const { data: ownedGroup, error } = await getSupabase()!
+        .from("auto_send_groups")
+        .select("id")
+        .eq("id", groupId)
+        .eq("user_id", auth.userId!)
+        .maybeSingle();
+      if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+      if (!ownedGroup) return NextResponse.json({ error: "Group not found" }, { status: 404 });
+    }
+
     // ?totals=1 — return per-destination lifetime aggregates
     if (req.nextUrl.searchParams.get("totals") === "1") {
       if (isSupabaseOnly()) {
@@ -56,7 +67,6 @@ export async function GET(req: NextRequest) {
           .from("auto_send_run_log")
           .select("destination, amount_sent")
           .eq("group_id", groupId)
-          .eq("user_id", auth.userId!)
           .eq("status", "sent");
         if (error) return NextResponse.json({ error: error.message }, { status: 500 });
         const result: Record<string, { totalXlm: number; sentCount: number }> = {};
@@ -93,7 +103,6 @@ export async function GET(req: NextRequest) {
         .from("auto_send_run_log")
         .select("*")
         .eq("group_id", groupId)
-        .eq("user_id", auth.userId!)
         .order("ran_at", { ascending: false })
         .limit(200);
       if (error) return NextResponse.json({ error: error.message }, { status: 500 });

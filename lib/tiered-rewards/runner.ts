@@ -4,6 +4,9 @@ import { getDb } from "@/lib/db";
 import { withAccountLock, isBadSeq } from "@/lib/stellar-submit";
 import { getSupabase, isSupabaseOnly } from "@/lib/supabase-server";
 import { getErrorMessage } from "@/lib/stellar-helpers";
+import { acquireRunLease, releaseRunLease } from "@/lib/run-lease";
+import { validateMainnetRun } from "@/lib/mainnet-safety";
+import { tieredRewardXlmLast24Hours } from "@/lib/mainnet-usage";
 
 const { Server } = Horizon;
 
@@ -24,14 +27,10 @@ const _runningConfigs = global._tieredRewardsRunningConfigs;
 
 const HORIZON_URLS: Record<string, string> = {
   public: "https://horizon.stellar.org",
-  testnet: "https://horizon-testnet.stellar.org",
-  futurenet: "https://horizon-futurenet.stellar.org",
 };
 
 const NETWORK_PASSPHRASES: Record<string, string> = {
   public: "Public Global Stellar Network ; September 2015",
-  testnet: "Test SDF Network ; September 2015",
-  futurenet: "Test SDF Future Network ; October 2022",
 };
 
 const BATCH_SIZE = 100;
@@ -86,12 +85,12 @@ async function sendSingleOp(
  * double-paying) a run they mistakenly believe failed. `userId` attributes the rows for
  * the Supabase `tiered_reward_run_log.user_id` column (NOT NULL DEFAULT '').
  */
-export async function insertLogRows(rows: Omit<RunLogRow, "id">[], userId?: string): Promise<void> {
-  if (rows.length === 0) return;
+export async function insertLogRows(rows: Omit<RunLogRow, "id">[], userId?: string): Promise<boolean> {
+  if (rows.length === 0) return true;
 
   if (isSupabaseOnly()) {
     const sb = getSupabase();
-    if (!sb) return;
+    if (!sb) return false;
     try {
       const supaRows = rows.map((r) => ({
         id: crypto.randomUUID(),
@@ -108,11 +107,15 @@ export async function insertLogRows(rows: Omit<RunLogRow, "id">[], userId?: stri
         ran_at: r.ranAt,
       }));
       const { error } = await sb.from("tiered_reward_run_log").insert(supaRows);
-      if (error) console.error("[tiered-rewards] run-log Supabase insert failed:", error);
+      if (error) {
+        console.error("[tiered-rewards] run-log Supabase insert failed:", error);
+        return false;
+      }
+      return true;
     } catch (err) {
       console.error("[tiered-rewards] run-log Supabase insert threw:", err);
+      return false;
     }
-    return;
   }
 
   try {
@@ -132,7 +135,11 @@ export async function insertLogRows(rows: Omit<RunLogRow, "id">[], userId?: stri
       }
     });
     insertMany(rows);
-  } catch { /* non-fatal */ }
+    return true;
+  } catch (err) {
+    console.error("[tiered-rewards] run-log SQLite insert failed:", err);
+    return false;
+  }
 }
 
 function buildStellarAsset(assetCode: string, assetIssuer?: string): Asset {
@@ -152,11 +159,18 @@ async function runTier(
   memo: string | null,
   feeMultiplier: number,
   excludeSet: Set<string>,
+  statusRows: { status: string }[],
   userId?: string
-): Promise<void> {
+): Promise<{ failed: boolean; logWriteFailed: boolean }> {
   const { tier, holders } = assignment;
   const eligible = holders.filter((h) => !excludeSet.has(h.address));
-  if (eligible.length === 0) return;
+  if (eligible.length === 0) return { failed: false, logWriteFailed: false };
+
+  let logWriteFailed = false;
+  async function record(rows: Omit<RunLogRow, "id">[]): Promise<void> {
+    statusRows.push(...rows.map((row) => ({ status: row.status })));
+    if (!(await insertLogRows(rows, userId))) logWriteFailed = true;
+  }
 
   const senderAddress = keypair.publicKey();
   const baseFee = String(Math.round(100 * Math.max(1, feeMultiplier)));
@@ -183,20 +197,20 @@ async function runTier(
     let aborted = false;
     for (const op of ops) {
       if (aborted) {
-        await insertLogRows([{ configId, tierNumber: tier.tierNumber, holderAddress: op.holder, assetCode: op.assetCode, assetIssuer: op.assetIssuer, amountSent: 0, status: "aborted" as const, error: "Aborted — earlier payment failed", ranAt }], userId);
+        await record([{ configId, tierNumber: tier.tierNumber, holderAddress: op.holder, assetCode: op.assetCode, assetIssuer: op.assetIssuer, amountSent: 0, status: "aborted" as const, error: "Aborted — earlier payment failed", ranAt }]);
         continue;
       }
       const result = await sendSingleOp(server, keypair, networkPassphrase, op, baseFee, memo);
       if (result.skipped) {
-        await insertLogRows([{ configId, tierNumber: tier.tierNumber, holderAddress: op.holder, assetCode: op.assetCode, assetIssuer: op.assetIssuer, amountSent: 0, status: "skipped" as const, error: "No trustline for reward asset", ranAt }], userId);
+        await record([{ configId, tierNumber: tier.tierNumber, holderAddress: op.holder, assetCode: op.assetCode, assetIssuer: op.assetIssuer, amountSent: 0, status: "skipped" as const, error: "No trustline for reward asset", ranAt }]);
       } else if (result.error) {
         aborted = true;
-        await insertLogRows([{ configId, tierNumber: tier.tierNumber, holderAddress: op.holder, assetCode: op.assetCode, assetIssuer: op.assetIssuer, amountSent: 0, status: "failed" as const, error: result.error, ranAt }], userId);
+        await record([{ configId, tierNumber: tier.tierNumber, holderAddress: op.holder, assetCode: op.assetCode, assetIssuer: op.assetIssuer, amountSent: 0, status: "failed" as const, error: result.error, ranAt }]);
       } else {
-        await insertLogRows([{ configId, tierNumber: tier.tierNumber, holderAddress: op.holder, assetCode: op.assetCode, assetIssuer: op.assetIssuer, amountSent: op.amount, status: "sent" as const, txHash: result.txHash, ranAt }], userId);
+        await record([{ configId, tierNumber: tier.tierNumber, holderAddress: op.holder, assetCode: op.assetCode, assetIssuer: op.assetIssuer, amountSent: op.amount, status: "sent" as const, txHash: result.txHash, ranAt }]);
       }
     }
-    return;
+    return { failed: aborted, logWriteFailed };
   }
 
   // Batch mode: up to BATCH_SIZE ops per tx
@@ -227,13 +241,12 @@ async function runTier(
       const response = await server.submitTransaction(tx);
       const txHash = (response as { hash?: string }).hash;
 
-      await insertLogRows(
+      await record(
         batch.map((op) => ({
           configId, tierNumber: tier.tierNumber, holderAddress: op.holder,
           assetCode: op.assetCode, assetIssuer: op.assetIssuer,
           amountSent: op.amount, status: "sent" as const, txHash, ranAt,
-        })),
-        userId
+        }))
       );
     } catch (err) {
       // Retry once on tx_bad_seq — reload account, rebuild the same batch, resubmit.
@@ -256,13 +269,12 @@ async function runTier(
           const retryResponse = await server.submitTransaction(retryTx);
           const retryTxHash = (retryResponse as { hash?: string }).hash;
 
-          await insertLogRows(
+          await record(
             batch.map((op) => ({
               configId, tierNumber: tier.tierNumber, holderAddress: op.holder,
               assetCode: op.assetCode, assetIssuer: op.assetIssuer,
               amountSent: op.amount, status: "sent" as const, txHash: retryTxHash, ranAt,
-            })),
-            userId
+            }))
           );
           batchStart += BATCH_SIZE;
           continue;
@@ -280,39 +292,37 @@ async function runTier(
           const op = batch[oi];
           const result = await sendSingleOp(server, keypair, networkPassphrase, op, baseFee, memo);
           if (result.skipped) {
-            await insertLogRows([{ configId, tierNumber: tier.tierNumber, holderAddress: op.holder, assetCode: op.assetCode, assetIssuer: op.assetIssuer, amountSent: 0, status: "skipped" as const, error: "No trustline for reward asset", ranAt }], userId);
+            await record([{ configId, tierNumber: tier.tierNumber, holderAddress: op.holder, assetCode: op.assetCode, assetIssuer: op.assetIssuer, amountSent: 0, status: "skipped" as const, error: "No trustline for reward asset", ranAt }]);
           } else if (result.error) {
             aborted = true;
-            await insertLogRows([{ configId, tierNumber: tier.tierNumber, holderAddress: op.holder, assetCode: op.assetCode, assetIssuer: op.assetIssuer, amountSent: 0, status: "failed" as const, error: result.error, ranAt }], userId);
+            await record([{ configId, tierNumber: tier.tierNumber, holderAddress: op.holder, assetCode: op.assetCode, assetIssuer: op.assetIssuer, amountSent: 0, status: "failed" as const, error: result.error, ranAt }]);
             // batchStart is already past this whole batch — log the unfinished tail of THIS
             // batch here, so every holder in it gets some audit row (the outer aborted-batchStart
             // reconciliation below only covers subsequent, not-yet-started batches).
             const tail = batch.slice(oi + 1);
             if (tail.length > 0) {
-              await insertLogRows(
+              await record(
                 tail.map((o) => ({
                   configId, tierNumber: tier.tierNumber, holderAddress: o.holder,
                   assetCode: o.assetCode, assetIssuer: o.assetIssuer,
                   amountSent: 0, status: "aborted" as const, error: "Aborted — earlier payment failed", ranAt,
-                })),
-                userId
+                }))
               );
             }
             break;
           } else {
-            await insertLogRows([{ configId, tierNumber: tier.tierNumber, holderAddress: op.holder, assetCode: op.assetCode, assetIssuer: op.assetIssuer, amountSent: op.amount, status: "sent" as const, txHash: result.txHash, ranAt }], userId);
+            await record([{ configId, tierNumber: tier.tierNumber, holderAddress: op.holder, assetCode: op.assetCode, assetIssuer: op.assetIssuer, amountSent: op.amount, status: "sent" as const, txHash: result.txHash, ranAt }]);
           }
         }
       } else {
         aborted = true;
         const message = extractError(err);
-        await insertLogRows(
+        await record(
           batch.map((op) => ({
             configId, tierNumber: tier.tierNumber, holderAddress: op.holder,
             assetCode: op.assetCode, assetIssuer: op.assetIssuer,
             amountSent: 0, status: "failed" as const, error: message, ranAt,
-          })),
-          userId
+          }))
         );
       }
     }
@@ -322,15 +332,15 @@ async function runTier(
 
   if (aborted && batchStart < ops.length) {
     const remaining = ops.slice(batchStart);
-    await insertLogRows(
+    await record(
       remaining.map((op) => ({
         configId, tierNumber: tier.tierNumber, holderAddress: op.holder,
         assetCode: op.assetCode, assetIssuer: op.assetIssuer,
         amountSent: 0, status: "aborted" as const, error: "Aborted — earlier batch failed", ranAt,
-      })),
-      userId
+      }))
     );
   }
+  return { failed: aborted, logWriteFailed };
 }
 
 export interface RunResult {
@@ -340,6 +350,7 @@ export interface RunResult {
   tiersProcessed: number;
   totalSent: number;
   totalFailed: number;
+  logWriteFailed?: boolean;
 }
 
 /**
@@ -348,9 +359,8 @@ export interface RunResult {
  * for the key, it does not stop a whole redundant second run from starting for this configId
  * (e.g. a scheduler tick racing a concurrent manual run), which would double-pay every holder.
  * The `_runningConfigs` guard below (globalized in module scope, shared with scheduler.ts)
- * closes that gap: it covers same-process races (scheduler-vs-manual, HMR reloads handing a
- * new closure a stale guard) but is NOT a cross-process/serverless distributed lock — true
- * multi-instance safety would need a DB-backed lock (schema migration), out of scope here.
+ * closes that local gap. The durable run lease acquired below extends the guard across
+ * processes and serverless instances.
  */
 export async function runConfig(
   config: TieredRewardConfig,
@@ -361,7 +371,10 @@ export async function runConfig(
     return { error: "This config is already running — try again shortly." };
   }
   _runningConfigs.add(config.id);
+  let leaseToken: string | null = null;
   try {
+    leaseToken = await acquireRunLease("tiered_reward_run_leases", config.id);
+    if (!leaseToken) return { error: "This config is already running — try again shortly." };
     if (!config.secretKey) return await runConfigInner(config, assignments, userId);
     let keypair: Keypair;
     try {
@@ -372,6 +385,7 @@ export async function runConfig(
     }
     return await withAccountLock(keypair.publicKey(), () => runConfigInner(config, assignments, userId));
   } finally {
+    if (leaseToken) await releaseRunLease("tiered_reward_run_leases", config.id, leaseToken);
     _runningConfigs.delete(config.id);
   }
 }
@@ -381,10 +395,12 @@ async function runConfigInner(
   assignments: TierAssignment[],
   userId?: string
 ): Promise<RunResult | { error: string }> {
-  const horizonUrl = HORIZON_URLS[config.network] ?? HORIZON_URLS.public;
-  const networkPassphrase = NETWORK_PASSPHRASES[config.network] ?? NETWORK_PASSPHRASES.public;
-  const server = new Server(horizonUrl);
   const ranAt = Date.now();
+
+  const horizonUrl = HORIZON_URLS[config.network];
+  const networkPassphrase = NETWORK_PASSPHRASES[config.network];
+  if (!horizonUrl || !networkPassphrase) return { error: `Unsupported payment network: ${config.network}` };
+  const server = new Server(horizonUrl);
 
   if (!config.secretKey) return { error: "Sender secret key required to run" };
   let keypair: Keypair;
@@ -395,8 +411,36 @@ async function runConfigInner(
   }
 
   const excludeSet = new Set(config.excludeAddresses ?? []);
+  const intendedOps = assignments.flatMap((assignment) =>
+    assignment.holders
+      .filter((holder) => !excludeSet.has(holder.address))
+      .flatMap((holder) => assignment.tier.assets.map((asset) => ({ holder: holder.address, asset }))),
+  );
+  let sentLast24Hours: number;
+  try {
+    sentLast24Hours = await tieredRewardXlmLast24Hours(userId);
+  } catch (error) {
+    sentLast24Hours = Number.POSITIVE_INFINITY;
+    console.error("[tiered-rewards] unable to verify daily mainnet usage:", error);
+  }
+  const safetyErrors = validateMainnetRun({
+    destinations: intendedOps.map((op) => op.holder),
+    operationCount: intendedOps.length,
+    xlmAmount: intendedOps.reduce(
+      (sum, op) => sum + (op.asset.assetCode.toUpperCase() === "XLM" ? op.asset.amount : 0),
+      0,
+    ),
+    xlmSentLast24Hours: sentLast24Hours,
+  });
+  if (safetyErrors.length > 0) return { error: safetyErrors.join("; ") };
+  const statusRows: { status: string }[] = [];
+  let tiersProcessed = 0;
+  let logWriteFailed = false;
   for (const assignment of assignments) {
-    await runTier(server, keypair, networkPassphrase, assignment, config.id, ranAt, config.batchSend ?? true, config.memo ?? null, config.feeMultiplier ?? 1.0, excludeSet, userId);
+    const tierResult = await runTier(server, keypair, networkPassphrase, assignment, config.id, ranAt, config.batchSend ?? true, config.memo ?? null, config.feeMultiplier ?? 1.0, excludeSet, statusRows, userId);
+    tiersProcessed += 1;
+    logWriteFailed ||= tierResult.logWriteFailed;
+    if (tierResult.failed) break;
   }
 
   // Update last_run_at — leave last_failure_at for the caller to clear on full success.
@@ -423,39 +467,13 @@ async function runConfigInner(
     } catch { /* non-fatal */ }
   }
 
-  // Tally results — same Supabase-vs-SQLite split as above. Without it, on Vercel+Supabase
-  // this always reads an empty SQLite result set, so totalSent/totalFailed are always 0 even
-  // though the payments actually went out.
-  let statusRows: { status: string }[] = [];
-  if (isSupabaseOnly()) {
-    const sb = getSupabase();
-    if (sb) {
-      try {
-        const { data, error } = await sb
-          .from("tiered_reward_run_log")
-          .select("status")
-          .eq("config_id", config.id)
-          .eq("ran_at", ranAt);
-        if (error) console.error("[tiered-rewards] tally Supabase query failed:", error);
-        else statusRows = (data ?? []) as { status: string }[];
-      } catch (err) {
-        console.error("[tiered-rewards] tally Supabase query threw:", err);
-      }
-    }
-  } else {
-    try {
-      const db = getDb();
-      statusRows = db.prepare("SELECT status FROM tiered_reward_run_log WHERE config_id = ? AND ran_at = ?")
-        .all(config.id, ranAt) as { status: string }[];
-    } catch { /* leave empty */ }
-  }
-
   return {
     configId: config.id,
     senderAddress: keypair.publicKey(),
     ranAt,
-    tiersProcessed: assignments.length,
+    tiersProcessed,
     totalSent: statusRows.filter((r) => r.status === "sent").length,
     totalFailed: statusRows.filter((r) => r.status === "failed" || r.status === "aborted").length,
+    ...(logWriteFailed ? { logWriteFailed: true } : {}),
   };
 }

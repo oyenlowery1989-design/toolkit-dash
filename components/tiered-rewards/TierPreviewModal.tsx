@@ -93,6 +93,17 @@ export function TierPreviewModal({ open, onClose, preview, loading, error, onExe
               </div>
             )}
 
+            {(preview.safetyWarnings?.length ?? 0) > 0 && (
+              <div className="rounded-lg border border-amber-700/50 bg-amber-950/30 p-3 space-y-1">
+                {preview.safetyWarnings!.map((warning) => (
+                  <div key={warning} className="flex items-start gap-2 text-sm text-amber-400">
+                    <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
+                    {warning}
+                  </div>
+                ))}
+              </div>
+            )}
+
             {!preview.holderOnlyPreview && (
               <div>
                 <p className="text-xs text-muted-foreground uppercase tracking-wide mb-2">Total Cost</p>
@@ -184,7 +195,7 @@ export function TierPreviewModal({ open, onClose, preview, loading, error, onExe
                 <Button variant="outline" onClick={onClose} disabled={executing}>Close</Button>
                 {!preview.holderOnlyPreview && (
                   <Button
-                    disabled={preview.blocked || executing || sessionExcluded.size > 0}
+                    disabled={preview.blocked || executing || sessionExcluded.size > 0 || !preview.previewToken || (preview.safetyWarnings?.length ?? 0) > 0}
                     onClick={onExecute}
                     className="bg-purple-600 hover:bg-purple-700 text-white"
                   >

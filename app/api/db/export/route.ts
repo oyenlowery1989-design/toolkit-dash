@@ -7,30 +7,33 @@ import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
 import { getSupabase, isSupabaseOnly, requireAuth } from "@/lib/supabase-server";
 
+type SupabaseRead = { data: Record<string, unknown>[] | null; error?: { message: string } | null };
+
+function unwrapReads(results: SupabaseRead[], tables: string[]): Record<string, unknown>[][] {
+  const failures = results
+    .map((result, index) => result.error ? `${tables[index]}: ${result.error.message}` : null)
+    .filter(Boolean);
+  if (failures.length > 0) throw new Error(failures.join("; "));
+  return results.map((result) => result.data ?? []);
+}
+
 export async function GET(req: NextRequest) {
   const auth = await requireAuth(req);
   if (!auth.ok) return auth.response;
   const { userId } = auth;
 
   if (isSupabaseOnly()) {
+    try {
     // Export from Supabase — scoped to user
     const sb = getSupabase()!;
     const uid = userId!;
-    const [
-      { data: addressBook },
-      { data: knownIntermediaries },
-      { data: knownCreators },
-      { data: savedAnalyses },
-      { data: bulkRecipients },
-      { data: proceedsPresets },
-      { data: savedSearches },
-      { data: bulkRunHistory },
-      { data: assetGroups },
-      { data: walletFolders },
-      { data: wallets },
-      { data: appState },
-      { data: autoSendGroups },
-    ] = await Promise.all([
+    const parentTables = [
+      "address_book", "known_intermediaries", "known_creators", "saved_analyses",
+      "bulk_recipients", "proceeds_presets", "saved_searches", "bulk_run_history",
+      "asset_groups", "wallet_folders", "wallets", "app_state", "auto_send_groups",
+      "persons", "creator_children", "bulk_scan_state", "tiered_reward_configs",
+    ];
+    const parentReads = await Promise.all([
       sb.from("address_book").select("*").eq("user_id", uid),
       sb.from("known_intermediaries").select("*").eq("user_id", uid),
       sb.from("known_creators").select("*").eq("user_id", uid),
@@ -44,22 +47,67 @@ export async function GET(req: NextRequest) {
       sb.from("wallets").select("*").eq("user_id", uid),
       sb.from("app_state").select("*").eq("user_id", uid),
       sb.from("auto_send_groups").select("*").eq("user_id", uid),
+      sb.from("persons").select("*").eq("user_id", uid),
+      sb.from("creator_children").select("*").eq("user_id", uid),
+      sb.from("bulk_scan_state").select("*").eq("user_id", uid),
+      sb.from("tiered_reward_configs").select("*").eq("user_id", uid),
     ]);
+    const [
+      addressBook, knownIntermediaries, knownCreators, savedAnalyses, bulkRecipients,
+      proceedsPresets, savedSearches, bulkRunHistory, assetGroups, walletFolders,
+      wallets, appState, autoSendGroups, persons, creatorChildren, bulkScanState,
+      tieredRewardConfigs,
+    ] = unwrapReads(parentReads as SupabaseRead[], parentTables);
     // Fetch members for user's asset groups only
     const groupIds = (assetGroups ?? []).map((g: Record<string, unknown>) => g.id as string);
-    const { data: assetGroupMembers } = groupIds.length > 0
+    const assetGroupMembersRead = groupIds.length > 0
       ? await sb.from("asset_group_members").select("*").in("group_id", groupIds)
-      : { data: [] };
+      : { data: [], error: null };
+    const [assetGroupMembers] = unwrapReads([assetGroupMembersRead as SupabaseRead], ["asset_group_members"]);
     // Fetch auto-send child rows scoped through parent group ownership
     const autoSendGroupIds = (autoSendGroups ?? []).map((g: Record<string, unknown>) => g.id as string);
-    const [{ data: autoSendDestinations }, { data: autoSendRunLog }] = await Promise.all([
+    const autoSendReads = await Promise.all([
       autoSendGroupIds.length > 0
         ? sb.from("auto_send_destinations").select("*").in("group_id", autoSendGroupIds)
-        : Promise.resolve({ data: [] }),
+        : Promise.resolve({ data: [], error: null }),
       autoSendGroupIds.length > 0
         ? sb.from("auto_send_run_log").select("*").in("group_id", autoSendGroupIds)
-        : Promise.resolve({ data: [] }),
+        : Promise.resolve({ data: [], error: null }),
     ]);
+    const [autoSendDestinations, autoSendRunLog] = unwrapReads(
+      autoSendReads as SupabaseRead[], ["auto_send_destinations", "auto_send_run_log"],
+    );
+    const personIds = (persons ?? []).map((person: Record<string, unknown>) => person.id as string);
+    const personReads = await Promise.all([
+      personIds.length > 0
+        ? sb.from("person_addresses").select("*").in("person_id", personIds)
+        : Promise.resolve({ data: [], error: null }),
+      personIds.length > 0
+        ? sb.from("person_relationships").select("*").in("person_a_id", personIds)
+        : Promise.resolve({ data: [], error: null }),
+    ]);
+    const [personAddresses, personRelationships] = unwrapReads(
+      personReads as SupabaseRead[], ["person_addresses", "person_relationships"],
+    );
+    const tieredConfigIds = (tieredRewardConfigs ?? []).map((config: Record<string, unknown>) => config.id as string);
+    const tieredReads = await Promise.all([
+      tieredConfigIds.length > 0
+        ? sb.from("tiered_reward_tiers").select("*").in("config_id", tieredConfigIds)
+        : Promise.resolve({ data: [], error: null }),
+      tieredConfigIds.length > 0
+        ? sb.from("tiered_reward_run_log").select("*").in("config_id", tieredConfigIds)
+        : Promise.resolve({ data: [], error: null }),
+    ]);
+    const [tieredRewardTiers, tieredRewardRunLog] = unwrapReads(
+      tieredReads as SupabaseRead[], ["tiered_reward_tiers", "tiered_reward_run_log"],
+    );
+    const tierIds = (tieredRewardTiers ?? []).map((tier: Record<string, unknown>) => tier.id as string);
+    const tieredRewardAssetsRead = tierIds.length > 0
+      ? await sb.from("tiered_reward_assets").select("*").in("tier_id", tierIds)
+      : { data: [], error: null };
+    const [tieredRewardAssets] = unwrapReads(
+      [tieredRewardAssetsRead as SupabaseRead], ["tiered_reward_assets"],
+    );
 
     return NextResponse.json({
       exportedAt: Date.now(),
@@ -80,7 +128,20 @@ export async function GET(req: NextRequest) {
       auto_send_groups: autoSendGroups ?? [],
       auto_send_destinations: autoSendDestinations ?? [],
       auto_send_run_log: autoSendRunLog ?? [],
+      persons: persons ?? [],
+      person_addresses: personAddresses ?? [],
+      person_relationships: personRelationships ?? [],
+      creator_children: creatorChildren ?? [],
+      bulk_scan_state: bulkScanState ?? [],
+      tiered_reward_configs: tieredRewardConfigs ?? [],
+      tiered_reward_tiers: tieredRewardTiers ?? [],
+      tiered_reward_assets: tieredRewardAssets ?? [],
+      tiered_reward_run_log: tieredRewardRunLog ?? [],
     });
+    } catch (error) {
+      console.error("[db/export] Supabase backup read failed:", error);
+      return NextResponse.json({ error: "Backup source read failed" }, { status: 502 });
+    }
   }
 
   // Export from SQLite
@@ -104,5 +165,18 @@ export async function GET(req: NextRequest) {
     auto_send_groups: db.prepare("SELECT * FROM auto_send_groups").all(),
     auto_send_destinations: db.prepare("SELECT * FROM auto_send_destinations").all(),
     auto_send_run_log: db.prepare("SELECT * FROM auto_send_run_log").all(),
+    persons: db.prepare("SELECT * FROM persons").all(),
+    person_addresses: db.prepare("SELECT * FROM person_addresses").all(),
+    person_relationships: db.prepare("SELECT * FROM person_relationships").all(),
+    creator_children: db.prepare("SELECT * FROM creator_children").all(),
+    bulk_scan_state: db.prepare("SELECT * FROM bulk_scan_state").all(),
+    tiered_reward_configs: db.prepare("SELECT * FROM tiered_reward_configs").all(),
+    tiered_reward_tiers: db.prepare("SELECT * FROM tiered_reward_tiers").all(),
+    tiered_reward_assets: db.prepare("SELECT * FROM tiered_reward_assets").all(),
+    tiered_reward_run_log: db.prepare("SELECT * FROM tiered_reward_run_log").all(),
+    tracer_watchlist: db.prepare("SELECT * FROM tracer_watchlist").all(),
+    tracer_watch_events: db.prepare("SELECT * FROM tracer_watch_events").all(),
+    key_scan_state: db.prepare("SELECT * FROM key_scan_state").all(),
+    key_scan_hits: db.prepare("SELECT * FROM key_scan_hits").all(),
   });
 }

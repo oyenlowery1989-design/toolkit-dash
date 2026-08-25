@@ -3,8 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 // ---------------------------------------------------------------------------
 // Horizon Proxy
 //
-// Routes GET /api/horizon/<path...>?network=<public|testnet|futurenet>
-// to the appropriate Horizon base URL and streams the JSON response back.
+// Routes GET /api/horizon/<path...> to public-network Horizon.
 //
 // Benefits over direct client-side requests:
 //   - Single place to add caching, rate limiting, or auth headers later.
@@ -15,8 +14,6 @@ import { NextRequest, NextResponse } from "next/server";
 
 const HORIZON_URLS: Record<string, string> = {
   public: "https://horizon.stellar.org",
-  testnet: "https://horizon-testnet.stellar.org",
-  futurenet: "https://horizon-futurenet.stellar.org",
 };
 
 // Hard limit: refuse suspiciously large upstream responses to avoid buffering
@@ -36,7 +33,7 @@ export async function GET(
   if (!baseUrl) {
     return NextResponse.json(
       {
-        error: `Unknown network: ${network}. Use public, testnet, or futurenet.`,
+        error: `Unknown network: ${network}. Only public mainnet is supported.`,
       },
       { status: 400 },
     );

@@ -10,6 +10,7 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { useSearchParams } from "next/navigation";
+import { authHeaders } from "@/lib/db-client";
 import {
   Card,
   CardContent,
@@ -643,6 +644,7 @@ export function AssetLookupPanel({
               [info.homeDomain!]: "checking",
             }));
             fetch(`/api/toml?domain=${encodeURIComponent(info.homeDomain)}`, {
+              headers: authHeaders(),
               signal: controller.signal,
             })
               .then((res) => {
@@ -709,7 +711,7 @@ export function AssetLookupPanel({
           try {
             const res = await fetch(
               `/api/toml?domain=${encodeURIComponent(domain)}`,
-              { signal: controller.signal },
+              { headers: authHeaders(), signal: controller.signal },
             );
             if (!controller.signal.aborted)
               setDomainStatus((prev) => ({
@@ -783,7 +785,7 @@ export function AssetLookupPanel({
     try {
       const res = await fetch(
         `/api/toml?domain=${encodeURIComponent(issuerInfo.homeDomain)}`,
-        { signal },
+        { headers: authHeaders(), signal },
       );
       const text = await res.text();
       if (!res.ok) {

@@ -40,7 +40,8 @@ export const NETWORK_PASSPHRASES: Record<Network, string> = {
 };
 
 export function resolveNetworkPassphrase(network: Network): string {
-  return NETWORK_PASSPHRASES[network];
+  void network;
+  return NETWORK_PASSPHRASES.public;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -62,15 +63,15 @@ const SETTINGS_EVENT = "stellar-toolkit-settings-changed";
 export function resolveHorizonUrl(
   settings: Pick<Settings, "network" | "localHorizonUrl">,
 ): string {
-  if (settings.network === "local") return settings.localHorizonUrl;
-  return HORIZON_URLS[settings.network];
+  void settings;
+  return HORIZON_URLS.public;
 }
 
 export function loadFromStorage(): Settings {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return DEFAULT_SETTINGS;
-    return { ...DEFAULT_SETTINGS, ...JSON.parse(raw) };
+    return { ...DEFAULT_SETTINGS, ...JSON.parse(raw), network: "public" };
   } catch {
     return DEFAULT_SETTINGS;
   }
@@ -103,7 +104,7 @@ function getSnapshot(): Settings {
   cachedRaw = raw;
   try {
     cachedSnapshot = raw
-      ? { ...DEFAULT_SETTINGS, ...JSON.parse(raw) }
+      ? { ...DEFAULT_SETTINGS, ...JSON.parse(raw), network: "public" }
       : DEFAULT_SETTINGS;
   } catch {
     cachedSnapshot = DEFAULT_SETTINGS;
@@ -138,7 +139,7 @@ export function useSettings() {
   );
 
   const updateSettings = useCallback((updates: Partial<Settings>) => {
-    const next = { ...getSnapshot(), ...updates };
+    const next = { ...getSnapshot(), ...updates, network: "public" as const };
     saveToStorage(next);
     // Invalidate the snapshot cache so getSnapshot returns fresh data.
     cachedRaw = undefined;

@@ -1,19 +1,34 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
 import { getSupabase, isSupabaseOnly, requireAuth } from "@/lib/supabase-server";
-import { runGroup, previewGroup } from "@/lib/auto-send/runner";
+import { AutoSendRunInProgressError, runGroup, previewGroup } from "@/lib/auto-send/runner";
 import { refreshScheduler } from "@/lib/auto-send/scheduler";
 import { rowToGroup } from "@/lib/auto-send/db-map";
 import type { AutoSendGroup, DestinationRunResult } from "@/lib/auto-send/types";
+import { autoSendXlmLast24Hours } from "@/lib/mainnet-usage";
+import { createPreviewApproval, stablePreviewDigest, validateMainnetRun, verifyPreviewApproval } from "@/lib/mainnet-safety";
 
 type Row = Record<string, unknown>;
+
+function previewDigest(preview: Exclude<Awaited<ReturnType<typeof previewGroup>>, { error: string }>): string {
+  return stablePreviewDigest({
+    groupId: preview.groupId,
+    walletAddress: preview.walletAddress,
+    items: preview.items.map((item) => ({ destination: item.destination, amountXlm: item.amountXlm, wouldSkip: item.wouldSkip })),
+  });
+}
 
 async function loadGroup(groupId: string, userId: string | null): Promise<AutoSendGroup | null> {
   if (isSupabaseOnly()) {
     const sb = getSupabase()!;
     const { data: g, error: ge } = await sb.from("auto_send_groups").select("*").eq("id", groupId).eq("user_id", userId ?? "").single();
-    if (ge || !g) return null;
-    const { data: dests } = await sb.from("auto_send_destinations").select("*").eq("group_id", groupId).order("position", { ascending: true });
+    if (ge) {
+      if (ge.code === "PGRST116") return null;
+      throw new Error(`Could not load auto-send group: ${ge.message}`);
+    }
+    if (!g) return null;
+    const { data: dests, error: destinationsError } = await sb.from("auto_send_destinations").select("*").eq("group_id", groupId).order("position", { ascending: true });
+    if (destinationsError) throw new Error(`Could not load auto-send destinations: ${destinationsError.message}`);
     return rowToGroup(g, dests ?? []);
   }
   const db = getDb();
@@ -38,7 +53,6 @@ async function writeRunLog(userId: string | null, groupId: string, walletAddress
     const sb = getSupabase()!;
     const rows = results.map((r) => ({
       id: crypto.randomUUID(),
-      user_id: userId ?? "",
       group_id: groupId,
       wallet_address: walletAddress,
       destination: r.destination,
@@ -89,7 +103,7 @@ export async function POST(req: NextRequest) {
     let body: Row;
     try { body = await req.json(); } catch { return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 }); }
 
-    const { groupId, action, dryRun, testRun } = body as Record<string, unknown>;
+    const { groupId, action, dryRun, testRun, previewToken } = body as Record<string, unknown>;
 
     if (action === "refresh-scheduler") {
       refreshScheduler();
@@ -104,7 +118,17 @@ export async function POST(req: NextRequest) {
 
     if (dryRun) {
       const preview = await previewGroup(group);
-      return NextResponse.json(preview);
+      if ("error" in preview) return NextResponse.json(preview, { status: 400 });
+      const daily = await autoSendXlmLast24Hours(preview.walletAddress);
+      const intended = preview.items.filter((item) => !item.wouldSkip);
+      const safetyWarnings = validateMainnetRun({
+        destinations: intended.map((item) => item.destination),
+        operationCount: intended.length,
+        xlmAmount: intended.reduce((sum, item) => sum + item.amountXlm, 0),
+        xlmSentLast24Hours: daily,
+      });
+      const token = createPreviewApproval(`auto-send:${group.id}`, auth.userId ?? "local", previewDigest(preview));
+      return NextResponse.json({ ...preview, previewToken: token ?? undefined, safetyWarnings });
     }
 
     if (testRun) {
@@ -113,9 +137,24 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(logWriteFailed ? { ...result, logWriteFailed: true } : result);
     }
 
+    const freshPreview = await previewGroup(group);
+    if ("error" in freshPreview) return NextResponse.json(freshPreview, { status: 400 });
+    const approved = verifyPreviewApproval(
+      previewToken,
+      `auto-send:${group.id}`,
+      auth.userId ?? "local",
+      previewDigest(freshPreview),
+    );
+    if (!approved) {
+      return NextResponse.json({ error: "Preview approval is missing, expired, or the payment amounts changed. Preview again." }, { status: 428 });
+    }
+
     const { result, logWriteFailed } = await runAndLog(auth.userId ?? null, group, () => runGroup(group));
     return NextResponse.json(logWriteFailed ? { ...result, logWriteFailed: true } : result);
   } catch (e) {
+    if (e instanceof AutoSendRunInProgressError) {
+      return NextResponse.json({ error: e.message }, { status: 409 });
+    }
     console.error("[auto-send/run] POST unhandled:", e);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }

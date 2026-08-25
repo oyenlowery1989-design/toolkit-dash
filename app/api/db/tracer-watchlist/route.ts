@@ -13,7 +13,7 @@ function mapRow(r: Record<string, unknown>): WatchlistEntry {
     id: r.id as string,
     address: r.address as string,
     label: (r.label as string) ?? "",
-    network: (r.network as string) ?? "public",
+    network: "public",
     enabled: (r.enabled as number) === 1,
     pollCursor: (r.poll_cursor as string | null) ?? undefined,
     lastCheckedAt: (r.last_checked_at as number | null) ?? undefined,
@@ -59,7 +59,7 @@ export async function POST(req: NextRequest) {
          network = excluded.network,
          enabled = excluded.enabled`,
     )
-    .run(id, b.address, b.label ?? "", b.network ?? "public", b.enabled === false ? 0 : 1, now);
+    .run(id, b.address, b.label ?? "", "public", b.enabled === false ? 0 : 1, now);
 
   return NextResponse.json({ ok: true, id });
 }

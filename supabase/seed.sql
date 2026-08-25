@@ -1,0 +1,1 @@
+-- Intentionally empty. Database tests create isolated fixtures inside transactions.
