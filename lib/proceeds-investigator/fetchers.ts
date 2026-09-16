@@ -29,9 +29,9 @@ function isTargetAsset(
   issuer: string,
   prefix = "asset",
 ): boolean {
-  const code = String(raw[`${prefix}_code`] ?? "").toUpperCase();
+  const code = String(raw[`${prefix}_code`] ?? "");
   const assetIssuer = String(raw[`${prefix}_issuer`] ?? "");
-  return code === assetCode.toUpperCase() && assetIssuer === issuer;
+  return code === assetCode && assetIssuer === issuer;
 }
 
 async function fetchAccountMergeAmount(

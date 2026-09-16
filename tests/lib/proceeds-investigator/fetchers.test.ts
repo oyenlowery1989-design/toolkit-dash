@@ -122,6 +122,24 @@ function mergeEffect(into: string, amount: string) {
 afterEach(() => vi.restoreAllMocks());
 
 describe("fetchAssetXlmProceeds", () => {
+  it("does not mix case-distinct asset codes from the same issuer", async () => {
+    stubHorizon({
+      trades: [dexTrade()],
+      payments: [pathSale()],
+    });
+
+    const result = await fetchAssetXlmProceeds(
+      HORIZON,
+      "WhipSim",
+      ISSUER,
+      [ACCOUNT],
+      new AbortController().signal,
+    );
+
+    expect(result.totalAssetSold).toBe(0);
+    expect(result.totalXlmProceeds).toBe(0);
+  });
+
   it("computes totals, on-hand, and destination aggregation from mocked Horizon", async () => {
     stubHorizon({
       trades: [dexTrade()],

@@ -10,7 +10,7 @@ function parseAmount(value: unknown): number {
 
 /** Given a raw Horizon /trades record, determines whether `account` sold
  *  `assetCode:issuer` for native XLM in this trade, and if so how much of each.
- *  Asset code comparison is case-insensitive per project convention. Returns
+ *  Asset code comparison is case-sensitive, matching Stellar asset identity. Returns
  *  null if this trade doesn't match (account not involved on the matching side,
  *  or not an asset<->XLM trade for this asset). */
 export function resolveAssetToXlmTrade(
@@ -21,10 +21,10 @@ export function resolveAssetToXlmTrade(
 ): TradeDirection | null {
   const isBase = raw.base_account === account;
   const assetIsBase =
-    String(raw.base_asset_code ?? "").toUpperCase() === assetCode.toUpperCase() &&
+    String(raw.base_asset_code ?? "") === assetCode &&
     raw.base_asset_issuer === issuer;
   const assetIsCounter =
-    String(raw.counter_asset_code ?? "").toUpperCase() === assetCode.toUpperCase() &&
+    String(raw.counter_asset_code ?? "") === assetCode &&
     raw.counter_asset_issuer === issuer;
   const xlmIsBase = raw.base_asset_type === "native";
   const xlmIsCounter = raw.counter_asset_type === "native";

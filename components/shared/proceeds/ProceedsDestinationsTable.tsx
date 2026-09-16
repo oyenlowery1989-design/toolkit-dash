@@ -221,9 +221,9 @@ export function ProceedsDestinationsTable({
                       return (
                         <span
                           className="text-xs text-muted-foreground"
-                          title="Live balance still held by this address — not yet forwarded/spent"
+                          title="Current total XLM balance for this address"
                         >
-                          ~{formatXlm(bal)} unspent
+                          ~{formatXlm(bal)} balance
                         </span>
                       );
                     })()}
@@ -283,7 +283,7 @@ export function ProceedsDestinationsTable({
           {undistributedXlm != null && undistributedXlm > 0 && (
             <tr className="border-t-2 border-dashed bg-muted/20">
               <td className="px-3 py-2 text-xs text-muted-foreground italic">
-                Undistributed — still on source address
+                Estimated remainder — proceeds less tracked outflows
               </td>
               <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">
                 {formatXlm(undistributedXlm)}

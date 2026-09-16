@@ -50,6 +50,8 @@ import { getErrorMessage, timeAgo } from "@/lib/stellar-helpers";
 import { NETWORK_LABELS, resolveHorizonUrl, useSettings } from "@/lib/settings";
 import type { Network, Settings } from "@/lib/settings";
 import { SnapshotCompare } from "./SnapshotCompare";
+import { classifyAdPayment } from "@/lib/saved-analyses/ad-payments";
+import { StrKey } from "stellar-sdk";
 
 // ---------------------------------------------------------------------------
 // Shared sort logic — used by both Table and Cards views
@@ -132,7 +134,7 @@ function sortAnalyses(analyses: SavedAnalysis[], sort: Sort): SavedAnalysis[] {
 
 type SaveAnalysisFn = (entry: Omit<SavedAnalysis, "id" | "timestamp">) => string;
 
-async function rerunAnalysis(
+export async function rerunAnalysis(
   analysis: SavedAnalysis,
   settings: Settings,
   saveAnalysis: SaveAnalysisFn,
@@ -149,13 +151,16 @@ async function rerunAnalysis(
     analysis.distribAddresses,
     signal,
   );
+  if (signal.aborted) return;
   saveAnalysis({
-    name: `${analysis.assetCode} — ${new Date().toLocaleDateString()}`,
+    name: analysis.name,
     assetCode: analysis.assetCode,
     issuer: analysis.issuer,
     distribAddresses: analysis.distribAddresses,
     network: analysis.network,
     result,
+    notes: analysis.notes,
+    tags: analysis.tags,
   });
 }
 
@@ -843,6 +848,127 @@ function CrossAssetDestinations({ analyses }: { analyses: SavedAnalysis[] }) {
   );
 }
 
+function AdPaymentsSection({ analyses }: { analyses: SavedAnalysis[] }) {
+  const { settings, updateSettings } = useSettings();
+  const { saveAnalysis } = useSavedAnalyses();
+  const [draftState, setDraftState] = useState<string | null>(null);
+  const [validationError, setValidationError] = useState<string | null>(null);
+  const draft = draftState ?? settings.adPaymentRecipient;
+  const latest = useMemo(() => {
+    const order = { compliant: 0, unpaid: 1, underpaid: 2, unknown: 3 };
+    return latestPerGroup(analyses).sort((a, b) =>
+      order[classifyAdPayment(a.result, settings.adPaymentRecipient).status] -
+      order[classifyAdPayment(b.result, settings.adPaymentRecipient).status],
+    );
+  }, [analyses, settings.adPaymentRecipient]);
+  const validRecipient = StrKey.isValidEd25519PublicKey(settings.adPaymentRecipient ?? "");
+
+  const saveRecipient = () => {
+    const recipient = draft.trim();
+    if (!StrKey.isValidEd25519PublicKey(recipient)) {
+      setValidationError("Enter a valid Stellar G-address.");
+      return;
+    }
+    setValidationError(null);
+    setDraftState(null);
+    updateSettings({ adPaymentRecipient: recipient });
+  };
+
+  const clearRecipient = () => {
+    setValidationError(null);
+    setDraftState(null);
+    updateSettings({ adPaymentRecipient: "" });
+  };
+
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <CardTitle className="text-base">Ad payments</CardTitle>
+        <CardDescription className="text-xs">
+          Check the latest saved snapshot for each asset against the configured 25% recipient.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="flex flex-wrap items-end gap-2">
+          <div className="min-w-[min(100%,28rem)] flex-1">
+            <label htmlFor="ad-payment-recipient" className="text-xs font-medium">Ad payment recipient</label>
+            <Input
+              id="ad-payment-recipient"
+              aria-describedby={validationError ? "ad-payment-recipient-error" : undefined}
+              aria-invalid={validationError ? "true" : undefined}
+              value={draft}
+              onChange={(event) => { setDraftState(event.target.value); setValidationError(null); }}
+              placeholder="G..."
+              className="mt-1 font-mono text-xs"
+            />
+            {validationError && <p id="ad-payment-recipient-error" role="alert" className="mt-1 text-xs text-destructive">{validationError}</p>}
+            <p className="mt-1 text-[11px] text-muted-foreground">Saved in this browser and used for all saved analyses.</p>
+          </div>
+          <Button size="sm" onClick={saveRecipient}>Save</Button>
+          <Button size="sm" variant="outline" onClick={clearRecipient}>Clear</Button>
+        </div>
+
+        {!validRecipient ? (
+          <p className="text-sm text-muted-foreground">Configure a valid recipient to classify ad payments.</p>
+        ) : latest.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No saved analyses yet.</p>
+        ) : (
+          <div className="space-y-2">
+            {latest.map((analysis) => (
+              <AdPaymentRow key={`${analysis.assetCode}:${analysis.issuer}:${analysis.network}`} analysis={analysis} settings={settings} saveAnalysis={saveAnalysis} />
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function AdPaymentRow({ analysis, settings, saveAnalysis }: {
+  analysis: SavedAnalysis;
+  settings: Settings;
+  saveAnalysis: SaveAnalysisFn;
+}) {
+  const { rerunning, error, rerun } = useRerun(analysis, saveAnalysis);
+  const classification = classifyAdPayment(analysis.result, settings.adPaymentRecipient);
+  const status = classification.status[0].toUpperCase() + classification.status.slice(1);
+  const explorer = resolveHorizonUrl({ network: analysis.network as Network, localHorizonUrl: settings.localHorizonUrl });
+  return (
+    <div className="rounded-md border p-3 text-sm">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="min-w-0">
+          <p className="font-medium break-all">{analysis.assetCode} · {analysis.issuer}</p>
+          <p className="text-xs text-muted-foreground">{new Date(analysis.timestamp).toLocaleString()} · {NETWORK_LABELS[analysis.network as keyof typeof NETWORK_LABELS] ?? analysis.network}</p>
+        </div>
+        <div className="flex items-center gap-2"><span className="font-semibold">{status}</span><Button size="sm" variant="outline" onClick={rerun} disabled={rerunning}>{rerunning ? "Refreshing…" : "Refresh"}</Button></div>
+      </div>
+      {error && <p role="alert" className="mt-1 text-xs text-destructive">Refresh failed: {error}</p>}
+      <div className="mt-2 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
+        <span>Observed: {classification.status === "unknown" ? "—" : `${formatXlm(classification.paidXlm)} XLM`}</span>
+        <span>Share: {classification.percentage == null ? "—" : `${classification.percentage.toFixed(7).replace(/0+$/, "").replace(/\.$/, "")}%`}</span>
+        <span>Required: {classification.status === "unknown" ? "—" : `${formatXlm(classification.requiredXlm)} XLM (25%)`}</span>
+        <span>Shortfall: {classification.status === "unknown" ? "—" : `${formatXlm(classification.shortfallXlm)} XLM`}</span>
+      </div>
+      {classification.reason && <p className="mt-1 text-xs text-muted-foreground">{classification.reason}</p>}
+      <p className="mt-1 text-[11px] text-muted-foreground">Observed outgoing XLM from this snapshot’s distribution accounts; shared accounts can overlap across assets.</p>
+      {classification.evidence.length > 0 && (
+        <details className="mt-2 text-xs">
+          <summary className="cursor-pointer underline">Transactions ({classification.evidence.length})</summary>
+          <ul className="mt-2 space-y-1 text-muted-foreground">
+            {classification.evidence.map((entry) => (
+              <li key={entry.id}>
+                {formatXlm(entry.amountXlm)} XLM · {new Date(entry.createdAt).toLocaleString()} · {entry.category} · source <ShortAddress address={entry.from ?? entry.account} network={analysis.network as "public" | "testnet"} />
+                {entry.category === "path_native_out" && <span className="ml-1">(sent, not necessarily received)</span>}
+                {entry.txHash && <a className="ml-1 underline" href={`${explorer}/transactions/${encodeURIComponent(entry.txHash)}`} target="_blank" rel="noreferrer">View transaction</a>}
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // SavedAnalysesPanel — main export
 // ---------------------------------------------------------------------------
@@ -856,15 +982,28 @@ export function SavedAnalysesPanel() {
   const [view, setView] = useState<"cards" | "table">("cards");
   const [sort, setSort] = useState<Sort>({ field: "timestamp", dir: "desc" });
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
+  const legacyAnalyses = useMemo(
+    () => analyses.filter((analysis) => {
+      const result = analysis.result as Partial<NonNullable<SavedAnalysis["result"]>> | null | undefined;
+      return !!result
+        && Number.isFinite(result.totalXlmProceeds)
+        && Number.isFinite(result.totalAssetSold)
+        && Number.isFinite(result.totalOutgoingXlm)
+        && Number.isFinite(result.estimatedOnHandXlm)
+        && Array.isArray(result.proceedsLedger)
+        && Array.isArray(result.topDestinations);
+    }),
+    [analyses],
+  );
 
   useEffect(() => {
     ensureXlmUsdPrice();
   }, [ensureXlmUsdPrice]);
 
   const filtered = useMemo(() => {
-    if (!query.trim()) return analyses;
+    if (!query.trim()) return legacyAnalyses;
     const q = query.toLowerCase();
-    return analyses.filter(
+    return legacyAnalyses.filter(
       (a) =>
         a.assetCode.toLowerCase().includes(q) ||
         a.name.toLowerCase().includes(q) ||
@@ -872,7 +1011,7 @@ export function SavedAnalysesPanel() {
         (a.tags ?? []).some((t) => t.toLowerCase().includes(q)) ||
         a.issuer.toLowerCase().includes(q),
     );
-  }, [analyses, query]);
+  }, [legacyAnalyses, query]);
 
   const sortedFiltered = useMemo(() => sortAnalyses(filtered, sort), [filtered, sort]);
   // One group per asset+issuer+network — re-running an analysis adds a new
@@ -941,10 +1080,12 @@ export function SavedAnalysesPanel() {
       </div>
 
       {/* Aggregate stats — latest snapshot per asset, so re-run history doesn't inflate totals */}
-      <AggregateStats analyses={latestPerGroup(analyses)} xlmUsdPrice={xlmUsdPrice} />
+      <AdPaymentsSection analyses={analyses} />
+
+      <AggregateStats analyses={latestPerGroup(legacyAnalyses)} xlmUsdPrice={xlmUsdPrice} />
 
       {/* Search */}
-      {analyses.length > 0 && (
+      {legacyAnalyses.length > 0 && (
         <div className="relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
           <input
@@ -957,10 +1098,10 @@ export function SavedAnalysesPanel() {
       )}
 
       {/* Snapshot compare */}
-      {analyses.length > 1 && <SnapshotCompare analyses={filtered} />}
+      {legacyAnalyses.length > 1 && <SnapshotCompare analyses={filtered} />}
 
       {/* Cross-asset destinations — latest snapshot per asset, same double-counting fix as above */}
-      {analyses.length > 1 && <CrossAssetDestinations analyses={latestPerGroup(filtered)} />}
+      {legacyAnalyses.length > 1 && <CrossAssetDestinations analyses={latestPerGroup(filtered)} />}
 
       {/* Main content */}
       {!isLoaded ? (

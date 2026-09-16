@@ -33,7 +33,7 @@ export function StatCard({
   );
 }
 
-/** Standard 4-up stats grid for an AssetProceedsResult: proceeds, asset sold, outgoing, on-hand. */
+/** Standard stats grid for an AssetProceedsResult. */
 export function ProceedsStatsCards({ result, assetCode, xlmUsdPrice, showAssetSold = true }: ProceedsStatsCardsProps) {
   const fmtUsd = (n: number) =>
     (n * (xlmUsdPrice ?? 0)).toLocaleString(undefined, { maximumFractionDigits: 0 });
@@ -50,7 +50,7 @@ export function ProceedsStatsCards({ result, assetCode, xlmUsdPrice, showAssetSo
       )}
       <StatCard label="Total Outgoing XLM" value={formatXlm(result.totalOutgoingXlm)} />
       <StatCard
-        label="Estimated On-Hand"
+        label="Est. Proceeds Remaining"
         value={formatXlm(result.estimatedOnHandXlm)}
         usdValue={xlmUsdPrice != null ? fmtUsd(result.estimatedOnHandXlm) : undefined}
       />

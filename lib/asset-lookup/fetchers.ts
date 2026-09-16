@@ -344,53 +344,36 @@ export async function inferDistribLite(
   const paymentTotals = new Map<string, { amount: number; count: number }>();
   let cursor: string | undefined;
 
-  try {
-    while (!signal.aborted) {
-      const params = new URLSearchParams({ limit: "200", order: "asc" });
-      if (cursor) params.set("cursor", cursor);
-      let data: { _embedded?: { records?: Record<string, unknown>[] } };
-      try {
-        data = await fetchJson(
-          `${horizonBase}/accounts/${encodeURIComponent(issuer)}/payments?${params}`,
-          signal,
-        );
-      } catch (e) {
-        if (e instanceof DOMException && e.name === "AbortError") throw e;
-        break;
-      }
-      const records = data._embedded?.records ?? [];
+  while (!signal.aborted) {
+    const params = new URLSearchParams({ limit: "200", order: "asc" });
+    if (cursor) params.set("cursor", cursor);
+    const data = (await fetchJson(
+      `${horizonBase}/accounts/${encodeURIComponent(issuer)}/payments?${params}`,
+      signal,
+    )) as { _embedded?: { records?: Record<string, unknown>[] } };
+    const records = data._embedded?.records ?? [];
 
-      for (const op of records) {
-        const isPaymentType =
-          op.type === "payment" ||
-          op.type === "path_payment_strict_send" ||
-          op.type === "path_payment_strict_receive";
-        if (!isPaymentType) continue;
-        // Must be outgoing and for this specific asset
-        if (op.from !== issuer) continue;
-        // Case-insensitive asset code comparison — on-chain codes can be mixed case
-        // (e.g. "WhipSim") but the UI normalises to uppercase for display
-        if (
-          (op.asset_code as string | undefined)?.toUpperCase() !==
-            assetCode.toUpperCase() ||
-          op.asset_issuer !== issuer
-        )
-          continue;
-        const to = op.to as string | undefined;
-        if (!to || to === issuer) continue;
-        const amount = parseFloat((op.amount as string) ?? "0");
-        const existing = paymentTotals.get(to) ?? { amount: 0, count: 0 };
-        paymentTotals.set(to, {
-          amount: existing.amount + amount,
-          count: existing.count + 1,
-        });
-      }
-
-      if (records.length < 200) break;
-      cursor = records[records.length - 1].paging_token as string;
+    for (const op of records) {
+      const isPaymentType =
+        op.type === "payment" ||
+        op.type === "path_payment_strict_send" ||
+        op.type === "path_payment_strict_receive";
+      if (!isPaymentType) continue;
+      // Must be outgoing and for this specific asset
+      if (op.from !== issuer) continue;
+      if (op.asset_code !== assetCode || op.asset_issuer !== issuer) continue;
+      const to = op.to as string | undefined;
+      if (!to || to === issuer) continue;
+      const amount = parseFloat((op.amount as string) ?? "0");
+      const existing = paymentTotals.get(to) ?? { amount: 0, count: 0 };
+      paymentTotals.set(to, {
+        amount: existing.amount + amount,
+        count: existing.count + 1,
+      });
     }
-  } catch {
-    // partial results are acceptable
+
+    if (records.length < 200) break;
+    cursor = records[records.length - 1].paging_token as string;
   }
 
   const ranked = [...paymentTotals.entries()]

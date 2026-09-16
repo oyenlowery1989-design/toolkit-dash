@@ -23,7 +23,6 @@ import {
   Clock,
   Loader2,
   RefreshCw,
-  Save,
   Search,
   Trash2,
   TrendingDown,
@@ -52,6 +51,7 @@ import {
   requestNotificationPermission,
 } from "@/lib/notifications";
 import type { AssetProceedsResult } from "@/lib/proceeds-investigator/types";
+import { cancelActiveRows, type AssetRowStatus } from "./state";
 import {
   ProceedsStatsCards,
   ProceedsDestinationsTable,
@@ -63,8 +63,6 @@ import {
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
-
-type AssetRowStatus = "pending" | "inferring" | "scanning" | "done" | "error";
 
 interface PriorSaveInfo {
   matches: SavedAnalysis[]; // sorted newest-first
@@ -347,7 +345,6 @@ export function AssetSalesTab() {
   const [running, setRunning] = useState(false);
   const [parseError, setParseError] = useState<string | null>(null);
   const [interrupted, setInterrupted] = useState(false);
-  const [allSaved, setAllSaved] = useState(false);
   const [sequential, setSequential] = useState(false);
   const { price: xlmUsdPrice, ensure: ensureXlmUsdPrice } = useXlmUsdPrice();
   const abortRef = useRef<AbortController | null>(null);
@@ -458,7 +455,6 @@ export function AssetSalesTab() {
 
     setParseError(null);
     setInterrupted(false);
-    setAllSaved(false);
     upsertHistory({
       assetsText: assetsText.trim(),
       network: settings.network,
@@ -614,6 +610,8 @@ export function AssetSalesTab() {
       signal,
     );
 
+    if (signal.aborted) return;
+
     setRunning(false);
     setRows((currentRows) => {
       bulkScanState.saveImmediate(currentRows, false);
@@ -637,6 +635,12 @@ export function AssetSalesTab() {
   const handleCancel = () => {
     abortRef.current?.abort();
     setRunning(false);
+    setInterrupted(true);
+    setRows((currentRows) => {
+      const cancelledRows = cancelActiveRows(currentRows);
+      bulkScanState.saveImmediate(cancelledRows, true);
+      return cancelledRows;
+    });
   };
 
   const handleClear = () => {
@@ -644,23 +648,7 @@ export function AssetSalesTab() {
     setRunning(false);
     setRows([]);
     setInterrupted(false);
-    setAllSaved(false);
     bulkScanState.clear();
-  };
-
-  const handleSaveAll = () => {
-    const doneRows = rows.filter((r) => r.status === "done" && r.result);
-    for (const row of doneRows) {
-      saveAnalysis({
-        name: `${row.assetCode} — ${new Date().toLocaleDateString()}`,
-        assetCode: row.assetCode,
-        issuer: row.issuer,
-        distribAddresses: row.distribAddress ? [row.distribAddress] : [],
-        network: settings.network,
-        result: row.result!,
-      });
-    }
-    setAllSaved(true);
   };
 
   const handleDeleteSavedAnalysis = (rowIndex: number, id: string) => {
@@ -691,11 +679,9 @@ export function AssetSalesTab() {
       r.status === "scanning",
   ).length;
 
-  // Watchdog: if running but all rows reached a terminal state, stop the spinner.
-  // This handles cases where a fetch hangs and runConcurrent never resolves.
+  // Stop the spinner as soon as every row reaches a terminal state.
   useEffect(() => {
     if (running && rows.length > 0 && pendingCount === 0) {
-      abortRef.current?.abort();
       setRunning(false);
     }
   }, [running, rows.length, pendingCount]);
@@ -908,20 +894,8 @@ export function AssetSalesTab() {
       {/* Results */}
       {rows.length > 0 && (
         <div className="space-y-3">
-          {/* Save All button */}
           {doneCount > 0 && !running && (
             <div className="flex justify-end gap-2">
-              {allSaved ? (
-                <Button variant="outline" size="sm" disabled>
-                  <BookmarkCheck className="mr-2 h-3.5 w-3.5 text-green-500" />
-                  All Saved ({doneCount})
-                </Button>
-              ) : (
-                <Button variant="outline" size="sm" onClick={handleSaveAll}>
-                  <Save className="mr-2 h-3.5 w-3.5" />
-                  Save All Completed ({doneCount})
-                </Button>
-              )}
               <Button variant="ghost" size="sm" onClick={() => router.push("/saved-analyses")}>
                 <BookmarkCheck className="mr-2 h-3.5 w-3.5" />
                 View Saved Analyses →

@@ -8,7 +8,7 @@ export default function AssetSalesPage() {
       <div>
         <h1 className="text-3xl font-bold tracking-tight">Asset Sales</h1>
         <p className="text-muted-foreground mt-2">
-          Calculate all-time XLM proceeds for one or many assets — see total sold, total outgoing, on-hand balance, and top destination addresses. Auto-saves each result to Saved Analyses.
+          Calculate all-time XLM proceeds for one or many assets — see total sold, tracked outflows, estimated remaining proceeds, and top destination addresses. Auto-saves each result to Saved Analyses.
         </p>
       </div>
 

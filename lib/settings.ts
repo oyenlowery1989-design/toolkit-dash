@@ -13,6 +13,7 @@ export interface Settings {
   localHorizonUrl: string;
   workerThreads: number;
   notifications: boolean;
+  adPaymentRecipient: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -49,6 +50,7 @@ export const DEFAULT_SETTINGS: Settings = {
   localHorizonUrl: "http://localhost:8000",
   workerThreads: 4,
   notifications: false,
+  adPaymentRecipient: "",
 };
 
 const STORAGE_KEY = "stellar-toolkit-settings";
@@ -71,10 +73,20 @@ export function loadFromStorage(): Settings {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return DEFAULT_SETTINGS;
-    return { ...DEFAULT_SETTINGS, ...JSON.parse(raw), network: "public" };
+    return settingsFromRaw(JSON.parse(raw));
   } catch {
     return DEFAULT_SETTINGS;
   }
+}
+
+function settingsFromRaw(raw: unknown): Settings {
+  const saved = raw && typeof raw === "object" ? raw as Partial<Settings> : {};
+  return {
+    ...DEFAULT_SETTINGS,
+    ...saved,
+    adPaymentRecipient: typeof saved.adPaymentRecipient === "string" ? saved.adPaymentRecipient : "",
+    network: "public",
+  };
 }
 
 function saveToStorage(settings: Settings): void {
@@ -104,7 +116,7 @@ function getSnapshot(): Settings {
   cachedRaw = raw;
   try {
     cachedSnapshot = raw
-      ? { ...DEFAULT_SETTINGS, ...JSON.parse(raw), network: "public" }
+      ? settingsFromRaw(JSON.parse(raw))
       : DEFAULT_SETTINGS;
   } catch {
     cachedSnapshot = DEFAULT_SETTINGS;
