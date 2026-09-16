@@ -10,8 +10,9 @@ function source(size: number, cap = 1000, failAt?: number) {
   const fetch = vi.fn(async (input: RequestInfo | URL) => {
     const url = new URL(String(input));
     const offset = Number(url.searchParams.get("offset") ?? 0);
+    const limit = Number(url.searchParams.get("limit") ?? cap);
     if (offset === failAt) return new Response(JSON.stringify({ message: "read failed" }), { status: 400 });
-    const page = rows.slice(offset, offset + cap);
+    const page = rows.slice(offset, offset + Math.min(cap, limit));
     return new Response(JSON.stringify(page), {
       headers: { "Content-Range": `${offset}-${offset + page.length - 1}/${size}`, "Content-Type": "application/json" },
     });
@@ -21,6 +22,15 @@ function source(size: number, cap = 1000, failAt?: number) {
 }
 
 describe("complete saved analysis history", () => {
+  it("returns only the newest requested rows for the page", async () => {
+    const { rows, fetch } = source(100);
+    expect(await readSavedAnalysisRows("user-1", 50)).toEqual({ data: rows.slice(0, 50), error: null });
+    expect(fetch).toHaveBeenCalledTimes(1);
+    const url = new URL(String(fetch.mock.calls[0][0]));
+    expect(url.searchParams.get("offset")).toBe("0");
+    expect(url.searchParams.get("limit")).toBe("50");
+  });
+
   it("reads beyond 1000 rows with stable order and user scope on every page", async () => {
     const { rows, fetch } = source(1005);
     expect(await readSavedAnalysisRows("user-1")).toEqual({ data: rows, error: null });

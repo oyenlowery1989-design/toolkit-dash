@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
 import { checkSupabaseRowOwnership, getSupabase, isSupabaseOnly, syncToSupabase, requireAuth } from "@/lib/supabase-server";
-import { readSavedAnalysisRows } from "@/lib/saved-analyses/server";
+import { readSavedAnalysisRows, SAVED_ANALYSES_UI_LIMIT } from "@/lib/saved-analyses/server";
 
 function mapRow(r: Record<string, unknown>) {
   return {
@@ -30,13 +30,13 @@ export async function GET(req: NextRequest) {
   const { userId } = auth;
 
   if (isSupabaseOnly()) {
-    const { data, error } = await readSavedAnalysisRows(userId!);
+    const { data, error } = await readSavedAnalysisRows(userId!, SAVED_ANALYSES_UI_LIMIT);
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
     return NextResponse.json((data ?? []).map(mapRow));
   }
   const rows = getDb()
-    .prepare("SELECT * FROM saved_analyses ORDER BY created_at DESC")
-    .all() as Record<string, unknown>[];
+    .prepare("SELECT * FROM saved_analyses ORDER BY created_at DESC LIMIT ?")
+    .all(SAVED_ANALYSES_UI_LIMIT) as Record<string, unknown>[];
   return NextResponse.json(rows.map(mapRow));
 }
 

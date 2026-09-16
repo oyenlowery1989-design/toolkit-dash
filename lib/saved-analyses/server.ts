@@ -1,13 +1,15 @@
 import { getSupabase } from "@/lib/supabase-server";
 
-/** Read the full history for UI, export, and local sync despite the API row cap. */
-export async function readSavedAnalysisRows(userId: string): Promise<{
+export const SAVED_ANALYSES_UI_LIMIT = 50;
+
+/** Read full history for export and startup sync; callers can request a bounded page. */
+export async function readSavedAnalysisRows(userId: string, limit?: number): Promise<{
   data: Record<string, unknown>[] | null;
   error: { message: string } | null;
 }> {
   const sb = getSupabase()!;
   const rows: Record<string, unknown>[] = [];
-  const pageSize = 1000;
+  const pageSize = limit ?? 1000;
   let total: number | null = null;
   for (;;) {
     const { data, error, count } = await sb.from("saved_analyses")
@@ -24,6 +26,9 @@ export async function readSavedAnalysisRows(userId: string): Promise<{
         : { data: rows, error: null };
     }
     rows.push(...data);
+    if (limit !== undefined && rows.length >= limit) {
+      return { data: rows.slice(0, limit), error: null };
+    }
     if (total !== null ? rows.length >= total : data.length < pageSize) {
       return { data: rows, error: null };
     }
