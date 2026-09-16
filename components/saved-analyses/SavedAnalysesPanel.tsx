@@ -38,6 +38,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useSavedAnalyses } from "@/hooks/use-saved-analyses";
+import { ADDRESS_COLORS, useAddressBook } from "@/hooks/use-address-book";
 import type { SavedAnalysis } from "@/hooks/use-saved-analyses";
 import { useXlmUsdPrice } from "@/hooks/use-xlm-usd-price";
 import { useConfirmClick } from "@/hooks/use-confirm-click";
@@ -51,6 +52,7 @@ import { NETWORK_LABELS, resolveHorizonUrl, useSettings } from "@/lib/settings";
 import type { Network, Settings } from "@/lib/settings";
 import { SnapshotCompare } from "./SnapshotCompare";
 import { classifyAdPayment } from "@/lib/saved-analyses/ad-payments";
+import type { AdPaymentClassification } from "@/lib/saved-analyses/ad-payments";
 import { StrKey } from "stellar-sdk";
 
 // ---------------------------------------------------------------------------
@@ -851,17 +853,31 @@ function CrossAssetDestinations({ analyses }: { analyses: SavedAnalysis[] }) {
 function AdPaymentsSection({ analyses }: { analyses: SavedAnalysis[] }) {
   const { settings, updateSettings } = useSettings();
   const { saveAnalysis } = useSavedAnalyses();
+  const { entries } = useAddressBook();
+  const [statusFilter, setStatusFilter] = useState<"all" | AdPaymentClassification["status"]>("all");
   const [draftState, setDraftState] = useState<string | null>(null);
   const [validationError, setValidationError] = useState<string | null>(null);
   const draft = draftState ?? settings.adPaymentRecipient;
+  const recipientEntry = entries.find((entry) => entry.publicKey === settings.adPaymentRecipient);
   const latest = useMemo(() => {
     const order = { compliant: 0, unpaid: 1, underpaid: 2, unknown: 3 };
-    return latestPerGroup(analyses).sort((a, b) =>
-      order[classifyAdPayment(a.result, settings.adPaymentRecipient).status] -
-      order[classifyAdPayment(b.result, settings.adPaymentRecipient).status],
-    );
+    return latestPerGroup(analyses)
+      .map((analysis) => ({ analysis, classification: classifyAdPayment(analysis.result, settings.adPaymentRecipient) }))
+      .sort((a, b) => order[a.classification.status] - order[b.classification.status]);
   }, [analyses, settings.adPaymentRecipient]);
   const validRecipient = StrKey.isValidEd25519PublicKey(settings.adPaymentRecipient ?? "");
+  const counts = { all: latest.length, compliant: 0, unpaid: 0, underpaid: 0, unknown: 0 };
+  const totals = new Map<string, { paid: number; required: number; shortfall: number }>();
+  for (const { analysis, classification } of latest) {
+    counts[classification.status]++;
+    if (classification.status === "unknown") continue;
+    const total = totals.get(analysis.network) ?? { paid: 0, required: 0, shortfall: 0 };
+    total.paid += classification.paidXlm;
+    total.required += classification.requiredXlm;
+    total.shortfall += classification.shortfallXlm;
+    totals.set(analysis.network, total);
+  }
+  const visible = latest.filter(({ classification }) => statusFilter === "all" || classification.status === statusFilter);
 
   const saveRecipient = () => {
     const recipient = draft.trim();
@@ -889,6 +905,34 @@ function AdPaymentsSection({ analyses }: { analyses: SavedAnalysis[] }) {
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
+        <div className="space-y-2">
+          <label htmlFor="ad-payment-contact" className="text-xs font-medium">Choose from Address Book</label>
+          <select
+            id="ad-payment-contact"
+            className="flex h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+            value={recipientEntry?.publicKey ?? ""}
+            onChange={(event) => {
+              if (!event.target.value) return;
+              updateSettings({ adPaymentRecipient: event.target.value });
+              setDraftState(null);
+              setValidationError(null);
+            }}
+          >
+            <option value="">Select a saved address</option>
+            {entries.filter((entry) => StrKey.isValidEd25519PublicKey(entry.publicKey)).map((entry) => (
+              <option key={entry.publicKey} value={entry.publicKey}>{entry.label} · {entry.publicKey}</option>
+            ))}
+          </select>
+          {recipientEntry ? (
+            <p className="flex items-center gap-2 text-xs">
+              <span aria-hidden="true" className={`h-2 w-2 rounded-full ${ADDRESS_COLORS[recipientEntry.color ?? "gray"].dot}`} />
+              Linked to {recipientEntry.label}
+            </p>
+          ) : validRecipient ? (
+            <p className="text-xs text-muted-foreground">This recipient is not in Address Book. Its saved address is still used.</p>
+          ) : null}
+          <a href="/address-book" className="text-xs underline">Open Address Book</a>
+        </div>
         <div className="flex flex-wrap items-end gap-2">
           <div className="min-w-[min(100%,28rem)] flex-1">
             <label htmlFor="ad-payment-recipient" className="text-xs font-medium">Ad payment recipient</label>
@@ -913,24 +957,48 @@ function AdPaymentsSection({ analyses }: { analyses: SavedAnalysis[] }) {
         ) : latest.length === 0 ? (
           <p className="text-sm text-muted-foreground">No saved analyses yet.</p>
         ) : (
-          <div className="space-y-2">
-            {latest.map((analysis) => (
-              <AdPaymentRow key={`${analysis.assetCode}:${analysis.issuer}:${analysis.network}`} analysis={analysis} settings={settings} saveAnalysis={saveAnalysis} />
-            ))}
-          </div>
+          <section aria-label="Ad payment results" className="space-y-3">
+            <div className="flex flex-wrap gap-2" role="group" aria-label="Filter ad payments by status">
+              {(["all", "compliant", "unpaid", "underpaid", "unknown"] as const).map((status) => (
+                <Button key={status} size="sm" variant={statusFilter === status ? "default" : "outline"} aria-pressed={statusFilter === status} onClick={() => setStatusFilter(status)}>
+                  {status[0].toUpperCase() + status.slice(1)} ({counts[status]})
+                </Button>
+              ))}
+            </div>
+            <div aria-label="Ad payment snapshot totals" className="space-y-2 rounded-md bg-muted/40 p-3 text-xs">
+              <p className="font-medium">Snapshot totals · all statuses</p>
+              {[...totals].map(([network, total]) => (
+                <div key={network} className="space-y-1">
+                  <p className="font-medium">{NETWORK_LABELS[network as keyof typeof NETWORK_LABELS] ?? network}</p>
+                  <div className="flex flex-wrap gap-x-4 gap-y-1">
+                    <span>Observed total: {formatXlm(total.paid)} XLM</span>
+                    <span>Required total (25%): {formatXlm(total.required)} XLM</span>
+                    <span>Shortfall total: {formatXlm(total.shortfall)} XLM</span>
+                  </div>
+                </div>
+              ))}
+              <p className="text-muted-foreground">Latest snapshot per asset. Unknown results are excluded from totals. Shared distribution accounts can count the same payment across assets.</p>
+            </div>
+            <div className="space-y-2" aria-label="Ad payment assets">
+              {visible.length === 0 && <p className="text-sm text-muted-foreground">No assets match this status.</p>}
+              {visible.map(({ analysis, classification }) => (
+                <AdPaymentRow key={`${analysis.assetCode}:${analysis.issuer}:${analysis.network}`} analysis={analysis} classification={classification} settings={settings} saveAnalysis={saveAnalysis} />
+              ))}
+            </div>
+          </section>
         )}
       </CardContent>
     </Card>
   );
 }
 
-function AdPaymentRow({ analysis, settings, saveAnalysis }: {
+function AdPaymentRow({ analysis, classification, settings, saveAnalysis }: {
   analysis: SavedAnalysis;
+  classification: AdPaymentClassification;
   settings: Settings;
   saveAnalysis: SaveAnalysisFn;
 }) {
   const { rerunning, error, rerun } = useRerun(analysis, saveAnalysis);
-  const classification = classifyAdPayment(analysis.result, settings.adPaymentRecipient);
   const status = classification.status[0].toUpperCase() + classification.status.slice(1);
   const explorer = resolveHorizonUrl({ network: analysis.network as Network, localHorizonUrl: settings.localHorizonUrl });
   return (
@@ -938,7 +1006,7 @@ function AdPaymentRow({ analysis, settings, saveAnalysis }: {
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="min-w-0">
           <p className="font-medium break-all">{analysis.assetCode} · {analysis.issuer}</p>
-          <p className="text-xs text-muted-foreground">{new Date(analysis.timestamp).toLocaleString()} · {NETWORK_LABELS[analysis.network as keyof typeof NETWORK_LABELS] ?? analysis.network}</p>
+          <p className="text-xs text-muted-foreground"><span title={new Date(analysis.timestamp).toLocaleString()}>Snapshot saved {timeAgo(analysis.timestamp)}</span> · {NETWORK_LABELS[analysis.network as keyof typeof NETWORK_LABELS] ?? analysis.network}</p>
         </div>
         <div className="flex items-center gap-2"><span className="font-semibold">{status}</span><Button size="sm" variant="outline" onClick={rerun} disabled={rerunning}>{rerunning ? "Refreshing…" : "Refresh"}</Button></div>
       </div>
@@ -1042,6 +1110,7 @@ export function SavedAnalysesPanel() {
           <p className="text-sm text-muted-foreground mt-1">
             Auto-saved XLM proceeds analyses. Sort, filter, tag, and compare results across assets — including cross-asset destination tracking to reveal shared banks and exchanges.
           </p>
+          {isLoaded && <p className="mt-1 text-xs text-muted-foreground">{analyses.length} saved snapshots · {latestPerGroup(analyses).length} assets · History is kept until you delete it.</p>}
         </div>
         {analyses.length > 0 && (
           <div className="flex items-center gap-2 shrink-0">

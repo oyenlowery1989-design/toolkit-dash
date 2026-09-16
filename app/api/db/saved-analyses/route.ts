@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
 import { checkSupabaseRowOwnership, getSupabase, isSupabaseOnly, syncToSupabase, requireAuth } from "@/lib/supabase-server";
-
-const MAX = 50;
+import { readSavedAnalysisRows } from "@/lib/saved-analyses/server";
 
 function mapRow(r: Record<string, unknown>) {
   return {
@@ -31,12 +30,8 @@ export async function GET(req: NextRequest) {
   const { userId } = auth;
 
   if (isSupabaseOnly()) {
-    const { data } = await getSupabase()!
-      .from("saved_analyses")
-      .select("*")
-      .eq("user_id", userId!)
-      .order("created_at", { ascending: false })
-      .limit(MAX);
+    const { data, error } = await readSavedAnalysisRows(userId!);
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
     return NextResponse.json((data ?? []).map(mapRow));
   }
   const rows = getDb()
@@ -82,17 +77,6 @@ export async function POST(req: NextRequest) {
       console.error("[saved-analyses] POST failed:", upsertError);
       return NextResponse.json({ error: upsertError.message }, { status: 500 });
     }
-    // Trim to MAX on Supabase side
-    const { data: oldest } = await sb
-      .from("saved_analyses")
-      .select("id")
-      .eq("user_id", userId!)
-      .order("created_at", { ascending: true })
-      .limit(1000);
-    if (oldest && oldest.length > MAX) {
-      const toDelete = oldest.slice(0, oldest.length - MAX).map((r) => r.id);
-      await sb.from("saved_analyses").delete().in("id", toDelete).eq("user_id", userId!);
-    }
     return NextResponse.json({ ok: true });
   }
 
@@ -113,12 +97,6 @@ export async function POST(req: NextRequest) {
     b.tags ? JSON.stringify(b.tags) : null,
     now,
   );
-  // Trim to MAX
-  db.prepare(
-    `DELETE FROM saved_analyses WHERE id NOT IN
-     (SELECT id FROM saved_analyses ORDER BY created_at DESC LIMIT ?)`,
-  ).run(MAX);
-
   syncToSupabase(async () => {
     const sb = getSupabase()!;
     await sb.from("saved_analyses").upsert({
@@ -134,17 +112,6 @@ export async function POST(req: NextRequest) {
       tags: b.tags ?? null,
       created_at: now,
     });
-    // Trim to MAX on Supabase side
-    const { data: oldest } = await sb
-      .from("saved_analyses")
-      .select("id")
-      .eq("user_id", userId!)
-      .order("created_at", { ascending: true })
-      .limit(1000);
-    if (oldest && oldest.length > MAX) {
-      const toDelete = oldest.slice(0, oldest.length - MAX).map((r) => r.id);
-      await sb.from("saved_analyses").delete().in("id", toDelete).eq("user_id", userId!);
-    }
   });
 
   return NextResponse.json({ ok: true });

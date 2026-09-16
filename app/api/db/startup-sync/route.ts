@@ -14,6 +14,7 @@ import {
   warnSyncSkippedOnce,
 } from "@/lib/supabase-server";
 import { encryptImportedStoredSecret } from "@/lib/secret-storage";
+import { readSavedAnalysisRows } from "@/lib/saved-analyses/server";
 
 export async function POST(req: NextRequest) {
   const auth = await requireAuth(req);
@@ -45,7 +46,7 @@ export async function POST(req: NextRequest) {
     { data: addressBook },
     { data: knownIntermediaries },
     { data: knownCreators },
-    { data: savedAnalyses },
+    { data: savedAnalyses, error: savedAnalysesError },
     { data: bulkRecipients },
     { data: proceedsPresets },
     { data: savedSearches },
@@ -63,7 +64,7 @@ export async function POST(req: NextRequest) {
     sb.from("address_book").select("*").eq("user_id", userId),
     sb.from("known_intermediaries").select("*").eq("user_id", userId),
     sb.from("known_creators").select("*").eq("user_id", userId),
-    sb.from("saved_analyses").select("*").eq("user_id", userId),
+    readSavedAnalysisRows(userId),
     sb.from("bulk_recipients").select("*").eq("user_id", userId),
     sb.from("proceeds_presets").select("*").eq("user_id", userId),
     sb.from("saved_searches").select("*").eq("user_id", userId),
@@ -78,6 +79,10 @@ export async function POST(req: NextRequest) {
     sb.from("bulk_scan_state").select("*").eq("user_id", userId),
     sb.from("tiered_reward_configs").select("*").eq("user_id", userId),
   ]);
+
+  if (savedAnalysesError) {
+    return NextResponse.json({ error: savedAnalysesError.message }, { status: 502 });
+  }
 
   // Child tables with no user_id column of their own — scoped through their parent instead
   const assetGroupIds = (assetGroups ?? []).map((g) => g.id as string);

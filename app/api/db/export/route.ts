@@ -6,6 +6,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
 import { getSupabase, isSupabaseOnly, requireAuth } from "@/lib/supabase-server";
+import { readSavedAnalysisRows } from "@/lib/saved-analyses/server";
 
 type SupabaseRead = { data: Record<string, unknown>[] | null; error?: { message: string } | null };
 
@@ -37,7 +38,7 @@ export async function GET(req: NextRequest) {
       sb.from("address_book").select("*").eq("user_id", uid),
       sb.from("known_intermediaries").select("*").eq("user_id", uid),
       sb.from("known_creators").select("*").eq("user_id", uid),
-      sb.from("saved_analyses").select("*").eq("user_id", uid),
+      readSavedAnalysisRows(uid),
       sb.from("bulk_recipients").select("*").eq("user_id", uid),
       sb.from("proceeds_presets").select("*").eq("user_id", uid),
       sb.from("saved_searches").select("*").eq("user_id", uid),

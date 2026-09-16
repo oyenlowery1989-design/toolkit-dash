@@ -47,7 +47,7 @@ export function useSavedAnalyses() {
         id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
         timestamp: Date.now(),
       };
-      _cache.set([newEntry, ..._cache.get()].slice(0, 50));
+      _cache.set([newEntry, ..._cache.get()]);
       dbPost(ENDPOINT, newEntry).catch(() => _cache.reload(ENDPOINT));
       return newEntry.id;
     },
