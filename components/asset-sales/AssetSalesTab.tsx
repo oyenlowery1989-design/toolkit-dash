@@ -37,9 +37,11 @@ import { fetchAssetXlmProceeds } from "@/lib/proceeds-investigator/fetchers";
 import { formatXlm, formatUsdEstimate, parseAddresses } from "@/lib/format";
 import { useSavedSearches } from "@/hooks/use-saved-searches";
 import { useSavedAnalyses } from "@/hooks/use-saved-analyses";
+import { useAssetGroups } from "@/hooks/use-asset-groups";
 import { useBulkScanState } from "@/hooks/use-bulk-scan-state";
 import { useConfirmClick } from "@/hooks/use-confirm-click";
 import { parseAssetPairs } from "@/lib/asset-pair";
+import { findSavedDistributor } from "@/lib/asset-groups/types";
 import { useXlmUsdPrice } from "@/hooks/use-xlm-usd-price";
 import { fetchHomeDomain } from "@/components/shared/ChainDisplay";
 import { assetKey, diffSnapshots } from "@/lib/saved-analyses/diff";
@@ -334,6 +336,7 @@ export function AssetSalesTab() {
   const { settings, updateSettings } = useSettings();
   const { upsert: upsertSearch } = useSavedSearches();
   const { analyses: savedAnalyses, saveAnalysis, remove: removeSavedAnalysis } = useSavedAnalyses();
+  const { groups } = useAssetGroups();
   const {
     history: searchHistory,
     upsert: upsertHistory,
@@ -503,41 +506,55 @@ export function AssetSalesTab() {
           );
           if (!signal.aborted && hd) updateRow(i, { homeDomain: hd });
         } else {
-          // Step 1: infer distribution address
-          updateRow(i, { status: "inferring" });
-          try {
-            const candidates = await inferDistribLite(
-              horizonUrl,
-              assetCode,
-              issuer,
-              signal,
-            );
-            if (signal.aborted) return;
-            if (candidates.length === 0) {
+          const savedDistributor = findSavedDistributor(
+            groups,
+            assetCode,
+            issuer,
+            settings.network,
+          );
+          if (savedDistributor) {
+            distribAddress = savedDistributor;
+            inferReason = "Saved distributor from Asset Group";
+            scanAccounts = [distribAddress];
+            const hd = await fetchHomeDomain(horizonUrl, issuer, signal);
+            if (!signal.aborted && hd) updateRow(i, { homeDomain: hd });
+          } else {
+            // Step 1: infer distribution address from issuer payments.
+            updateRow(i, { status: "inferring" });
+            try {
+              const candidates = await inferDistribLite(
+                horizonUrl,
+                assetCode,
+                issuer,
+                signal,
+              );
+              if (signal.aborted) return;
+              if (candidates.length === 0) {
+                updateRow(i, {
+                  status: "error",
+                  error:
+                    "Could not infer a distribution address — the issuer has made no direct payments of this asset. " +
+                    "Distribution may use DEX sell orders only. Enter seller accounts manually below.",
+                  elapsedMs: Date.now() - startedAt,
+                });
+                return;
+              }
+              distribAddress = candidates[0].address;
+              inferReason = candidates[0].reason;
+              scanAccounts = [distribAddress];
+
+              // Fetch issuer home_domain in background (best-effort)
+              const hd = await fetchHomeDomain(horizonUrl, issuer, signal);
+              if (!signal.aborted && hd) updateRow(i, { homeDomain: hd });
+            } catch (e) {
+              if (signal.aborted) return;
               updateRow(i, {
                 status: "error",
-                error:
-                  "Could not infer a distribution address — the issuer has made no direct payments of this asset. " +
-                  "Distribution may use DEX sell orders only. Enter seller accounts manually below.",
+                error: getErrorMessage(e),
                 elapsedMs: Date.now() - startedAt,
               });
               return;
             }
-            distribAddress = candidates[0].address;
-            inferReason = candidates[0].reason;
-            scanAccounts = [distribAddress];
-
-            // Fetch issuer home_domain in background (best-effort)
-            const hd = await fetchHomeDomain(horizonUrl, issuer, signal);
-            if (!signal.aborted && hd) updateRow(i, { homeDomain: hd });
-          } catch (e) {
-            if (signal.aborted) return;
-            updateRow(i, {
-              status: "error",
-              error: getErrorMessage(e),
-              elapsedMs: Date.now() - startedAt,
-            });
-            return;
           }
         }
 

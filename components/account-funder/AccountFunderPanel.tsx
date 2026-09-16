@@ -488,21 +488,13 @@ function SaveToGroup({
           )}
         </div>
 
-        {/* Success confirmation with link to open the group */}
+        {/* The preview above is the saved group; stay here after saving. */}
         {savedGroupId && (
           <div className="flex items-center gap-2 rounded-md border border-green-500/40 bg-green-500/5 px-3 py-2 text-sm">
             <CheckCircle2 className="h-4 w-4 text-green-500" />
             <span>
               Parent + {funded.length} children saved to &quot;{groupName}&quot;
             </span>
-            <a
-              href={`/groups?open=${savedGroupId}`}
-              target="_blank"
-              rel="noreferrer"
-              className="ml-auto text-xs text-primary underline-offset-4 hover:underline"
-            >
-              Open Group →
-            </a>
           </div>
         )}
       </CardContent>

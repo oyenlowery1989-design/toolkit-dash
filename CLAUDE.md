@@ -92,9 +92,9 @@
 | Module | Status |
 |---|---|
 | `address-investigator` | Working — recently updated with home domain, group buttons |
-| `asset-lookup` | Working, signed off — Save/Open Group button is context-aware (checks `useAssetGroups()`); Distribution Sales feature now also auto-saves to Saved Analyses (one-line wiring, no other changes to this file) |
+| `asset-lookup` | Working, signed off — Save to Group is context-aware and saves in place with a compact summary modal; Distribution Sales also auto-saves to Saved Analyses |
 | `search-history` | Working, signed off — standard page shell, filter uses shared `<Input>` |
-| `asset-sales` (proceeds) | Working — single/bulk tab split removed, one input path (paste 1 or many `CODE:ISSUER` lines); `bulk-asset-sales` route still redirects here. Auto-infer distrib with optional manual-accounts override (1-asset only), context-aware group buttons, live destination-balance check |
+| `asset-sales` (proceeds) | Working — single/bulk tab split removed, one input path (paste 1 or many `CODE:ISSUER` lines); `bulk-asset-sales` route still redirects here. Reuses a matching saved-group distributor before Horizon inference; optional manual-accounts override (1-asset only), context-aware group buttons, live destination-balance check |
 | `intermediary-tracer` | Mostly complete — see notes below |
 | `address-generator` | Working — Web Worker vanity address generator; reviewed+fixed 2026-07-06 (Stop button didn't set the same staleness guard the internal search-complete path uses, could revert UI out of "stopped" after an already-queued worker message landed) |
 | `bulk-payments` | Working — secret key field replaced by active wallet indicator when wallet connected; reviewed+fixed 2026-07-06 (fatal-throw false-success, stale exclude-list, abort-on-unmount); reviewed+fixed again 2026-07-13 (custom-asset preflight balance/trustline check, retry-single-batch instead of infinite-loop-on-one-bad-recipient, abort no longer strands batches at "Pending", Save List fixed on From-Group tab) |
@@ -184,7 +184,7 @@ Built for the asset-sales family, now also used by Address Investigator's sender
 - `<ProceedsDestinationsTable destinations totalXlmProceeds network ... />` — the standard table for any "list of counterparty addresses with an XLM total and tx count" view. Optional props cover both the proceeds case (`showGroupAction`, `assetCode`/`issuer`) and the no-asset-context case (`onAddToGroup` callback instead — required whenever the caller has no `assetCode`/`issuer`, e.g. Address Investigator). Also: `showPercentColumn`, `percentColumnLabel`, `addressColumnLabel`, `showProgressBar`, `onDownloadCsv`, `onInvestigate`, `emptyMessage`. **`showBalanceColumn`** (default `true`) adds a "Holds Now" column with a lazy per-row (or "check top 10") live-balance check via `fetchXlmBalance` (`lib/horizon-balance.ts`) — surfaces whether a destination still holds the XLM it received or has moved it on, distinct from the historical `%` column which never changes. Since this is default-on, every existing caller (asset-sales, asset-lookup's Distribution Sales, Address Investigator) gets the column automatically with no caller edit.
 - `<ProceedsStatsCards ... />` — the row of summary stat cards (XLM proceeds, asset sold, outgoing, on-hand style cards).
 - `<ProceedsStatusBadge status />` + `ProceedsScanStatus` type — scan-in-progress/done/error badge.
-- `<SaveToGroupButton assetCode issuer network targetAddress />` — context-aware "Save to Group" / "Open Group →" / "✓ in group" button (see Asset Groups section above for the exact state logic). Supports separate `homeDomain`/`distribHomeDomain` props and a `size="sm"` variant.
+- `<SaveToGroupButton assetCode issuer network targetAddress />` — context-aware direct-save button. Its saved-state modal shows group members and exposes an explicit **Open Group** navigation button. Supports separate `homeDomain`/`distribHomeDomain` props and a `size="sm"` variant.
 
 ### `components/ui/` (shadcn kit)
 `Button`, `Input`, `Label`, `Select`, `Switch`, `Dialog`, `Card`, `Table`, `Tabs`, `Tooltip`, `Badge`, `WalletSelect`. No `Checkbox` exists yet — use `Switch` for any boolean toggle.
@@ -212,4 +212,3 @@ Built for the asset-sales family, now also used by Address Investigator's sender
 ## Local Dev & Testing Notes
 - To browser-test a page's layout/theme without real Supabase credentials: `document.cookie = "sb-logged-in=1"` (via browser eval) gets past the middleware page-redirect gate. API routes still 401 (real JWT required via `requireAuth`) — this only unblocks shell/layout rendering, not data-dependent UI states.
 - Playwright MCP screenshot files save to the repo root by default (not `.playwright-mcp/`, despite that folder appearing in tool output) — clean up (`rm *.png`, `rm -rf .playwright-mcp`) after a browser-testing session so they don't show up in `git status`.
-

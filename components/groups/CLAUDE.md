@@ -18,13 +18,12 @@ Full `autoCreate` URL param spec:
 - **Attributed person** (group-level, optional): `personId` FK to the `persons` table (see `persons` module below) — replaces the earlier flat `personName`/`personRole` fields. "+ Attribute Person" opens a dialog to pick an existing Person or create one inline; unlink via `unlinkGroupPerson(groupId)`. One person per group.
 - API: `/api/db/groups` — POST/PATCH/DELETE body must include `type: "group"` or `type: "member"`
 - Page: `app/(data)/groups/page.tsx` is a standard Suspense shell; all logic lives in `components/groups/GroupsPanel.tsx` — handles `?autoCreate=1&name=...&assetCode=...&issuer=...&distrib=...&issuerHomeDomain=...&distribHomeDomain=...&network=...` to auto-create group on mount; `?open=ID` syncs on same-tab nav, bypasses search filter, scrolls card into view (once per id)
-- "Save to Group" always opens in a **new tab** (`target="_blank"` or `window.open(..., "_blank")`) — never navigate away from source page
+- "Save to Group" saves in place. Once saved, the green status button opens a compact modal summary; only its explicit **Open Group** button navigates to `/groups?open={group.id}`.
 - **Context-aware group buttons** — always check `useAssetGroups()` before rendering:
-  - If group already exists for that asset (by `assetCode+issuer+network`): show green **"Open Group →"** linking to `/groups?open={group.id}`
-  - If not yet: show purple **"Save to Group"** with `autoCreate=1` URL params
+  - If group already exists for that asset (by `assetCode+issuer+network`): show green **"✓ saved"** / **"✓ in group"** and its modal summary
+  - If not yet: show purple **"Save to Group"** and persist directly through `useAssetGroups()`
   - If a destination address is already a member: show green **"✓ in group"**; otherwise show **"+ Bank"**
-- "Save to Group" in Bulk Asset Sales: purple pill-style per row, switches to green "Open Group" if group exists
-- "Save to Group" in Asset Sales (single): same pattern in toolbar next to Save Analysis
+- "Save to Group" in Asset Sales uses the same direct-save + summary-modal flow everywhere it appears.
 - **Top Destinations table** (both Bulk Asset Sales and Asset XLM Proceeds): Layers icon per row — green if already in group, purple "+ Bank" otherwise
 - Auto-infer distrib: Asset Sales `handleRun` calls `inferDistribLite` automatically if `accountsText` is empty, populates the field and proceeds without extra click
 - Home domain: pass **separate** `issuerHomeDomain` and `distribHomeDomain` params — never share one domain for both

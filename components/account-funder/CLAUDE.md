@@ -6,5 +6,5 @@
 - **Children**: N new accounts created by the parent via `createAccount`
 - **Three creation modes**: Direct (parent pays reserve), Sponsored (begin/end sponsoring), Close (close sponsorship)
 - **Network**: from `useSettings()` — `resolveNetworkPassphrase(settings.network)` (NOT the whole `settings` object)
-- Save parent + all children to one Asset Group on completion
+- Save parent + all children to one Asset Group on completion; confirm in place rather than opening the Groups page
 - Keys generated client-side in browser

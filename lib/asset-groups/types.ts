@@ -97,3 +97,20 @@ export interface AssetGroup {
   updatedAt: number;
   members: GroupMember[];
 }
+
+/** Returns the saved distributor for this exact asset identity, if one exists. */
+export function findSavedDistributor(
+  groups: AssetGroup[],
+  assetCode: string,
+  issuer: string,
+  network: string,
+): string | undefined {
+  return groups
+    .find(
+      (group) =>
+        group.assetCode?.toUpperCase() === assetCode.toUpperCase() &&
+        group.issuer === issuer &&
+        group.network === network,
+    )
+    ?.members.find((member) => member.role === "distributor")?.address;
+}

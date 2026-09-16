@@ -6,6 +6,7 @@ import { useAssetGroups } from "@/hooks/use-asset-groups";
 import { Button } from "@/components/ui/button";
 import { ShortAddress } from "@/components/shared/ShortAddress";
 import { formatXlm } from "@/lib/format";
+import { defaultGroupMemberLabel, ROLE_LABELS } from "@/lib/asset-groups/types";
 import {
   Dialog,
   DialogContent,
@@ -35,7 +36,7 @@ function pickBankCandidate(destinations: DestinationSummary[] | undefined): {
   return { ambiguous: sorted.slice(0, 5) };
 }
 
-function buildGroupUrl(opts: {
+export function saveAssetGroup(opts: {
   assetCode: string;
   issuer: string;
   network: string;
@@ -43,22 +44,38 @@ function buildGroupUrl(opts: {
   homeDomain?: string;
   distribHomeDomain?: string;
   bankAddress?: string;
+}, actions: {
+  createGroup: (entry: { name: string; assetCode: string; issuer: string; network: string }) => string;
+  upsertMember: (groupId: string, member: { address: string; role: "issuer" | "distributor" | "bank"; label?: string; homeDomain?: string }) => void;
 }) {
-  const params = new URLSearchParams({
-    autoCreate: "1",
-    name: `${opts.assetCode} Investigation`,
+  const id = actions.createGroup({
+    name: `${opts.assetCode} Asset`,
     assetCode: opts.assetCode,
     issuer: opts.issuer,
     network: opts.network,
   });
-  if (opts.distribAddress) params.set("distrib", opts.distribAddress);
-  if (opts.homeDomain) params.set("issuerHomeDomain", opts.homeDomain);
-  if (opts.distribHomeDomain) params.set("distribHomeDomain", opts.distribHomeDomain);
-  if (opts.bankAddress) {
-    params.set("addAddress", opts.bankAddress);
-    params.set("addRole", "bank");
+  actions.upsertMember(id, {
+    address: opts.issuer,
+    role: "issuer",
+    label: defaultGroupMemberLabel("issuer", opts.assetCode),
+    homeDomain: opts.homeDomain,
+  });
+  if (opts.distribAddress) {
+    actions.upsertMember(id, {
+      address: opts.distribAddress,
+      role: "distributor",
+      label: defaultGroupMemberLabel("distributor", opts.assetCode),
+      homeDomain: opts.distribHomeDomain,
+    });
   }
-  return `/groups?${params.toString()}`;
+  if (opts.bankAddress) {
+    actions.upsertMember(id, {
+      address: opts.bankAddress,
+      role: "bank",
+      label: defaultGroupMemberLabel("bank", opts.assetCode),
+    });
+  }
+  return id;
 }
 
 interface SaveToGroupButtonProps {
@@ -94,7 +111,7 @@ export function SaveToGroupButton({
   topDestinations,
   size = "default",
 }: SaveToGroupButtonProps) {
-  const { groups } = useAssetGroups();
+  const { groups, createGroup, upsertMember } = useAssetGroups();
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [selectedBank, setSelectedBank] = useState<string | null>(null);
 
@@ -109,49 +126,87 @@ export function SaveToGroupButton({
     : undefined;
 
   const sizeCls = SIZE_CLASSES[size];
+  const save = (bankAddress?: string) => {
+    saveAssetGroup(
+      { assetCode, issuer, network, distribAddress, homeDomain, distribHomeDomain, bankAddress },
+      { createGroup, upsertMember },
+    );
+    setConfirmOpen(false);
+  };
 
   if (existingGroup && (!targetAddress || alreadyMember)) {
     return (
-      <a
-        href={`/groups?open=${existingGroup.id}`}
-        target="_blank"
-        rel="noopener noreferrer"
-        title={targetAddress ? "Already in group" : undefined}
-        className={`inline-flex items-center rounded border border-green-400/40 bg-green-400/10 font-medium text-green-400 hover:bg-green-400/20 transition-colors whitespace-nowrap ${sizeCls}`}
-      >
-        <Layers className="h-3.5 w-3.5" />
-        {targetAddress ? "✓ in group" : "Open Group"}
-      </a>
+      <>
+        <Button
+          type="button"
+          size="sm"
+          variant="ghost"
+          onClick={() => setConfirmOpen(true)}
+          title={targetAddress ? "Show group summary" : "Show group summary"}
+          className={`inline-flex items-center rounded border border-green-400/40 bg-green-400/10 font-medium text-green-400 hover:bg-green-400/20 transition-colors whitespace-nowrap ${sizeCls}`}
+        >
+          <Layers className="h-3.5 w-3.5" />
+          {targetAddress ? "✓ in group" : "✓ saved"}
+        </Button>
+        <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>{existingGroup.name}</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-2 text-sm">
+              <p className="text-muted-foreground">
+                {existingGroup.assetCode ?? "No asset code"} · {existingGroup.network} · {existingGroup.members.length} members
+              </p>
+              {existingGroup.issuer && (
+                <div className="flex items-center justify-between gap-3 rounded border px-3 py-2 text-xs">
+                  <span className="text-muted-foreground">Issuer</span>
+                  <ShortAddress address={existingGroup.issuer} network={existingGroup.network} />
+                </div>
+              )}
+              <div className="space-y-1 pt-1">
+                {existingGroup.members.map((member) => (
+                  <div key={member.id} className="rounded border px-3 py-2 text-xs">
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="text-muted-foreground">
+                        {ROLE_LABELS[member.role]}{member.label ? ` · ${member.label}` : ""}
+                      </span>
+                      <ShortAddress address={member.address} network={existingGroup.network} />
+                    </div>
+                    {member.homeDomain && (
+                      <p className="mt-1 text-muted-foreground">{member.homeDomain}</p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+            <DialogFooter>
+              <Button asChild>
+                <a href={`/groups?open=${existingGroup.id}`}>Open Group</a>
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      </>
     );
   }
 
   if (targetAddress) {
-    const params = new URLSearchParams({
-      autoCreate: "1",
-      name: `${assetCode} Investigation`,
-      assetCode,
-      issuer,
-      network,
-      addAddress: targetAddress,
-      addRole: "bank",
-    });
     return (
-      <a
-        href={`/groups?${params.toString()}`}
-        target="_blank"
-        rel="noopener noreferrer"
+      <Button
+        type="button"
+        size="sm"
+        variant="ghost"
+        onClick={() => save(targetAddress)}
         title="Add to group as Bank"
         className={`inline-flex items-center rounded border border-purple-400/40 bg-purple-400/10 font-medium text-purple-400 hover:bg-purple-400/20 transition-colors whitespace-nowrap ${sizeCls}`}
       >
         <Layers className="h-3.5 w-3.5" />
         + Bank
-      </a>
+      </Button>
     );
   }
 
   const { auto, ambiguous } = pickBankCandidate(topDestinations);
-
-  const baseUrlOpts = { assetCode, issuer, network, distribAddress, homeDomain, distribHomeDomain };
 
   if (ambiguous.length > 1) {
     return (
@@ -207,32 +262,28 @@ export function SaveToGroupButton({
               ))}
             </div>
             <DialogFooter className="gap-2 sm:gap-2">
-              <a
-                href={buildGroupUrl(baseUrlOpts)}
-                target="_blank"
-                rel="noopener noreferrer"
-                onClick={() => setConfirmOpen(false)}
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() => save()}
                 className="inline-flex items-center justify-center rounded border border-border px-3 py-1.5 text-xs font-medium hover:bg-muted/40"
               >
                 Skip bank
-              </a>
-              <a
-                href={buildGroupUrl({
-                  ...baseUrlOpts,
-                  bankAddress: selectedBank ?? undefined,
-                })}
-                target="_blank"
-                rel="noopener noreferrer"
-                onClick={() => selectedBank && setConfirmOpen(false)}
-                aria-disabled={!selectedBank}
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                onClick={() => selectedBank && save(selectedBank)}
+                disabled={!selectedBank}
                 className={`inline-flex items-center justify-center rounded px-3 py-1.5 text-xs font-medium ${
                   selectedBank
                     ? "bg-purple-500 text-white hover:bg-purple-600"
-                    : "pointer-events-none bg-muted text-muted-foreground"
+                    : "bg-muted text-muted-foreground"
                 }`}
               >
                 Save with bank
-              </a>
+              </Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>
@@ -241,15 +292,16 @@ export function SaveToGroupButton({
   }
 
   return (
-    <a
-      href={buildGroupUrl({ ...baseUrlOpts, bankAddress: auto?.address })}
-      target="_blank"
-      rel="noopener noreferrer"
+    <Button
+      type="button"
+      size="sm"
+      variant="ghost"
+      onClick={() => save(auto?.address)}
       title="Save issuer + distrib to an Asset Group"
       className={`inline-flex items-center rounded border border-purple-400/40 bg-purple-400/10 font-medium text-purple-400 hover:bg-purple-400/20 transition-colors whitespace-nowrap ${sizeCls}`}
     >
       <Layers className="h-3.5 w-3.5" />
       Save to Group
-    </a>
+    </Button>
   );
 }

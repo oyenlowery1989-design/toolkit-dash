@@ -1,6 +1,6 @@
 ## Asset Sales (single input path — single/bulk tab split removed)
 - Route `app/(analysis)/asset-sales/page.tsx` renders `components/asset-sales/AssetSalesTab.tsx` directly (no `<Tabs>`/Panel wrapper — the single-vs-bulk tab distinction was merged away since both always shared the same `fetchAssetXlmProceeds` engine and render components)
-- One textarea, one `CODE:ISSUER` (or Lobstr URL) per line — 1 line or many, same input path. Distribution address is auto-inferred (`inferDistribLite`) by default
+- One textarea, one `CODE:ISSUER` (or Lobstr URL) per line — 1 line or many, same input path. A matching Asset Group's `distributor` member is used first; otherwise distribution is auto-inferred from issuer payments (`inferDistribLite`)
 - **Manual override**: when exactly 1 pair is parsed, an optional "Seller Accounts (override, optional)" textarea appears — paste specific addresses to skip auto-infer entirely (covers the old single-tab manual-entry case and the auto-infer-fails fallback). Hidden when 2+ assets are entered — always auto-infer per asset in that case
 - Results render row-count-aware: 1 result renders wide (large asset code, full-width non-truncated `ShortAddress` rows) matching the old single-tab look; 2+ results render as compact summary rows (fixed-width columns) — same `rows.map` block, gated on `rows.length === 1`
 - `app/(analysis)/bulk-asset-sales/page.tsx` is now a redirect to plain `/asset-sales` (old bookmarks/dashboard card still work)
