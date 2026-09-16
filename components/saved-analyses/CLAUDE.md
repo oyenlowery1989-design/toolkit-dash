@@ -2,9 +2,13 @@
 - Hook: `hooks/use-saved-analyses.ts` — DB-backed, stores `SavedAnalysis` (id, name, assetCode, issuer, distribAddresses, network, timestamp, result, notes?, tags?)
 - `result` is the full `AssetProceedsResult` — all XLM proceeds/sold/outgoing/onHand + topDestinations
 - **Auto-save**: Asset Sales' Bulk tab calls `saveAnalysis()` automatically on each row completion (no manual button needed); Single Asset tab still has manual "Save Analysis" button; Asset Lookup's Distribution Sales feature also auto-saves (added so all three proceeds-producing surfaces share one history)
-- `SavedAnalysesPanel` has two views toggled by header buttons:
-  - **Table view** (default): sortable by any column (asset, XLM proceeds, asset sold, outgoing, on hand, saved date); click header to sort asc/desc
-  - **Cards view**: expandable cards with tags, notes, re-run button, top destinations table
+- `SavedAnalysesPanel` has three tabs, keeping the page compact. Inactive audit tabs are deferred until opened, so the initial Analyses view does not calculate their detail tables:
+  - **Analyses**: aggregate stats, search, and the saved-analysis list in either table or cards view.
+  - **Ad payments**: configured recipient, compliance status, and payment totals. It uses the latest snapshot per asset; its tab counter and the compact status strip show assets needing review.
+  - **Connections**: snapshot comparison and shared cross-asset destinations; it explains when fewer than two analyses are saved.
+- The Analyses tab has two views toggled by header buttons:
+  - **Table view**: sortable by any column (asset, XLM proceeds, asset sold, outgoing, on hand, saved date); click header to sort asc/desc
+  - **Cards view** (default): expandable cards with tags, notes, re-run button, top destinations table
 - **Aggregate stats bar**: total XLM proceeds, total outgoing, unique assets, unique issuers, top earner — shown above the list
 - **Compare Snapshots** section (`components/saved-analyses/SnapshotCompare.tsx` + `lib/saved-analyses/diff.ts`): groups saved analyses by `assetCode:issuer:network`, shown only for assets with 2+ snapshots. Pick a baseline (older) and compare (newer) snapshot — renders field deltas (XLM proceeds/asset sold/outgoing/on-hand, before → after with signed delta) plus a destinations-diff table (`new`/`increased`/`decreased`/`dropped` per address, sorted by `|delta|` desc). "dropped" means the address fell out of the top-50 `topDestinations` cap, not proven-empty — this is stated in the UI. Collapsed by default, next to Cross-Asset Destinations
 - **Cross-Asset Destinations** section: aggregates `topDestinations` across ALL filtered analyses, highlights addresses that appear in multiple assets with a yellow "shared" badge — reveals shared banks/exchanges across projects; collapsed by default

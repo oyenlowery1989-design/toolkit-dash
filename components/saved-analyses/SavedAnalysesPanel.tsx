@@ -37,6 +37,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useSavedAnalyses } from "@/hooks/use-saved-analyses";
 import { ADDRESS_COLORS, useAddressBook } from "@/hooks/use-address-book";
 import type { SavedAnalysis } from "@/hooks/use-saved-analyses";
@@ -850,7 +851,7 @@ function CrossAssetDestinations({ analyses }: { analyses: SavedAnalysis[] }) {
   );
 }
 
-function AdPaymentsSection({ analyses }: { analyses: SavedAnalysis[] }) {
+export function AdPaymentsSection({ analyses }: { analyses: SavedAnalysis[] }) {
   const { settings, updateSettings } = useSettings();
   const { saveAnalysis } = useSavedAnalyses();
   const { entries } = useAddressBook();
@@ -1045,9 +1046,11 @@ const PAGE_SIZE = 10;
 
 export function SavedAnalysesPanel() {
   const { analyses, isLoaded, error } = useSavedAnalyses();
+  const { settings } = useSettings();
   const { price: xlmUsdPrice, ensure: ensureXlmUsdPrice } = useXlmUsdPrice();
   const [query, setQuery] = useState("");
   const [view, setView] = useState<"cards" | "table">("cards");
+  const [section, setSection] = useState("analyses");
   const [sort, setSort] = useState<Sort>({ field: "timestamp", dir: "desc" });
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   const legacyAnalyses = useMemo(
@@ -1063,6 +1066,12 @@ export function SavedAnalysesPanel() {
     }),
     [analyses],
   );
+  const adPaymentCounts = useMemo(() => {
+    const counts = { compliant: 0, unpaid: 0, underpaid: 0, unknown: 0 };
+    for (const analysis of latestPerGroup(analyses)) counts[classifyAdPayment(analysis.result, settings.adPaymentRecipient).status]++;
+    return counts;
+  }, [analyses, settings.adPaymentRecipient]);
+  const adPaymentsToReview = adPaymentCounts.unpaid + adPaymentCounts.underpaid + adPaymentCounts.unknown;
 
   useEffect(() => {
     ensureXlmUsdPrice();
@@ -1112,7 +1121,7 @@ export function SavedAnalysesPanel() {
           </p>
           {isLoaded && <p className="mt-1 text-xs text-muted-foreground">{analyses.length} saved snapshots · {latestPerGroup(analyses).length} assets · History is kept until you delete it.</p>}
         </div>
-        {analyses.length > 0 && (
+        {section === "analyses" && analyses.length > 0 && (
           <div className="flex items-center gap-2 shrink-0">
             <Select
               value={`${sort.field}:${sort.dir}`}
@@ -1148,13 +1157,28 @@ export function SavedAnalysesPanel() {
         )}
       </div>
 
-      {/* Aggregate stats — latest snapshot per asset, so re-run history doesn't inflate totals */}
-      <AdPaymentsSection analyses={analyses} />
+      {isLoaded && analyses.length > 0 && (
+        <div aria-label="Ad payment status summary" className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
+          <span>{latestPerGroup(analyses).length} assets</span>
+          <span>{adPaymentCounts.compliant} compliant</span>
+          <span>{adPaymentCounts.unpaid} unpaid</span>
+          <span>{adPaymentCounts.underpaid} underpaid</span>
+          {adPaymentCounts.unknown > 0 && <span>{adPaymentCounts.unknown} unknown</span>}
+        </div>
+      )}
 
-      <AggregateStats analyses={latestPerGroup(legacyAnalyses)} xlmUsdPrice={xlmUsdPrice} />
+      <Tabs value={section} onValueChange={setSection} className="space-y-4">
+        <TabsList aria-label="Saved analyses sections">
+          <TabsTrigger value="analyses">Analyses ({latestPerGroup(analyses).length})</TabsTrigger>
+          <TabsTrigger value="ad-payments">Ad payments ({adPaymentsToReview})</TabsTrigger>
+          <TabsTrigger value="connections">Connections</TabsTrigger>
+        </TabsList>
 
-      {/* Search */}
-      {legacyAnalyses.length > 0 && (
+        <TabsContent value="analyses" className="space-y-6">
+          <AggregateStats analyses={latestPerGroup(legacyAnalyses)} xlmUsdPrice={xlmUsdPrice} />
+
+          {/* Search */}
+          {legacyAnalyses.length > 0 && (
         <div className="relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
           <input
@@ -1164,16 +1188,10 @@ export function SavedAnalysesPanel() {
             onChange={(e) => setQuery(e.target.value)}
           />
         </div>
-      )}
+          )}
 
-      {/* Snapshot compare */}
-      {legacyAnalyses.length > 1 && <SnapshotCompare analyses={filtered} />}
-
-      {/* Cross-asset destinations — latest snapshot per asset, same double-counting fix as above */}
-      {legacyAnalyses.length > 1 && <CrossAssetDestinations analyses={latestPerGroup(filtered)} />}
-
-      {/* Main content */}
-      {!isLoaded ? (
+          {/* Main content */}
+          {!isLoaded ? (
         <div className="flex items-center gap-2 text-sm text-muted-foreground py-12 justify-center">
           <Loader2 className="h-4 w-4 animate-spin" />
           Loading saved analyses…
@@ -1232,7 +1250,28 @@ export function SavedAnalysesPanel() {
             </div>
           )}
         </>
-      )}
+          )}
+        </TabsContent>
+
+        <TabsContent value="ad-payments" className="space-y-6">
+          {section === "ad-payments" && <AdPaymentsSection analyses={analyses} />}
+        </TabsContent>
+
+        <TabsContent value="connections" className="space-y-6">
+          {section === "connections" && (legacyAnalyses.length > 1 ? (
+            <>
+              <SnapshotCompare analyses={filtered} />
+              <CrossAssetDestinations analyses={latestPerGroup(filtered)} />
+            </>
+          ) : (
+            <Card>
+              <CardContent className="py-8 text-center text-sm text-muted-foreground">
+                Save at least two analyses to compare snapshots and find shared destinations.
+              </CardContent>
+            </Card>
+          ))}
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }

@@ -18,7 +18,7 @@ vi.mock("@/components/shared/proceeds/ProceedsDestinationsTable", () => ({ Proce
 vi.mock("@/components/shared/proceeds/WindowedSalesStats", () => ({ WindowedSalesStats: () => null }));
 vi.mock("@/components/saved-analyses/SnapshotCompare", () => ({ SnapshotCompare: () => null }));
 
-import { SavedAnalysesPanel, rerunAnalysis } from "@/components/saved-analyses/SavedAnalysesPanel";
+import { AdPaymentsSection, SavedAnalysesPanel, rerunAnalysis } from "@/components/saved-analyses/SavedAnalysesPanel";
 
 const RECIPIENT = "GAMMBVZRMZE33O46HKLXOTOV5GOL5Y5RRC4SCMR53SSNQJXLJ6LNVCNJ";
 const OTHER = "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5";
@@ -27,55 +27,65 @@ function result(overrides: Partial<AssetProceedsResult> = {}): AssetProceedsResu
 function analysis(overrides: Partial<SavedAnalysis> = {}): SavedAnalysis { return { id: "id", name: "snapshot", assetCode: "FOO", issuer: "GISSUER", distribAddresses: ["GDIST"], network: "public", timestamp: 1, result: result(), ...overrides }; }
 function settings(recipient = RECIPIENT): Settings { return { network: "public", localHorizonUrl: "http://localhost:8000", workerThreads: 4, notifications: false, adPaymentRecipient: recipient }; }
 function panelMarkup(analyses: SavedAnalysis[], recipient = RECIPIENT): string { mocks.analyses = analyses; mocks.settings = settings(recipient); vi.stubGlobal("React", React); return renderToStaticMarkup(React.createElement(SavedAnalysesPanel)); }
+function adPaymentsMarkup(analyses: SavedAnalysis[], recipient = RECIPIENT): string { mocks.analyses = analyses; mocks.settings = settings(recipient); vi.stubGlobal("React", React); return renderToStaticMarkup(React.createElement(AdPaymentsSection, { analyses })); }
 
 describe("SavedAnalysesPanel ad payments", () => {
+  it("shows counters but defers inactive tab content", () => {
+    const html = panelMarkup([analysis()]);
+    expect(html).toContain('aria-label="Saved analyses sections"');
+    expect(html).toContain("Analyses (1)");
+    expect(html).toContain("Ad payments (1)");
+    expect(html).toContain(">Connections<");
+    expect(html).not.toContain('aria-label="Ad payment results"');
+  });
+
   it("renders all classifier statuses from real snapshot results", () => {
-    const html = panelMarkup([analysis({ id: "compliant", assetCode: "COMPLIANT", result: result({ outgoingLedger: [ledger()] }) }), analysis({ id: "underpaid", assetCode: "UNDERPAID", result: result({ outgoingLedger: [ledger({ amountXlm: 1 })] }) }), analysis({ id: "unpaid", assetCode: "UNPAID" }), analysis({ id: "unknown", assetCode: "UNKNOWN", result: null as unknown as AssetProceedsResult })]);
+    const html = adPaymentsMarkup([analysis({ id: "compliant", assetCode: "COMPLIANT", result: result({ outgoingLedger: [ledger()] }) }), analysis({ id: "underpaid", assetCode: "UNDERPAID", result: result({ outgoingLedger: [ledger({ amountXlm: 1 })] }) }), analysis({ id: "unpaid", assetCode: "UNPAID" }), analysis({ id: "unknown", assetCode: "UNKNOWN", result: null as unknown as AssetProceedsResult })]);
     for (const status of ["Compliant", "Underpaid", "Unpaid", "Unknown"]) expect(html).toContain(status);
   });
   it("orders latest assets by payment status", () => {
-    const html = panelMarkup([
+    const html = adPaymentsMarkup([
       analysis({ id: "unknown", assetCode: "UNKNOWN", result: null as unknown as AssetProceedsResult }),
       analysis({ id: "underpaid", assetCode: "UNDERPAID", result: result({ outgoingLedger: [ledger({ amountXlm: 1 })] }) }),
       analysis({ id: "unpaid", assetCode: "UNPAID" }),
       analysis({ id: "compliant", assetCode: "COMPLIANT", result: result({ outgoingLedger: [ledger()] }) }),
     ]);
-    expect(html.indexOf("COMPLIANT")).toBeLessThan(html.indexOf("UNPAID"));
-    expect(html.indexOf("UNPAID")).toBeLessThan(html.indexOf("UNDERPAID"));
-    expect(html.indexOf("UNDERPAID")).toBeLessThan(html.indexOf("UNKNOWN"));
+    const rows = html.split('aria-label="Ad payment assets"')[1].split("</section>")[0];
+    expect(rows.indexOf("COMPLIANT")).toBeLessThan(rows.indexOf("UNPAID"));
+    expect(rows.indexOf("UNPAID")).toBeLessThan(rows.indexOf("UNDERPAID"));
+    expect(rows.indexOf("UNDERPAID")).toBeLessThan(rows.indexOf("UNKNOWN"));
   });
   it("uses only the newest snapshot per asset identity", () => {
-    const html = panelMarkup([analysis({ id: "old", name: "old paid", timestamp: 1, result: result({ outgoingLedger: [ledger()] }) }), analysis({ id: "new", name: "new unpaid", timestamp: 2, result: result() })]);
+    const html = adPaymentsMarkup([analysis({ id: "old", name: "old paid", timestamp: 1, result: result({ outgoingLedger: [ledger()] }) }), analysis({ id: "new", name: "new unpaid", timestamp: 2, result: result() })]);
     expect(html).toContain("Unpaid (1)"); expect(html).toContain("Compliant (0)");
     const rows = html.split('aria-label="Ad payment assets"')[1].split("</section>")[0];
     expect(rows).toContain("Unpaid"); expect(rows).not.toContain("Compliant");
   });
   it("keeps malformed results visible as Unknown and gates rows without a configured recipient", () => {
-    expect(panelMarkup([analysis({ result: null as unknown as AssetProceedsResult })])).toContain("Unknown");
-    const html = panelMarkup([analysis({ result: result({ outgoingLedger: [ledger({ to: OTHER })] }) })], "not-a-recipient");
+    expect(adPaymentsMarkup([analysis({ result: null as unknown as AssetProceedsResult })])).toContain("Unknown");
+    const html = adPaymentsMarkup([analysis({ result: result({ outgoingLedger: [ledger({ to: OTHER })] }) })], "not-a-recipient");
     expect(html).toContain("Configure a valid recipient to classify ad payments."); expect(html).not.toContain("Unpaid");
   });
-  it("shows the current persisted recipient in the form", () => { expect(panelMarkup([], RECIPIENT)).toContain(`value="${RECIPIENT}"`); });
+  it("shows the current persisted recipient in the form", () => { expect(adPaymentsMarkup([], RECIPIENT)).toContain(`value="${RECIPIENT}"`); });
   it("links a matching Address Book contact and keeps its address after the contact is removed", () => {
     mocks.entries = [{ publicKey: RECIPIENT, label: "Ad manager", color: "purple", timestamp: 1 }];
-    const linked = panelMarkup([analysis()]);
+    const linked = adPaymentsMarkup([analysis()]);
     expect(linked).toContain("Linked to Ad manager");
     expect(linked).toContain("bg-purple-400");
     expect(linked).toContain('href="/address-book"');
     mocks.entries = [];
-    const removed = panelMarkup([analysis()]);
+    const removed = adPaymentsMarkup([analysis()]);
     expect(removed).toContain("Its saved address is still used.");
     expect(removed).toContain(`value="${RECIPIENT}"`);
     expect(removed).toContain("Unpaid (1)");
   });
   it("counts latest snapshots once and shows network-specific totals excluding unknown results", () => {
-    const html = panelMarkup([
+    const html = adPaymentsMarkup([
       analysis({ id: "old", timestamp: 1, result: result({ outgoingLedger: [ledger({ amountXlm: 90 })] }) }),
       analysis({ id: "new", timestamp: 2, result: result({ outgoingLedger: [ledger({ amountXlm: 10 })] }) }),
       analysis({ id: "unknown", assetCode: "UNKNOWN", result: null as unknown as AssetProceedsResult }),
       analysis({ id: "testnet", network: "testnet", result: result({ outgoingLedger: [ledger({ amountXlm: 40 })] }) }),
     ]);
-    expect(html).toContain("4 saved snapshots · 3 assets");
     expect(html).toContain("All (3)");
     expect(html).toContain("Underpaid (1)");
     expect(html).toContain("Unknown (1)");
