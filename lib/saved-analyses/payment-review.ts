@@ -15,6 +15,13 @@ export interface PaymentReviewItem extends PaymentReviewAnalysis {
   sharedEvidence: boolean;
 }
 
+export function compactPaymentReview(review: ReturnType<typeof summarizeAdPayments>) {
+  return {
+    uniquePaidXlm: review.uniquePaidXlm,
+    items: review.items.map(({ result: _result, ...item }) => item),
+  };
+}
+
 export function summarizeAdPayments(analyses: PaymentReviewAnalysis[], recipient: string): {
   items: PaymentReviewItem[];
   uniquePaidXlm: number;
