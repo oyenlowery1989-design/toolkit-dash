@@ -74,6 +74,11 @@ export const menuItems: MenuEntry[] = [
     icon: Coins,
   },
   {
+    title: "Ad Payments",
+    href: "/ad-payments",
+    icon: Megaphone,
+  },
+  {
     title: "Account Investigator",
     href: "/address-investigator",
     icon: UserSearch,

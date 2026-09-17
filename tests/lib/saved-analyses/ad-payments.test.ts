@@ -70,4 +70,11 @@ describe("classifyAdPayment", () => {
     expect(classifyAdPayment(result({ topDestinations: [{ address: RECIPIENT, totalXlm: 100, count: 1 }] }), RECIPIENT).status).toBe("unpaid");
     expect(classifyAdPayment(result({ outgoingLedger: [entry({ to: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5" })] }), RECIPIENT).status).toBe("unpaid");
   });
+
+  it("does not count a path payment's XLM source spend as an XLM recipient settlement", () => {
+    const classification = classifyAdPayment(result({
+      outgoingLedger: [entry({ category: "path_native_out", amountXlm: 25 })],
+    }), RECIPIENT);
+    expect(classification).toMatchObject({ status: "unpaid", paidXlm: 0, shortfallXlm: 25 });
+  });
 });

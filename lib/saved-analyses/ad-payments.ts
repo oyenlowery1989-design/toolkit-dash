@@ -11,7 +11,9 @@ export interface AdPaymentClassification {
   reason?: string;
 }
 
-const EXCLUDED_CATEGORIES = new Set(["fee", "dex_sale", "path_sale"]);
+// A path payment records its XLM source amount, not necessarily the recipient's
+// received asset. It is spending evidence, never proof of an XLM settlement.
+const EXCLUDED_CATEGORIES = new Set(["fee", "dex_sale", "path_sale", "path_native_out"]);
 const CATEGORIES = new Set<ProceedsLedgerEntry["category"]>([
   "dex_sale", "path_sale", "payment", "create_account", "path_native_out", "account_merge", "fee",
 ]);
