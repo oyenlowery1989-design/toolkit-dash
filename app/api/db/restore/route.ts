@@ -1,3 +1,4 @@
+import { readAllSupabaseRows } from "@/lib/supabase-pagination";
 /**
  * POST /api/db/restore
  * Restores data from Supabase into local SQLite (or vice versa).
@@ -10,7 +11,7 @@
  */
 import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
-import { getSupabase, isSupabaseConfigured, requireAuth } from "@/lib/supabase-server";
+import { getSupabase, isSupabaseConfigured, isSupabaseOnly, requireAuth } from "@/lib/supabase-server";
 import { encryptImportedStoredSecret } from "@/lib/secret-storage";
 
 type SupabaseRead = { data: Record<string, unknown>[] | null; error?: { message: string } | null };
@@ -26,6 +27,11 @@ function unwrapReads(results: SupabaseRead[], tables: string[]): Record<string, 
 export async function POST(req: NextRequest) {
   const auth = await requireAuth(req);
   if (!auth.ok) return auth.response;
+
+  // This endpoint always touches the single-operator SQLite database.
+  if (isSupabaseOnly()) {
+    return NextResponse.json({ error: "Restore requires single-operator SQLite mode" }, { status: 403 });
+  }
 
   let source: string;
   try { ({ source } = await req.json()); } catch { return NextResponse.json({ error: "Invalid JSON" }, { status: 400 }); }
@@ -48,23 +54,23 @@ export async function POST(req: NextRequest) {
       "persons", "creator_children", "bulk_scan_state", "tiered_reward_configs",
     ];
     const parentReads = await Promise.all([
-      sb.from("address_book").select("*").eq("user_id", userId),
-      sb.from("known_intermediaries").select("*").eq("user_id", userId),
-      sb.from("known_creators").select("*").eq("user_id", userId),
-      sb.from("saved_analyses").select("*").eq("user_id", userId),
-      sb.from("bulk_recipients").select("*").eq("user_id", userId),
-      sb.from("proceeds_presets").select("*").eq("user_id", userId),
-      sb.from("saved_searches").select("*").eq("user_id", userId),
-      sb.from("bulk_run_history").select("*").eq("user_id", userId),
-      sb.from("asset_groups").select("*").eq("user_id", userId),
-      sb.from("wallet_folders").select("*").eq("user_id", userId),
-      sb.from("wallets").select("*").eq("user_id", userId),
-      sb.from("app_state").select("*").eq("user_id", userId),
-      sb.from("auto_send_groups").select("*").eq("user_id", userId),
-      sb.from("persons").select("*").eq("user_id", userId),
-      sb.from("creator_children").select("*").eq("user_id", userId),
-      sb.from("bulk_scan_state").select("*").eq("user_id", userId),
-      sb.from("tiered_reward_configs").select("*").eq("user_id", userId),
+      readAllSupabaseRows("address_book", (q) => q.eq("user_id", userId)),
+      readAllSupabaseRows("known_intermediaries", (q) => q.eq("user_id", userId)),
+      readAllSupabaseRows("known_creators", (q) => q.eq("user_id", userId)),
+      readAllSupabaseRows("saved_analyses", (q) => q.eq("user_id", userId)),
+      readAllSupabaseRows("bulk_recipients", (q) => q.eq("user_id", userId)),
+      readAllSupabaseRows("proceeds_presets", (q) => q.eq("user_id", userId)),
+      readAllSupabaseRows("saved_searches", (q) => q.eq("user_id", userId)),
+      readAllSupabaseRows("bulk_run_history", (q) => q.eq("user_id", userId)),
+      readAllSupabaseRows("asset_groups", (q) => q.eq("user_id", userId)),
+      readAllSupabaseRows("wallet_folders", (q) => q.eq("user_id", userId)),
+      readAllSupabaseRows("wallets", (q) => q.eq("user_id", userId)),
+      readAllSupabaseRows("app_state", (q) => q.eq("user_id", userId)),
+      readAllSupabaseRows("auto_send_groups", (q) => q.eq("user_id", userId)),
+      readAllSupabaseRows("persons", (q) => q.eq("user_id", userId)),
+      readAllSupabaseRows("creator_children", (q) => q.eq("user_id", userId)),
+      readAllSupabaseRows("bulk_scan_state", (q) => q.eq("user_id", userId)),
+      readAllSupabaseRows("tiered_reward_configs", (q) => q.eq("user_id", userId)),
     ]);
     const [
       addressBook, knownIntermediaries, knownCreators, savedAnalyses, bulkRecipients,
@@ -83,25 +89,25 @@ export async function POST(req: NextRequest) {
     ];
     const childReads = await Promise.all([
       assetGroupIds.length > 0
-        ? sb.from("asset_group_members").select("*").in("group_id", assetGroupIds)
+        ? readAllSupabaseRows("asset_group_members", (q) => q.in("group_id", assetGroupIds))
         : Promise.resolve({ data: [], error: null }),
       autoSendGroupIds.length > 0
-        ? sb.from("auto_send_destinations").select("*").in("group_id", autoSendGroupIds)
+        ? readAllSupabaseRows("auto_send_destinations", (q) => q.in("group_id", autoSendGroupIds))
         : Promise.resolve({ data: [], error: null }),
       autoSendGroupIds.length > 0
-        ? sb.from("auto_send_run_log").select("*").in("group_id", autoSendGroupIds)
+        ? readAllSupabaseRows("auto_send_run_log", (q) => q.in("group_id", autoSendGroupIds))
         : Promise.resolve({ data: [], error: null }),
       personIds.length > 0
-        ? sb.from("person_addresses").select("*").in("person_id", personIds)
+        ? readAllSupabaseRows("person_addresses", (q) => q.in("person_id", personIds))
         : Promise.resolve({ data: [], error: null }),
       personIds.length > 0
-        ? sb.from("person_relationships").select("*").in("person_a_id", personIds)
+        ? readAllSupabaseRows("person_relationships", (q) => q.in("person_a_id", personIds))
         : Promise.resolve({ data: [], error: null }),
       tieredConfigIds.length > 0
-        ? sb.from("tiered_reward_tiers").select("*").in("config_id", tieredConfigIds)
+        ? readAllSupabaseRows("tiered_reward_tiers", (q) => q.in("config_id", tieredConfigIds))
         : Promise.resolve({ data: [], error: null }),
       tieredConfigIds.length > 0
-        ? sb.from("tiered_reward_run_log").select("*").in("config_id", tieredConfigIds)
+        ? readAllSupabaseRows("tiered_reward_run_log", (q) => q.in("config_id", tieredConfigIds))
         : Promise.resolve({ data: [], error: null }),
     ]);
     const [
@@ -110,7 +116,7 @@ export async function POST(req: NextRequest) {
     ] = unwrapReads(childReads as SupabaseRead[], childTables);
     const tierIds = (tieredRewardTiers ?? []).map((t) => t.id as string);
     const tieredRewardAssetsRead = tierIds.length > 0
-      ? await sb.from("tiered_reward_assets").select("*").in("tier_id", tierIds)
+      ? await readAllSupabaseRows("tiered_reward_assets", (q) => q.in("tier_id", tierIds))
       : { data: [], error: null };
     const [tieredRewardAssets] = unwrapReads(
       [tieredRewardAssetsRead as SupabaseRead], ["tiered_reward_assets"],

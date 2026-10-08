@@ -1,3 +1,4 @@
+import { encryptStoredSecret } from "@/lib/secret-storage";
 import type { CheckResult, KeyScanNetwork, KeyScanState, KeyScanTailEntry } from "./types";
 import { generateKeypair, checkAccount } from "./engine";
 
@@ -144,7 +145,7 @@ function insertHit(s: KeyScanLoopSingleton, publicKey: string, secretKey: string
     .run(
       crypto.randomUUID(),
       publicKey,
-      secretKey,
+      encryptStoredSecret(secretKey),
       s.network,
       xlm ? parseFloat(xlm) : null,
       JSON.stringify(result.balances),
@@ -158,8 +159,8 @@ const FALLBACK_HITS_PATH = require("path").join(process.cwd(), "key-scan-failed-
 
 function writeFallbackHit(publicKey: string, secretKey: string): void {
   const fs = require("fs") as typeof import("fs");
-  const line = `${new Date().toISOString()} public=${publicKey} secret=${secretKey}\n`;
   try {
+    const line = `${new Date().toISOString()} public=${publicKey} secret=${encryptStoredSecret(secretKey)}\n`;
     fs.appendFileSync(FALLBACK_HITS_PATH, line, { mode: 0o600 });
     fs.chmodSync(FALLBACK_HITS_PATH, 0o600); // appendFileSync's mode only applies on file creation
   } catch (err) {
@@ -249,6 +250,7 @@ function spawnWorkers(s: KeyScanLoopSingleton, fromIndex = 0): void {
 }
 
 export function startKeyScanLoopRun(): void {
+  encryptStoredSecret("scanner-readiness"); // Fail before generating keys when encryption is unavailable.
   const s = getSingleton();
   if (s.running) return;
   s.running = true;

@@ -1,3 +1,5 @@
+import { claimSchedule } from "@/lib/scheduled-jobs";
+import { readAllSupabaseRows } from "@/lib/supabase-pagination";
 /**
  * Auto-Send Group scheduler.
  * Uses node-cron to schedule enabled groups server-side.
@@ -60,25 +62,21 @@ async function loadEnabledGroupsFromSupabase(): Promise<ScheduledGroup[]> {
   const sb = getSupabase();
   if (!sb) return [];
 
-  const { data: groups, error } = await sb
-    .from("auto_send_groups")
-    .select("*")
-    .eq("enabled", 1)
+  const { data: groups } = await readAllSupabaseRows("auto_send_groups", (q) => q
+    .eq("enabled", true)
     .not("interval_minutes", "is", null)
-    .order("created_at", { ascending: true });
+    .order("created_at", { ascending: true }));
 
-  if (error || !groups) {
-    console.error("[auto-send] Failed to load groups from Supabase:", error);
+  if (!groups) {
+    console.error("[auto-send] Failed to load groups from Supabase");
     return [];
   }
 
   const result: ScheduledGroup[] = [];
   for (const g of groups as Record<string, unknown>[]) {
-    const { data: dests } = await sb
-      .from("auto_send_destinations")
-      .select("*")
+    const { data: dests } = await readAllSupabaseRows("auto_send_destinations", (q) => q
       .eq("group_id", g.id)
-      .order("position", { ascending: true });
+      .order("position", { ascending: true }));
     result.push({ ...rowToGroup(g, dests ?? []), userId: (g.user_id as string | undefined) || undefined });
   }
   return result;
@@ -131,7 +129,7 @@ async function writeScheduledLogRows(
       ran_at: ranAt,
       tx_hash: row.txHash ?? null,
     })));
-    if (error) console.error("[auto-send] scheduled run-log insert failed:", error);
+    if (error) throw new Error(`Scheduled run-log insert failed: ${error.message}`);
     return;
   }
 
@@ -152,11 +150,6 @@ async function writeScheduledLogRows(
   insertMany(rows);
 }
 
-function minutesToCronExpression(minutes: number): string {
-  if (minutes < 60) return `*/${Math.max(1, minutes)} * * * *`;
-  const hours = Math.floor(minutes / 60);
-  return `0 */${Math.max(1, hours)} * * *`;
-}
 
 export function startScheduler(): void {
   // Skip on Vercel (serverless — no persistent process)
@@ -182,8 +175,20 @@ async function scheduleAll(): Promise<void> {
   const groups = await loadEnabledGroups();
   for (const group of groups) {
     if (!group.intervalMinutes) continue;
-    const expr = minutesToCronExpression(group.intervalMinutes);
-    const task = cron.schedule(expr, async () => {
+    await claimSchedule("auto-send", group.id, group.intervalMinutes, false);
+    const task = cron.schedule("* * * * *", () => runScheduledGroup(group));
+    tasks.set(group.id, task);
+    console.log(`[auto-send] Scheduled "${group.name}" every ${group.intervalMinutes}m (persistent interval)`);
+  }
+}
+
+/** Call after group changes to reload all schedules. */
+export function refreshScheduler(): void {
+  if (!global._autoSendStarted) return;
+  scheduleAll().catch((err) => console.error("[auto-send] scheduleAll failed:", err));
+}
+
+async function runScheduledGroup(group: ScheduledGroup): Promise<void> {
       if (_runningGroups.has(group.id)) {
         console.warn(`[auto-send] Group "${group.name}" still running — skipping tick`);
         return;
@@ -196,6 +201,7 @@ async function scheduleAll(): Promise<void> {
         const freshGroups = await loadEnabledGroups();
         const fresh = freshGroups.find((g) => g.id === group.id);
         if (fresh) {
+          if (!fresh?.intervalMinutes || !await claimSchedule("auto-send", fresh.id, fresh.intervalMinutes)) return;
           if (fresh.previewOnly) {
             const result = await previewGroup(fresh);
             if (!("error" in result)) {
@@ -218,7 +224,7 @@ async function scheduleAll(): Promise<void> {
               await writeScheduledLogRows(fresh.id, result.walletAddress, result.results, result.ranAt);
             }
             // Track failure/success for alert banner
-            const hasFailed = result.results.some((r) => r.status === "failed");
+            const hasFailed = result.logWriteFailed || result.results.some((r) => r.status === "failed");
             const nonSkipped = result.results.filter((r) => r.status !== "skipped");
             // Require at least one real send — otherwise an all-skipped run (e.g. every
             // destination below its threshold) vacuously satisfies .every() and would
@@ -233,17 +239,13 @@ async function scheduleAll(): Promise<void> {
         }
       } catch (err) {
         console.error(`[auto-send] Group "${group.name}" run failed:`, err);
+        await setGroupLastFailure(group.id, group.userId, Date.now());
       } finally {
         _runningGroups.delete(group.id);
       }
-    });
-    tasks.set(group.id, task);
-    console.log(`[auto-send] Scheduled "${group.name}" every ${group.intervalMinutes}m (${expr})`);
-  }
+
 }
 
-/** Call after group changes to reload all schedules. */
-export function refreshScheduler(): void {
-  if (!global._autoSendStarted) return;
-  scheduleAll().catch((err) => console.error("[auto-send] scheduleAll failed:", err));
+export async function runDueAutoSend(): Promise<void> {
+  for (const group of await loadEnabledGroups()) await runScheduledGroup(group);
 }

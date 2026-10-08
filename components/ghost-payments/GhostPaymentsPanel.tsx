@@ -1,4 +1,6 @@
 "use client";
+import { submitTransaction } from "@/lib/client-transaction";
+
 
 import { useRef, useState, useCallback, useEffect } from "react";
 import { useSearchParams } from "next/navigation";
@@ -799,7 +801,7 @@ export function GhostPaymentsPanel() {
         if (memoText) txBuilder.addMemo(Memo.text(memoText));
         const tx = txBuilder.build();
         tx.sign(keypair);
-        const result = await horizonServer.submitTransaction(tx);
+        const result = await submitTransaction(tx);
         const hash = (result as { hash?: string }).hash ?? "";
         setBatchResults((prev) => {
           const next = [...prev];

@@ -689,6 +689,26 @@ function initDb(): Database.Database {
     }
   }
 
+  db.exec(`CREATE TABLE IF NOT EXISTS mainnet_executions (
+    hash TEXT PRIMARY KEY, source TEXT NOT NULL, stroops INTEGER NOT NULL CHECK(stroops >= 0),
+    status TEXT NOT NULL CHECK(status IN ('reserved','submitted','rejected','unknown')),
+    result_json TEXT, created_at INTEGER NOT NULL
+  ); CREATE INDEX IF NOT EXISTS idx_mainnet_execution_time ON mainnet_executions(created_at);`);
+  db.exec(`
+    INSERT OR IGNORE INTO mainnet_executions(hash, source, stroops, status, created_at)
+    SELECT 'legacy:auto-send:' || id, wallet_address, CAST(ROUND(amount_sent * 10000000) AS INTEGER), 'submitted', ran_at
+    FROM auto_send_run_log WHERE status = 'sent' AND amount_sent > 0
+      AND (tx_hash IS NULL OR NOT EXISTS(SELECT 1 FROM mainnet_executions e WHERE e.hash = auto_send_run_log.tx_hash));
+    INSERT OR IGNORE INTO mainnet_executions(hash, source, stroops, status, created_at)
+    SELECT 'legacy:tiered:' || id, 'legacy', CAST(ROUND(amount_sent * 10000000) AS INTEGER), 'submitted', ran_at
+    FROM tiered_reward_run_log WHERE status = 'sent' AND UPPER(asset_code) = 'XLM' AND amount_sent > 0
+      AND (tx_hash IS NULL OR NOT EXISTS(SELECT 1 FROM mainnet_executions e WHERE e.hash = tiered_reward_run_log.tx_hash));
+  `);
+  db.exec(`CREATE TABLE IF NOT EXISTS scheduled_jobs (
+    kind TEXT NOT NULL, resource_id TEXT NOT NULL, interval_minutes INTEGER NOT NULL,
+    next_run_at INTEGER NOT NULL, PRIMARY KEY(kind, resource_id)
+  );`);
+  db.exec("CREATE TABLE IF NOT EXISTS used_preview_approvals(hash TEXT PRIMARY KEY, consumed_at INTEGER NOT NULL)");
   return db;
 }
 

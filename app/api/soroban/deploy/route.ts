@@ -1,5 +1,7 @@
+import { deploySac } from "@/lib/soroban/sac-server";
+import { validateMainnetRun } from "@/lib/mainnet-safety";
 import { NextRequest, NextResponse } from "next/server";
-import { checkSacDeployed, computeSacAddress, deploySac } from "@/lib/soroban/sac";
+import { checkSacDeployed, computeSacAddress } from "@/lib/soroban/sac";
 type Network = "public" | "testnet" | "futurenet" | "local";
 import { getErrorMessage } from "@/lib/stellar-helpers";
 import { requireAuth } from "@/lib/supabase-server";
@@ -10,6 +12,8 @@ export async function POST(req: NextRequest) {
   const auth = await requireAuth(req);
   if (!auth.ok) return auth.response;
 
+  const errors = validateMainnetRun({ destinations: [], operationCount: 1, xlmAmount: 0 });
+  if (errors.length) return NextResponse.json({ error: errors.join("; ") }, { status: 403 });
   try {
     const { assetCode, issuer, secretKey, network } = await req.json();
     if (!assetCode || !secretKey || !network) {

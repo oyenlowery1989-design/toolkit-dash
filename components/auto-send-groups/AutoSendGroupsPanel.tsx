@@ -90,20 +90,7 @@ function intervalLabel(minutes: number | null): string {
   return m > 0 ? `Every ${h}h ${m}m` : `Every ${h}h`;
 }
 
-function nextRunLabel(lastRunAt: number | undefined, intervalMinutes: number | null): string | null {
-  if (!intervalMinutes) return null;
-  if (!lastRunAt) return "pending";
-  const nextAt = lastRunAt + intervalMinutes * 60000;
-  const diff = nextAt - Date.now();
-  if (diff <= 0) return "due now";
-  const totalSec = Math.ceil(diff / 1000);
-  if (totalSec < 120) return `next in ${totalSec}s`;
-  const min = Math.ceil(diff / 60000);
-  if (min < 60) return `next in ${min}m`;
-  const h = Math.floor(min / 60);
-  const m = min % 60;
-  return m > 0 ? `next in ${h}h ${m}m` : `next in ${h}h`;
-}
+
 
 
 function expertTxUrl(network: string, txHash: string): string {
@@ -788,7 +775,7 @@ function GroupCard({ groupId, runAllStatus }: { groupId: string; runAllStatus?: 
   const totalPct = destinations.filter((d) => !d.isRemainder).reduce((sum, d) => sum + d.percentage, 0);
   const hasRemainder = destinations.some((d) => d.isRemainder);
   const overBudget = totalPct > 100;
-  const nextRun = nextRunLabel(lastRun?.ranAt, group.intervalMinutes);
+  const nextRun = group.intervalMinutes ? "Scheduled interval; checked every minute" : null;
 
   async function handleCheck() {
     setChecking(true);
@@ -1547,7 +1534,7 @@ export function AutoSendGroupsPanel() {
     waitForAuth().then(() =>
       fetch("/api/auto-send/scheduler-status", { headers: authHeaders() })
         .then((r) => r.json())
-        .then((d: { serverless: boolean }) => { if (d.serverless) setIsServerless(true); })
+        .then((d: { serverless: boolean }) => { if (d.serverless && !(d as { externalSchedulerConfigured?: boolean }).externalSchedulerConfigured) setIsServerless(true); })
         .catch(() => {})
     );
   }, []);
@@ -1605,7 +1592,7 @@ export function AutoSendGroupsPanel() {
       {isServerless && (
         <div className="flex items-center gap-2 px-4 py-2.5 rounded-lg bg-yellow-500/10 border border-yellow-500/20 text-xs text-yellow-400">
           <AlertTriangle size={12} className="flex-shrink-0" />
-          <span>Running on a serverless platform — scheduled auto-sends are disabled. Use manual &quot;Run Now&quot; instead.</span>
+          <span>Running on a serverless platform — configure the authenticated external scheduler to enable scheduled auto-sends. Use manual &quot;Run Now&quot; instead.</span>
         </div>
       )}
       <div className="flex items-center justify-between">

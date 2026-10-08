@@ -1,3 +1,4 @@
+import { submitTransaction } from "@/lib/client-transaction";
 // lib/trustline-manager/index.ts
 //
 // Core logic for adding and removing trustlines on Stellar accounts.
@@ -95,7 +96,7 @@ export async function addTrustline(
   tx.sign(keypair);
 
   onLog?.(`Submitting transaction…`);
-  const result = await server.submitTransaction(tx);
+  const result = await submitTransaction(tx);
   onLog?.(`Done — tx hash: ${result.hash}`);
 
   return { txHash: result.hash };
@@ -185,7 +186,7 @@ export async function addTrustlineBulk(opts: AddTrustlineBulkOptions): Promise<v
         const tx = builder.build();
         tx.sign(keypair);
 
-        const result = await server.submitTransaction(tx);
+        const result = await submitTransaction(tx);
 
         for (const a of batch) {
           onResult?.({
@@ -289,7 +290,7 @@ export async function drainAndRemoveTrustline(
   tx.sign(keypair);
 
   onLog?.(`Submitting transaction…`);
-  const result = await server.submitTransaction(tx);
+  const result = await submitTransaction(tx);
   onLog?.(`Done — tx hash: ${result.hash}`);
 
   return { txHash: result.hash };
@@ -355,7 +356,7 @@ export async function drainAndRemoveBulk(opts: DrainAndRemoveBulkOptions): Promi
           .addOperation(Operation.accountMerge({ destination }))
           .build();
         tx.sign(keypair);
-        const result = await server.submitTransaction(tx);
+        const result = await submitTransaction(tx);
         for (const a of nativeAssets) {
           onResult?.({ accountPubkey: pubkey, assetCode: a.code, issuer: a.issuer, status: "success", txHash: result.hash });
         }
@@ -403,7 +404,7 @@ export async function drainAndRemoveBulk(opts: DrainAndRemoveBulkOptions): Promi
 
         const tx = builder.build();
         tx.sign(keypair);
-        const result = await server.submitTransaction(tx);
+        const result = await submitTransaction(tx);
 
         for (const a of batch) {
           onResult?.({ accountPubkey: pubkey, assetCode: a.code, issuer: a.issuer, status: "success", txHash: result.hash });
@@ -598,7 +599,7 @@ export async function cancelOffersBatch(
 
     const tx = builder.build();
     tx.sign(keypair);
-    const result = await server.submitTransaction(tx);
+    const result = await submitTransaction(tx);
     onLog?.(`Cancelled — tx: ${result.hash}`);
     results.push({ txHash: result.hash });
   }

@@ -29,6 +29,9 @@ const SHARED_TABLES = [
 ];
 
 const SQLITE_ONLY_TABLES = [
+  "mainnet_executions",
+  "scheduled_jobs",
+  "used_preview_approvals",
   "tracer_watchlist",
   "tracer_watch_events",
   "key_scan_state",

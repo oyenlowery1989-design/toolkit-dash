@@ -1,4 +1,4 @@
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { createHmac, timingSafeEqual, randomUUID } from "node:crypto";
 
 export interface MainnetSafetyConfig {
   transactionsEnabled: boolean;
@@ -35,11 +35,17 @@ export interface MainnetRunIntent {
   operationCount: number;
   xlmAmount: number;
   xlmSentLast24Hours?: number;
+  unboundedDestinations?: boolean;
 }
 
 export function validateMainnetRun(intent: MainnetRunIntent): string[] {
   const config = getMainnetSafetyConfig();
   const errors: string[] = [];
+  if (!Number.isSafeInteger(intent.operationCount) || intent.operationCount < 0
+    || !Number.isFinite(intent.xlmAmount) || intent.xlmAmount < 0
+    || !Number.isFinite(intent.xlmSentLast24Hours ?? 0) || (intent.xlmSentLast24Hours ?? 0) < 0) {
+    errors.push("Invalid mainnet spending intent");
+  }
   if (!config.transactionsEnabled) errors.push("Mainnet transactions are disabled by server policy");
   if (config.emergencyStop) errors.push("Mainnet emergency stop is active");
   if (intent.operationCount > config.maxOperationsPerRun) {
@@ -52,6 +58,7 @@ export function validateMainnetRun(intent: MainnetRunIntent): string[] {
     errors.push(`Daily XLM limit of ${config.maxXlmPerDay} would be exceeded`);
   }
   if (config.allowedDestinations.size > 0) {
+    if (intent.unboundedDestinations) errors.push("This operation has unknown market destinations and cannot satisfy the destination allowlist");
     const blocked = [...new Set(intent.destinations)].filter((address) => !config.allowedDestinations.has(address));
     if (blocked.length > 0) errors.push(`${blocked.length} destination(s) are not on the mainnet allowlist`);
   }
@@ -80,7 +87,7 @@ function sign(encodedPayload: string, secret: string): string {
 export function createPreviewApproval(subject: string, userId: string, digest: string, now = Date.now()): string | null {
   const secret = approvalSecret();
   if (!secret) return null;
-  const payload = encode(JSON.stringify({ subject, userId, digest, expiresAt: now + 5 * 60_000 }));
+  const payload = encode(JSON.stringify({ subject, userId, digest, nonce: randomUUID(), expiresAt: now + 5 * 60_000 }));
   return `${payload}.${sign(payload, secret)}`;
 }
 

@@ -1,3 +1,4 @@
+import { submitTransaction } from "@/lib/client-transaction";
 // lib/asset-creator/runner.ts
 import { TransactionBuilder } from "stellar-sdk";
 import type { Horizon } from "stellar-sdk";
@@ -123,7 +124,7 @@ export async function runAssetCreation(
       for (const signedTx of txns) {
         onLog(`  Submitting tx: ${signedTx.label}`);
         const tx = TransactionBuilder.fromXDR(signedTx.xdr, networkPassphrase);
-        const submitted = await server.submitTransaction(tx);
+        const submitted = await submitTransaction(tx);
         const hash = (submitted as { hash?: string }).hash ?? "";
         onLog(`  ✓ ${signedTx.label}: ${hash}`);
 

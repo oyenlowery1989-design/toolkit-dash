@@ -1,3 +1,5 @@
+import { withLeaseContext } from "@/lib/execution-context";
+import { executeMainnetTransaction as submitTransaction } from "@/lib/mainnet-execution";
 import { Keypair, TransactionBuilder, Operation, Asset, Horizon, Memo } from "stellar-sdk";
 import type { TieredRewardConfig, TierAssignment, RunLogRow } from "./types";
 import { getDb } from "@/lib/db";
@@ -69,7 +71,7 @@ async function sendSingleOp(
     );
     const tx = builder.setTimeout(30).build();
     tx.sign(keypair);
-    const response = await server.submitTransaction(tx);
+    const response = await submitTransaction(tx);
     return { txHash: (response as { hash?: string }).hash };
   } catch (err) {
     const codes = getOpResultCodes(err);
@@ -238,7 +240,7 @@ async function runTier(
 
       const tx = builder.setTimeout(30).build();
       tx.sign(keypair);
-      const response = await server.submitTransaction(tx);
+      const response = await submitTransaction(tx);
       const txHash = (response as { hash?: string }).hash;
 
       await record(
@@ -266,7 +268,7 @@ async function runTier(
           }
           const retryTx = retryBuilder.setTimeout(30).build();
           retryTx.sign(keypair);
-          const retryResponse = await server.submitTransaction(retryTx);
+          const retryResponse = await submitTransaction(retryTx);
           const retryTxHash = (retryResponse as { hash?: string }).hash;
 
           await record(
@@ -375,15 +377,15 @@ export async function runConfig(
   try {
     leaseToken = await acquireRunLease("tiered_reward_run_leases", config.id);
     if (!leaseToken) return { error: "This config is already running — try again shortly." };
-    if (!config.secretKey) return await runConfigInner(config, assignments, userId);
+    if (!config.secretKey) return await withLeaseContext("tiered_reward_run_leases", config.id, leaseToken, () => runConfigInner(config, assignments, userId));
     let keypair: Keypair;
     try {
       keypair = Keypair.fromSecret(config.secretKey);
     } catch {
       // Invalid secret key — let runConfigInner produce the same error result; no account to lock.
-      return await runConfigInner(config, assignments, userId);
+      return await withLeaseContext("tiered_reward_run_leases", config.id, leaseToken, () => runConfigInner(config, assignments, userId));
     }
-    return await withAccountLock(keypair.publicKey(), () => runConfigInner(config, assignments, userId));
+    return await withAccountLock(keypair.publicKey(), () => withLeaseContext("tiered_reward_run_leases", config.id, leaseToken!, () => runConfigInner(config, assignments, userId)));
   } finally {
     if (leaseToken) await releaseRunLease("tiered_reward_run_leases", config.id, leaseToken);
     _runningConfigs.delete(config.id);

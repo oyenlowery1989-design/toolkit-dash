@@ -4,5 +4,5 @@ import { requireAuth } from "@/lib/supabase-server";
 export async function GET(req: NextRequest) {
   const auth = await requireAuth(req);
   if (!auth.ok) return auth.response;
-  return NextResponse.json({ serverless: !!process.env.VERCEL });
+  return NextResponse.json({ serverless: !!process.env.VERCEL, externalSchedulerConfigured: (process.env.CRON_SECRET?.length ?? 0) >= 32 });
 }

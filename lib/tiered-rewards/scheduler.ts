@@ -1,3 +1,5 @@
+import { claimSchedule } from "@/lib/scheduled-jobs";
+import { readAllSupabaseRows } from "@/lib/supabase-pagination";
 /**
  * Tiered Rewards scheduler.
  * Uses node-cron to schedule enabled configs server-side.
@@ -43,31 +45,25 @@ async function loadEnabledConfigsFromSupabase(): Promise<ScheduledConfig[]> {
   const sb = getSupabase();
   if (!sb) return [];
 
-  const { data: configs, error } = await sb
-    .from("tiered_reward_configs")
-    .select("*")
+  const { data: configs } = await readAllSupabaseRows("tiered_reward_configs", (q) => q
     .eq("enabled", true)
     .not("interval_minutes", "is", null)
-    .order("created_at", { ascending: true });
+    .order("created_at", { ascending: true }));
 
-  if (error || !configs) {
-    console.error("[tiered-rewards] Failed to load configs from Supabase:", error);
+  if (!configs) {
+    console.error("[tiered-rewards] Failed to load configs from Supabase");
     return [];
   }
 
   const result: ScheduledConfig[] = [];
   for (const c of configs as Record<string, unknown>[]) {
-    const { data: tiers, error: tiersError } = await sb
-      .from("tiered_reward_tiers")
-      .select("*")
+    const { data: tiers } = await readAllSupabaseRows("tiered_reward_tiers", (q) => q
       .eq("config_id", c.id)
-      .order("position", { ascending: true });
-    if (tiersError) throw new Error(`Could not load tiers for ${String(c.id)}: ${tiersError.message}`);
+      .order("position", { ascending: true }));
 
     const mappedTiers = await Promise.all(
       (tiers ?? []).map(async (t: Record<string, unknown>) => {
-        const { data: assets, error: assetsError } = await sb.from("tiered_reward_assets").select("*").eq("tier_id", t.id);
-        if (assetsError) throw new Error(`Could not load assets for ${String(t.id)}: ${assetsError.message}`);
+        const { data: assets } = await readAllSupabaseRows("tiered_reward_assets", (q) => q.eq("tier_id", t.id));
         return {
           id: t.id as string,
           configId: t.config_id as string,
@@ -133,35 +129,6 @@ async function loadEnabledConfigs(): Promise<ScheduledConfig[]> {
   }
 }
 
-function minutesToCronExpression(minutes: number): string {
-  if (minutes < 60) return `*/${Math.max(1, minutes)} * * * *`;
-  const hours = Math.floor(minutes / 60);
-  return `0 */${Math.max(1, hours)} * * *`;
-}
-
-/**
- * Sets/clears last_failure_at for a config. Must be Supabase-aware like runner.ts's
- * last_run_at write — otherwise on Vercel+Supabase this unconditional getDb() call would
- * silently no-op and the UI's failure banner would never reflect real scheduled-run outcomes.
- */
-async function setConfigLastFailure(configId: string, userId: string | undefined, timestamp: number | null): Promise<void> {
-  if (isSupabaseOnly()) {
-    const sb = getSupabase();
-    if (!sb) return;
-    try {
-      const query = sb.from("tiered_reward_configs").update({ last_failure_at: timestamp }).eq("id", configId);
-      const { error } = await (userId ? query.eq("user_id", userId) : query);
-      if (error) console.error("[tiered-rewards] last_failure_at Supabase update failed:", error);
-    } catch (err) {
-      console.error("[tiered-rewards] last_failure_at Supabase update threw:", err);
-    }
-    return;
-  }
-  try {
-    const db = getDb();
-    db.prepare("UPDATE tiered_reward_configs SET last_failure_at = ? WHERE id = ?").run(timestamp, configId);
-  } catch { /* non-fatal */ }
-}
 
 export function startTieredRewardsScheduler(): void {
   if (process.env.VERCEL) return;
@@ -183,8 +150,20 @@ async function scheduleAll(): Promise<void> {
   const configs = await loadEnabledConfigs();
   for (const config of configs) {
     if (!config.intervalMinutes) continue;
-    const expr = minutesToCronExpression(config.intervalMinutes);
-    const task = cron.schedule(expr, async () => {
+    await claimSchedule("tiered-rewards", config.id, config.intervalMinutes, false);
+    const task = cron.schedule("* * * * *", () => runScheduledConfig(config));
+    tasks.set(config.id, task);
+    console.log(`[tiered-rewards] Scheduled "${config.name}" every ${config.intervalMinutes}m (persistent interval)`);
+  }
+}
+
+/** Call after config changes to reload all schedules. */
+export function refreshTieredRewardsScheduler(): void {
+  if (!global._tieredRewardsStarted) return;
+  scheduleAll().catch((err) => console.error("[tiered-rewards] scheduleAll failed:", err));
+}
+
+async function runScheduledConfig(config: ScheduledConfig): Promise<void> {
       // Cheap early skip + log. The authoritative overlap guard (add/delete on this same
       // globalized Set) lives inside runner.ts's runConfig, so a manual run and a scheduler
       // tick for this configId can never both execute a real send concurrently even if this
@@ -202,6 +181,7 @@ async function scheduleAll(): Promise<void> {
         const freshConfigs = await loadEnabledConfigs();
         const fresh = freshConfigs.find((c) => c.id === config.id);
         if (!fresh) return;
+          if (!fresh?.intervalMinutes || !await claimSchedule("tiered-rewards", fresh.id, fresh.intervalMinutes)) return;
 
         const preview = await calculatePreview(fresh);
         if ("error" in preview) {
@@ -236,7 +216,7 @@ async function scheduleAll(): Promise<void> {
               }
             }
           }
-          await insertLogRows(rows, fresh.userId);
+          if (!await insertLogRows(rows, fresh.userId)) throw new Error("Preview log write failed");
           return;
         }
 
@@ -244,22 +224,37 @@ async function scheduleAll(): Promise<void> {
         if ("error" in result) {
           console.error(`[tiered-rewards] Run failed for "${fresh.name}":`, result.error);
           await setConfigLastFailure(fresh.id, fresh.userId, Date.now());
-        } else if (result.totalFailed > 0) {
+        } else if (result.totalFailed > 0 || result.logWriteFailed) {
           await setConfigLastFailure(fresh.id, fresh.userId, Date.now());
         } else {
           await setConfigLastFailure(fresh.id, fresh.userId, null);
         }
       } catch (err) {
         console.error(`[tiered-rewards] Config "${config.name}" run failed:`, err);
+        await setConfigLastFailure(config.id, config.userId, Date.now());
       }
-    });
-    tasks.set(config.id, task);
-    console.log(`[tiered-rewards] Scheduled "${config.name}" every ${config.intervalMinutes}m (${expr})`);
-  }
+
 }
 
-/** Call after config changes to reload all schedules. */
-export function refreshTieredRewardsScheduler(): void {
-  if (!global._tieredRewardsStarted) return;
-  scheduleAll().catch((err) => console.error("[tiered-rewards] scheduleAll failed:", err));
+export async function runDueTieredRewards(): Promise<void> {
+  for (const config of await loadEnabledConfigs()) await runScheduledConfig(config);
+}
+
+async function setConfigLastFailure(configId: string, userId: string | undefined, timestamp: number | null): Promise<void> {
+  if (isSupabaseOnly()) {
+    const sb = getSupabase();
+    if (!sb) return;
+    try {
+      const query = sb.from("tiered_reward_configs").update({ last_failure_at: timestamp }).eq("id", configId);
+      const { error } = await (userId ? query.eq("user_id", userId) : query);
+      if (error) console.error("[tiered-rewards] last_failure_at Supabase update failed:", error);
+    } catch (err) {
+      console.error("[tiered-rewards] last_failure_at Supabase update threw:", err);
+    }
+    return;
+  }
+  try {
+    const db = getDb();
+    db.prepare("UPDATE tiered_reward_configs SET last_failure_at = ? WHERE id = ?").run(timestamp, configId);
+  } catch { /* non-fatal */ }
 }

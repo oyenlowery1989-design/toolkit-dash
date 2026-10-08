@@ -1,3 +1,4 @@
+import { consumePreviewApproval } from "@/lib/preview-consumption";
 import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
 import { getSupabase, isSupabaseOnly, requireAuth } from "@/lib/supabase-server";
@@ -129,6 +130,7 @@ export async function POST(req: NextRequest) {
     }
 
     const { runConfig } = await import("@/lib/tiered-rewards/runner");
+    if (!await consumePreviewApproval((body as { previewToken?: unknown }).previewToken as string)) return NextResponse.json({ error: "Preview approval was already used. Preview again." }, { status: 428 });
     const result = await runConfig(config, preview.assignments, auth.userId ?? undefined);
 
     // Persist last_run_at after a successful run. This MUST be durable: if it silently fails,

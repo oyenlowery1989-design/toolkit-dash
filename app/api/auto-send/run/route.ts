@@ -1,3 +1,4 @@
+import { consumePreviewApproval } from "@/lib/preview-consumption";
 import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
 import { getSupabase, isSupabaseOnly, requireAuth } from "@/lib/supabase-server";
@@ -89,7 +90,7 @@ async function runAndLog(
   } finally {
     if (result) {
       const { ok } = await writeRunLog(userId, group.id, result.walletAddress, result.results, result.ranAt);
-      logWriteFailed = !ok;
+      logWriteFailed = !ok || Boolean(result.logWriteFailed);
     }
   }
   return { result, logWriteFailed };
@@ -145,7 +146,7 @@ export async function POST(req: NextRequest) {
       auth.userId ?? "local",
       previewDigest(freshPreview),
     );
-    if (!approved) {
+    if (!approved || !await consumePreviewApproval(previewToken as string)) {
       return NextResponse.json({ error: "Preview approval is missing, expired, or the payment amounts changed. Preview again." }, { status: 428 });
     }
 

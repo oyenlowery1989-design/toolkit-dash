@@ -23,7 +23,7 @@ function parseRetryAfter(value: string | null): number | null {
 export async function fetchJson(
   url: string,
   signal?: AbortSignal,
-  opts: { retries?: number; onLog?: (msg: string) => void } = {},
+  opts: { retries?: number; onLog?: (msg: string) => void; headers?: HeadersInit } = {},
 ): Promise<any> {
   const retries = opts.retries ?? 4;
   let lastStatus = 0;
@@ -41,7 +41,7 @@ export async function fetchJson(
     }
     let res: Response;
     try {
-      res = await fetch(url, { signal });
+      res = await fetch(url, { signal, ...(opts.headers ? { headers: opts.headers } : {}) });
     } catch (e) {
       if (e instanceof DOMException && e.name === "AbortError") throw e;
       lastStatus = 0; // network error — retryable

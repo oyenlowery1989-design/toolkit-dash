@@ -1,4 +1,6 @@
 "use client";
+import { submitTransaction } from "@/lib/client-transaction";
+
 
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import {
@@ -746,7 +748,7 @@ export default function PaymentsPage() {
           setShowSecret(false);
         }
         setTxStatus("submitting");
-        const result = await horizonServer.submitTransaction(feeBumpTx);
+        const result = await submitTransaction(feeBumpTx);
         const hash = (result as any).hash ?? (result as any).id ?? "unknown";
         setTxHash(hash);
         setTxStatus("success");
@@ -903,7 +905,7 @@ export default function PaymentsPage() {
       setTxStatus("submitting");
       let result: Awaited<ReturnType<typeof server.submitTransaction>>;
       try {
-        result = await server.submitTransaction(tx);
+        result = await submitTransaction(tx);
       } catch (submitErr: any) {
         const opCodes: string[] =
           submitErr?.response?.data?.extras?.result_codes?.operations ?? [];
@@ -993,7 +995,7 @@ export default function PaymentsPage() {
           const tx2 = builder2.setTimeout(30).build();
           tx2.sign(keypair);
           setTxStatus("submitting");
-          result = await server.submitTransaction(tx2);
+          result = await submitTransaction(tx2);
         } else {
           throw submitErr;
         }
@@ -1094,7 +1096,7 @@ export default function PaymentsPage() {
           .setTimeout(30)
           .build();
         trustTx.sign(destKeypair);
-        await server.submitTransaction(trustTx);
+        await submitTransaction(trustTx);
         toast.success(`Trustline added on ${fix.walletName}`);
       }
 

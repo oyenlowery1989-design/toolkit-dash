@@ -1,3 +1,4 @@
+import { writeOwnedRow } from "@/lib/supabase-owned-write";
 import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
 import { getSupabase, isSupabaseOnly, syncToSupabase, requireAuth } from "@/lib/supabase-server";
@@ -39,11 +40,12 @@ export async function POST(req: NextRequest) {
 
   let b: any;
   try { b = await req.json(); } catch { return NextResponse.json({ error: "Invalid JSON" }, { status: 400 }); }
+  if (typeof b.id !== "string" || !b.id.trim() || b.id.length > 128) return NextResponse.json({ error: "Invalid id" }, { status: 400 });
   const now = b.savedAt ?? Date.now();
 
   if (isSupabaseOnly()) {
-    const { error } = await getSupabase()!.from("bulk_recipients").upsert({
-      user_id: userId,
+    const { error, status } = await writeOwnedRow("bulk_recipients", {
+      user_id: userId!,
       id: b.id,
       name: b.name,
       network: b.network,
@@ -53,7 +55,7 @@ export async function POST(req: NextRequest) {
     });
     if (error) {
       console.error("[bulk-recipients] POST failed:", error);
-      return NextResponse.json({ error: error.message }, { status: 500 });
+      return NextResponse.json({ error: error.message }, { status });
     }
     return NextResponse.json({ ok: true });
   }

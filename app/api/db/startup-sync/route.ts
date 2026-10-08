@@ -1,3 +1,4 @@
+import { readAllSupabaseRows } from "@/lib/supabase-pagination";
 /**
  * POST /api/db/startup-sync
  * Merges Supabase data into local SQLite on app startup.
@@ -61,23 +62,23 @@ export async function POST(req: NextRequest) {
     { data: bulkScanState },
     { data: tieredRewardConfigs },
   ] = await Promise.all([
-    sb.from("address_book").select("*").eq("user_id", userId),
-    sb.from("known_intermediaries").select("*").eq("user_id", userId),
-    sb.from("known_creators").select("*").eq("user_id", userId),
+    readAllSupabaseRows("address_book", (q) => q.eq("user_id", userId)),
+    readAllSupabaseRows("known_intermediaries", (q) => q.eq("user_id", userId)),
+    readAllSupabaseRows("known_creators", (q) => q.eq("user_id", userId)),
     readSavedAnalysisRows(userId),
-    sb.from("bulk_recipients").select("*").eq("user_id", userId),
-    sb.from("proceeds_presets").select("*").eq("user_id", userId),
-    sb.from("saved_searches").select("*").eq("user_id", userId),
-    sb.from("bulk_run_history").select("*").eq("user_id", userId),
-    sb.from("asset_groups").select("*").eq("user_id", userId),
-    sb.from("wallet_folders").select("*").eq("user_id", userId),
-    sb.from("wallets").select("*").eq("user_id", userId),
-    sb.from("app_state").select("*").eq("user_id", userId),
-    sb.from("auto_send_groups").select("*").eq("user_id", userId),
-    sb.from("persons").select("*").eq("user_id", userId),
-    sb.from("creator_children").select("*").eq("user_id", userId),
-    sb.from("bulk_scan_state").select("*").eq("user_id", userId),
-    sb.from("tiered_reward_configs").select("*").eq("user_id", userId),
+    readAllSupabaseRows("bulk_recipients", (q) => q.eq("user_id", userId)),
+    readAllSupabaseRows("proceeds_presets", (q) => q.eq("user_id", userId)),
+    readAllSupabaseRows("saved_searches", (q) => q.eq("user_id", userId)),
+    readAllSupabaseRows("bulk_run_history", (q) => q.eq("user_id", userId)),
+    readAllSupabaseRows("asset_groups", (q) => q.eq("user_id", userId)),
+    readAllSupabaseRows("wallet_folders", (q) => q.eq("user_id", userId)),
+    readAllSupabaseRows("wallets", (q) => q.eq("user_id", userId)),
+    readAllSupabaseRows("app_state", (q) => q.eq("user_id", userId)),
+    readAllSupabaseRows("auto_send_groups", (q) => q.eq("user_id", userId)),
+    readAllSupabaseRows("persons", (q) => q.eq("user_id", userId)),
+    readAllSupabaseRows("creator_children", (q) => q.eq("user_id", userId)),
+    readAllSupabaseRows("bulk_scan_state", (q) => q.eq("user_id", userId)),
+    readAllSupabaseRows("tiered_reward_configs", (q) => q.eq("user_id", userId)),
   ]);
 
   if (savedAnalysesError) {
@@ -99,31 +100,31 @@ export async function POST(req: NextRequest) {
     { data: tieredRewardRunLog },
   ] = await Promise.all([
     assetGroupIds.length > 0
-      ? sb.from("asset_group_members").select("*").in("group_id", assetGroupIds)
+      ? readAllSupabaseRows("asset_group_members", (q) => q.in("group_id", assetGroupIds))
       : Promise.resolve({ data: [] as Record<string, unknown>[] }),
     autoSendGroupIds.length > 0
-      ? sb.from("auto_send_destinations").select("*").in("group_id", autoSendGroupIds)
+      ? readAllSupabaseRows("auto_send_destinations", (q) => q.in("group_id", autoSendGroupIds))
       : Promise.resolve({ data: [] as Record<string, unknown>[] }),
     autoSendGroupIds.length > 0
-      ? sb.from("auto_send_run_log").select("*").in("group_id", autoSendGroupIds)
+      ? readAllSupabaseRows("auto_send_run_log", (q) => q.in("group_id", autoSendGroupIds))
       : Promise.resolve({ data: [] as Record<string, unknown>[] }),
     personIds.length > 0
-      ? sb.from("person_addresses").select("*").in("person_id", personIds)
+      ? readAllSupabaseRows("person_addresses", (q) => q.in("person_id", personIds))
       : Promise.resolve({ data: [] as Record<string, unknown>[] }),
     personIds.length > 0
-      ? sb.from("person_relationships").select("*").in("person_a_id", personIds)
+      ? readAllSupabaseRows("person_relationships", (q) => q.in("person_a_id", personIds))
       : Promise.resolve({ data: [] as Record<string, unknown>[] }),
     tieredRewardConfigIds.length > 0
-      ? sb.from("tiered_reward_tiers").select("*").in("config_id", tieredRewardConfigIds)
+      ? readAllSupabaseRows("tiered_reward_tiers", (q) => q.in("config_id", tieredRewardConfigIds))
       : Promise.resolve({ data: [] as Record<string, unknown>[] }),
     tieredRewardConfigIds.length > 0
-      ? sb.from("tiered_reward_run_log").select("*").eq("user_id", userId)
+      ? readAllSupabaseRows("tiered_reward_run_log", (q) => q.eq("user_id", userId))
       : Promise.resolve({ data: [] as Record<string, unknown>[] }),
   ]);
   const tieredRewardTierIds = (tieredRewardTiers ?? []).map((t) => t.id as string);
   const { data: tieredRewardAssets } =
     tieredRewardTierIds.length > 0
-      ? await sb.from("tiered_reward_assets").select("*").in("tier_id", tieredRewardTierIds)
+      ? await readAllSupabaseRows("tiered_reward_assets", (q) => q.in("tier_id", tieredRewardTierIds))
       : { data: [] as Record<string, unknown>[] };
 
   let merged = 0;

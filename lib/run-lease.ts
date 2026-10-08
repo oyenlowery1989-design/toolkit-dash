@@ -41,3 +41,16 @@ export async function releaseRunLease(table: RunLeaseTable, resourceId: string, 
   }
   getDb().prepare(`DELETE FROM ${table} WHERE resource_id = ? AND lease_token = ?`).run(resourceId, token);
 }
+
+/** Revalidate ownership immediately before every network submission. */
+export async function renewRunLease(table: RunLeaseTable, resourceId: string, token: string): Promise<void> {
+  const now = Date.now();
+  if (isSupabaseOnly()) {
+    const { data, error } = await getSupabase()!.from(table).update({ expires_at: now + LEASE_TTL_MS })
+      .eq("resource_id", resourceId).eq("lease_token", token).gte("expires_at", now).select("resource_id").maybeSingle();
+    if (error || !data) throw new Error("Execution lease expired or changed; stop and reconcile before retrying");
+  } else {
+    const result = getDb().prepare(`UPDATE ${table} SET expires_at = ? WHERE resource_id = ? AND lease_token = ? AND expires_at >= ?`).run(now + LEASE_TTL_MS, resourceId, token, now);
+    if (result.changes !== 1) throw new Error("Execution lease expired or changed; stop and reconcile before retrying");
+  }
+}

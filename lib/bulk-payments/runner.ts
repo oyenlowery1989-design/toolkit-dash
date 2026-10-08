@@ -1,3 +1,4 @@
+import { submitTransaction } from "@/lib/client-transaction";
 import { Horizon, Keypair, Asset } from "stellar-sdk";
 import { resolveNetworkPassphrase, type Network } from "@/lib/settings";
 import { getErrorMessage } from "@/lib/stellar-helpers";
@@ -144,7 +145,7 @@ export async function runBulkPayments({
       }
 
       submitting = true;
-      const response = await server.submitTransaction(tx);
+      const response = await submitTransaction(tx);
 
       onBatchUpdate({
         batchIndex: i,

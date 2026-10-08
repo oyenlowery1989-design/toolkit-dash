@@ -1,3 +1,5 @@
+import { withLeaseContext } from "@/lib/execution-context";
+import { executeMainnetTransaction as submitTransaction } from "@/lib/mainnet-execution";
 import {
   Keypair,
   TransactionBuilder,
@@ -67,6 +69,8 @@ export function skipReason(spendable: number, amount: number, minThreshold: numb
   return undefined;
 }
 
+const failedLogGroups = new Set<string>();
+
 function logResult(groupId: string, walletAddress: string, result: DestinationRunResult, ranAt: number): void {
   try {
     const db = getDb();
@@ -77,7 +81,10 @@ function logResult(groupId: string, walletAddress: string, result: DestinationRu
       crypto.randomUUID(), groupId, walletAddress, result.destination,
       result.amountSent ?? null, result.status, result.error ?? null, ranAt, result.txHash ?? null
     );
-  } catch { /* non-fatal */ }
+  } catch (error) {
+    failedLogGroups.add(groupId);
+    console.error("[auto-send] run-log write failed; execution ledger retains accounting", error);
+  }
 }
 
 /** Compute how much each destination receives, handling remainder destinations and max caps. */
@@ -206,6 +213,7 @@ export async function previewGroup(group: AutoSendGroup): Promise<GroupPreview |
 export async function runGroup(group: AutoSendGroup): Promise<GroupRunResult> {
   if (executingGroups.has(group.id)) throw new AutoSendRunInProgressError();
   executingGroups.add(group.id);
+  failedLogGroups.delete(group.id);
   let leaseToken: string | null = null;
   try {
     leaseToken = await acquireRunLease("auto_send_run_leases", group.id);
@@ -215,12 +223,15 @@ export async function runGroup(group: AutoSendGroup): Promise<GroupRunResult> {
       keypair = Keypair.fromSecret(group.secretKey);
     } catch {
       // Invalid secret key — let runGroupInner produce the same error result; no account to lock.
-      return await runGroupInner(group);
+      const result = await withLeaseContext("auto_send_run_leases", group.id, leaseToken, () => runGroupInner(group));
+      return { ...result, logWriteFailed: failedLogGroups.has(group.id) };
     }
-    return await withAccountLock(keypair.publicKey(), () => runGroupInner(group));
+    const result = await withAccountLock(keypair.publicKey(), () => withLeaseContext("auto_send_run_leases", group.id, leaseToken!, () => runGroupInner(group)));
+    return { ...result, logWriteFailed: failedLogGroups.has(group.id) };
   } finally {
     if (leaseToken) await releaseRunLease("auto_send_run_leases", group.id, leaseToken);
     executingGroups.delete(group.id);
+    failedLogGroups.delete(group.id);
   }
 }
 
@@ -377,7 +388,7 @@ async function runGroupInner(group: AutoSendGroup): Promise<GroupRunResult> {
         }
         const tx = builder.setTimeout(30).build();
         tx.sign(keypair);
-        const batchResponse = await server.submitTransaction(tx);
+        const batchResponse = await submitTransaction(tx);
         const txHash = (batchResponse as { hash?: string }).hash;
 
         for (const { dest, amount } of toSend) {
@@ -428,7 +439,7 @@ async function runGroupInner(group: AutoSendGroup): Promise<GroupRunResult> {
             const tx = builder.setTimeout(30).build();
             tx.sign(keypair);
             try {
-              const sepResponse = await server.submitTransaction(tx);
+              const sepResponse = await submitTransaction(tx);
               txHash = (sepResponse as { hash?: string }).hash;
               break;
             } catch (submitErr) {

@@ -1,4 +1,6 @@
 "use client";
+import { submitTransaction } from "@/lib/client-transaction";
+
 
 // AccountFunderPanel.tsx
 //
@@ -875,7 +877,7 @@ export function AccountFunderPanel() {
 
         const tx = builder.setTimeout(60).build();
         tx.sign(parentKeypair);
-        await server.submitTransaction(tx);
+        await submitTransaction(tx);
 
         // All ops in the batch succeeded
         setAccounts((prev) =>
@@ -1023,7 +1025,7 @@ export function AccountFunderPanel() {
           tx.sign(childKp);
         }
 
-        await server.submitTransaction(tx);
+        await submitTransaction(tx);
 
         // Mark batch as successfully created
         setAccounts((prev) =>
@@ -1163,7 +1165,7 @@ export function AccountFunderPanel() {
         );
 
         feeBumpTx.sign(sponsorKeypair);
-        await server.submitTransaction(feeBumpTx);
+        await submitTransaction(feeBumpTx);
 
         // Account deleted, reserve returned to sponsor
         setCloseResults((prev) =>

@@ -191,5 +191,11 @@ export async function requireAuth(req: NextRequest): Promise<AuthResult> {
     };
   }
 
+  // SQLite is a single-operator store, not a tenant database.
+  if (!isSupabaseOnly() && user.id !== process.env.SQLITE_OPERATOR_USER_ID) {
+    return { ok: false, response: NextResponse.json(
+      { error: "SQLite access requires the configured single operator" }, { status: 403 },
+    ) };
+  }
   return { ok: true, userId: user.id };
 }

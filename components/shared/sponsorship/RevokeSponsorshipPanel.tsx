@@ -1,4 +1,6 @@
 "use client";
+import { submitTransaction } from "@/lib/client-transaction";
+
 
 import { useState } from "react";
 import { TransactionBuilder, type Horizon, type Keypair } from "stellar-sdk";
@@ -99,7 +101,7 @@ export function RevokeSponsorshipPanel({
         }
         const tx = builder.setTimeout(30).build();
         tx.sign(signerKeypair);
-        await horizonServer.submitTransaction(tx);
+        await submitTransaction(tx);
         chunks[i].forEach((item) => revokedKeys.add(item.key));
       }
       setSubmitStatus(`Revoked ${revokedKeys.size} sponsorship${revokedKeys.size === 1 ? "" : "s"}.`);

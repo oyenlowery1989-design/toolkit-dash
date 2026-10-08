@@ -1,3 +1,4 @@
+import { authHeaders, waitForAuth } from "@/lib/db-client";
 import { Horizon, Asset } from "stellar-sdk";
 import { fetchJson } from "../horizon-fetch";
 import { resolveAssetToXlmTrade } from "@/lib/trade-helpers";
@@ -836,7 +837,8 @@ export async function fetchClaimableBalances(
     const url = `/api/horizon/claimable_balances?asset=${encodeURIComponent(assetParam)}&limit=200${cursor ? `&cursor=${cursor}` : ""}`;
     let data: any;
     try {
-      data = await fetchJson(url, signal);
+      await waitForAuth();
+      data = await fetchJson(url, signal, { headers: authHeaders() });
     } catch (e) {
       if (e instanceof DOMException && e.name === "AbortError") throw e;
       break;

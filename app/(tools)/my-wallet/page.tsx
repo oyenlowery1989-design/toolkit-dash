@@ -1,4 +1,6 @@
 "use client";
+import { submitTransaction } from "@/lib/client-transaction";
+
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Horizon, Keypair } from "stellar-sdk";
@@ -576,7 +578,7 @@ export default function MyWalletPage() {
     for (const op of ops) builder.addOperation(op as any);
     const tx = builder.setTimeout(30).build();
     tx.sign(keypair);
-    await server.submitTransaction(tx);
+    await submitTransaction(tx);
   }
 
   async function claimBalance(balanceId: string) {

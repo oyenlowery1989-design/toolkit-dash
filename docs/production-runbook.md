@@ -23,7 +23,7 @@ Keep the encryption key stable across deployments. Losing it makes encrypted sig
 
 ## Deployment order
 
-1. Apply `supabase-schema.sql`, then `supabase-rls-migration.sql` using a privileged migration connection.
+1. Apply `supabase-schema.sql`, `supabase-rls-migration.sql`, then `supabase-execution-migration.sql` using a privileged migration connection.
 2. Run `supabase test db`; all tenant-isolation tests must pass.
 3. Deploy with mainnet transactions disabled and browser signing disabled.
 4. Authenticate as the intended operator and `GET /api/admin/health`. Resolve every encryption or plaintext-key warning.
@@ -84,3 +84,87 @@ For suspected key exposure, payment duplication, broken limit accounting, or une
 ## Rollback
 
 Application rollback is safe while `MAINNET_EMERGENCY_STOP=true`. Do not roll back database policies or encrypted-key columns independently of the application version. If a schema rollback is unavoidable, restore the last verified database backup into an isolated project first and confirm compatibility there.
+
+## Audit remediation rollout
+
+Keep mainnet disabled throughout the rollout. Apply `supabase-execution-migration.sql`
+after the existing schema and RLS migrations, then deploy the matching application.
+It adds the service-only execution ledger, persistent schedule cursors, one-time
+preview approvals, and immutable tenant ownership triggers. Run all SQL security
+and budget tests before enabling execution. Ownership reassignment is intentionally
+rejected even for service-role writes; use a separately reviewed migration if you
+need to transfer a tenant's data.
+
+All application classic and SAC submissions now pass through the server gateway.
+The gateway inspects signed XDR, validates source signatures, enforces mainnet
+incident controls and destinations, and atomically reserves a single rolling
+**deployment-wide** daily budget across users, accounts and modules. XLM fees,
+path-payment maximums, funding and native offer liabilities count toward it. Offer
+liabilities are charged conservatively rather than refunded based on fills.
+Market trades with unknown counterparties are blocked when a destination allowlist
+is configured. Account merge must be submitted alone so the outgoing balance can
+be bounded. Unsupported operation classes (including arbitrary contract calls and
+liquidity-pool deposits) fail closed until they have an explicit spending policy.
+This boundary governs the application's submission paths, not transactions a key
+holder independently sends outside the application.
+
+A confirmed transaction hash is deduplicated. Reserved or uncertain executions
+retain their allowance beyond 24 hours and block further submissions from that
+source account. If a worker crashes or a response times out, call authenticated
+`POST /api/transactions/reconcile` with `{ "hash": "..." }`. Only confirmed Horizon
+ledger evidence settles the record. A 404 is not evidence that no funds moved and
+never releases a hold. If it cannot be reconciled automatically (for example,
+pruned history), stop affected schedules and reconcile through a reviewed operator
+procedure with independent ledger evidence. Do not delete a reservation merely
+to retry a payment. Failed run-log writes raise alerts but cannot remove the
+durable spending hold. Legacy automation logs are imported conservatively during
+rollout; fees or manual transactions made before the gateway existed cannot be
+reconstructed from those logs alone.
+
+SQLite remains a private, single-operator backend. For authenticated SQLite
+hosting set `SQLITE_OPERATOR_USER_ID` to the intended Supabase user; all other
+users are rejected even with a valid JWT. The development-only authentication
+opt-out must remain restricted to a private loopback environment. Use Supabase
+for shared multi-user deployments. The SQLite recovery endpoint is available only
+in single-operator SQLite mode; a shared Supabase deployment must use platform
+recovery rather than this endpoint.
+
+Supabase API exports are tenant data exports, not full deployment backups. Each
+paged read checks exact counts and fails on detected source changes; pause writes
+for a consistent recovery drill. Deployment disaster recovery must include a
+Supabase database/platform backup containing `mainnet_executions`,
+`scheduled_jobs`, and `used_preview_approvals`. Losing or reverting that ledger
+can invalidate spending and replay protections. Never enable mainnet on a restored
+instance until its ledger is reconciled with the network. Private SQLite exports
+include this operational state. Preserve the encryption key separately in the
+secret manager. Scanner keys and fallback hit logs are encrypted; production key
+reads obey the same browser-signing opt-in as wallets.
+
+Schedules use persistent minute-resolution interval cursors rather than truncating
+minutes to cron hours. A 90-minute interval remains 90 minutes; restarts skip
+missed ticks instead of replaying payments. Changing an interval starts a new
+countdown. Cron claims a due attempt once before execution; an interrupted attempt
+is not automatically repeated in that interval. Transaction leases and source
+holds protect overlap and uncertain sends. Disabling then re-enabling a schedule
+may make the first enabled tick due immediately if its persisted cursor elapsed.
+
+For Vercel, set a high-entropy `CRON_SECRET` securely and enable the minute cron
+in `vercel.json`. Your hosting plan must support that frequency and sufficient
+function duration; another scheduler can call `GET /api/cron/automation` every
+minute with `Authorization: Bearer <CRON_SECRET>`. Keep this credential separate
+from user JWTs and encryption keys. Large runs that exceed the function duration
+need a persistent worker, not repeated function retries. A configured secret alone
+does not prove the provider enabled the cron; verify invocation logs with preview
+schedules before allowing actual sends.
+
+The TOML fetcher pins validated public DNS answers to HTTPS socket lookup while
+retaining certificate verification. Horizon proxy reads require authentication,
+have actual streamed byte limits, and a request deadline. Its 600/minute quota is
+per user **per process**; configure a shared ingress quota for distributed hosting.
+
+For an existing deployment, pause actual sends during migration and reconcile the
+previous 24 hours across every application feature and external signer. Historical
+manual sends and missing logs cannot be inferred from automation logs. Wait out
+that window or seed a conservative reviewed ledger baseline before enabling the
+new deployment-wide budget. Do not delete execution rows or restore a stale ledger
+while transaction execution remains enabled.

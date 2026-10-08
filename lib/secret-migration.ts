@@ -1,8 +1,9 @@
+import { readAllSupabaseRows } from "@/lib/supabase-pagination";
 import { getDb } from "@/lib/db";
 import { getSupabase, isSupabaseOnly } from "@/lib/supabase-server";
 import { encryptStoredSecret, isEncryptedStoredSecret } from "@/lib/secret-storage";
 
-type SecretTable = "wallets" | "auto_send_groups" | "tiered_reward_configs";
+type SecretTable = "wallets" | "auto_send_groups" | "tiered_reward_configs" | "key_scan_hits";
 const TABLES: SecretTable[] = ["wallets", "auto_send_groups", "tiered_reward_configs"];
 
 export interface SecretMigrationReport {
@@ -20,14 +21,14 @@ export async function inspectAndMigrateLegacySecrets(
   userId: string | null,
   migrate: boolean,
 ): Promise<Record<SecretTable, SecretMigrationReport>> {
-  const reports = Object.fromEntries(TABLES.map((table) => [table, freshReport()])) as Record<SecretTable, SecretMigrationReport>;
+  const tables = isSupabaseOnly() ? TABLES : [...TABLES, "key_scan_hits" as const];
+  const reports = Object.fromEntries(tables.map((table) => [table, freshReport()])) as Record<SecretTable, SecretMigrationReport>;
 
   if (isSupabaseOnly()) {
     if (!userId) throw new Error("Authenticated user id required for Supabase secret migration");
     const sb = getSupabase()!;
-    for (const table of TABLES) {
-      const { data, error } = await sb.from(table).select("id, secret_key").eq("user_id", userId);
-      if (error) throw new Error(`${table}: ${error.message}`);
+    for (const table of tables) {
+      const { data } = await readAllSupabaseRows(table, (q) => q.eq("user_id", userId), "id, secret_key");
       for (const row of data ?? []) {
         const report = reports[table];
         report.scanned += 1;
@@ -48,7 +49,7 @@ export async function inspectAndMigrateLegacySecrets(
 
   const db = getDb();
   const migrateLocal = db.transaction(() => {
-    for (const table of TABLES) {
+    for (const table of tables) {
       const rows = db.prepare(`SELECT id, secret_key FROM ${table}`).all() as Array<{ id: string; secret_key: string }>;
       for (const row of rows) {
         const report = reports[table];

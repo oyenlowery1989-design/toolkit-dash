@@ -1,3 +1,4 @@
+import { submitTransaction } from "@/lib/client-transaction";
 // lib/asset-manager/index.ts
 //
 // Trustline and issuer-flag management for classic Stellar assets.
@@ -128,7 +129,7 @@ export async function setIssuerFlag(
       .build();
 
     tx.sign(keypair);
-    const result = await server.submitTransaction(tx);
+    const result = await submitTransaction(tx);
     if (signal?.aborted) throw new Error("Aborted");
     return (result as { hash?: string }).hash ?? "";
   });
@@ -261,7 +262,7 @@ export async function setTrustlineAuthorization(
       .build();
 
     tx.sign(keypair);
-    const result = await server.submitTransaction(tx);
+    const result = await submitTransaction(tx);
     if (signal?.aborted) throw new Error("Aborted");
     return (result as { hash?: string }).hash ?? "";
   });
@@ -462,7 +463,7 @@ export async function createSellOffer(
       .build();
 
     tx.sign(keypair);
-    const result = await server.submitTransaction(tx);
+    const result = await submitTransaction(tx);
     return (result as { hash?: string }).hash ?? "";
   });
 }
@@ -555,7 +556,7 @@ export async function createBatchOffers(options: {
           .build();
 
         tx.sign(keypair);
-        const result = await server.submitTransaction(tx);
+        const result = await submitTransaction(tx);
         const hash = (result as { hash?: string }).hash ?? "";
         const entry: BatchOfferResult = { price: priceStr, amount, hash };
         results.push(entry);
@@ -630,7 +631,7 @@ export async function deleteOffer(
       .build();
 
     tx.sign(keypair);
-    const result = await server.submitTransaction(tx);
+    const result = await submitTransaction(tx);
     return (result as { hash?: string }).hash ?? "";
   });
 }

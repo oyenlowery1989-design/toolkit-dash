@@ -1,3 +1,4 @@
+import { decryptStoredSecret } from "@/lib/secret-storage";
 import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
 import { isSupabaseOnly, requireAuth } from "@/lib/supabase-server";
@@ -14,7 +15,8 @@ function mapHit(r: Record<string, unknown>): KeyScanHit {
   return {
     id: r.id as string,
     publicKey: r.public_key as string,
-    secretKey: r.secret_key as string,
+    secretKey: process.env.NODE_ENV !== "production" || process.env.ALLOW_BROWSER_SIGNING_KEYS === "true"
+      ? decryptStoredSecret(r.secret_key as string) : "",
     network: r.network as KeyScanHit["network"],
     xlmBalance: (r.xlm_balance as number | null) ?? null,
     balances: JSON.parse((r.balances_json as string) ?? "[]"),

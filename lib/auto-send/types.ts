@@ -85,6 +85,7 @@ export interface DestinationRunResult {
 }
 
 export interface GroupRunResult {
+  logWriteFailed?: boolean;
   groupId: string;
   walletAddress: string;
   ranAt: number;
