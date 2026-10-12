@@ -4,7 +4,7 @@ import { checkSupabaseRowOwnership, getSupabase, isSupabaseOnly, requireAuth } f
 import { refreshTieredRewardsScheduler } from "@/lib/tiered-rewards/scheduler";
 import { loadAllConfigs } from "@/lib/tiered-rewards/db";
 import type { TieredRewardConfig } from "@/lib/tiered-rewards/types";
-import { encryptStoredSecret } from "@/lib/secret-storage";
+import { rewardSigningFields, rewardSigningUpdate } from "@/lib/tiered-rewards/signing";
 
 type Row = Record<string, unknown>;
 
@@ -57,8 +57,7 @@ async function supabaseGet(userId: string): Promise<TieredRewardConfig[]> {
       assetCode: c.asset_code,
       assetIssuer: c.asset_issuer,
       network: "public",
-      secretKey: null,
-      hasKey: !!(c.secret_key || ""),
+      ...rewardSigningFields(c.secret_key),
       intervalMinutes: c.interval_minutes ?? null,
       enabled: c.enabled === true || c.enabled === 1,
       minReserve: c.min_reserve ?? 10.0,
@@ -129,6 +128,15 @@ export async function POST(req: NextRequest) {
   if (type === "config" && data.network !== undefined && data.network !== "public") {
     return NextResponse.json({ error: "Only mainnet is supported" }, { status: 400 });
   }
+  if (process.env.VERCEL && type === "config" && data.enabled === true) {
+    return NextResponse.json({ error: "Scheduled rewards are unavailable on this deployment. Use Run Now instead." }, { status: 400 });
+  }
+
+  let signingUpdate: string | undefined;
+  if (type === "config" && (action === "create" || action === "update")) {
+    try { signingUpdate = await rewardSigningUpdate(data, auth.userId); }
+    catch (error) { return NextResponse.json({ error: error instanceof Error ? error.message : "Invalid signing wallet" }, { status: 400 }); }
+  }
 
   if (isSupabaseOnly()) {
     const sb = getSupabase()!;
@@ -143,7 +151,7 @@ export async function POST(req: NextRequest) {
           await assertMutation(sb.from("tiered_reward_configs").insert({
             id: data.id, user_id: userId, name: data.name, asset_code: data.assetCode,
             asset_issuer: data.assetIssuer, network: "public",
-            secret_key: encryptStoredSecret(typeof data.secretKey === "string" ? data.secretKey : ""),
+            secret_key: signingUpdate ?? "",
             interval_minutes: data.intervalMinutes ?? null, enabled: !!data.enabled,
             min_reserve: data.minReserve ?? 10.0, min_sender_threshold: data.minSenderThreshold ?? 0,
             preview_only: !!data.previewOnly, batch_send: data.batchSend !== false,
@@ -158,8 +166,7 @@ export async function POST(req: NextRequest) {
           if (data.assetIssuer !== undefined) updates.asset_issuer = data.assetIssuer;
           if (data.network !== undefined) updates.network = data.network;
           // Only update key when caller supplies a non-empty value (empty/undefined = keep existing)
-          if (typeof data.secretKey === "string" && data.secretKey !== "") updates.secret_key = encryptStoredSecret(data.secretKey);
-          if (data.secretKey === null) updates.secret_key = ""; // explicit clear
+          if (signingUpdate !== undefined) updates.secret_key = signingUpdate;
           if (data.intervalMinutes !== undefined) updates.interval_minutes = data.intervalMinutes ?? null;
           if (data.enabled !== undefined) updates.enabled = !!data.enabled;
           if (data.minReserve !== undefined) updates.min_reserve = data.minReserve;
@@ -280,7 +287,7 @@ export async function POST(req: NextRequest) {
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         ).run(
           data.id, data.name, data.assetCode, data.assetIssuer, "public",
-          encryptStoredSecret(typeof data.secretKey === "string" ? data.secretKey : ""), data.intervalMinutes ?? null, data.enabled ? 1 : 0,
+          signingUpdate ?? "", data.intervalMinutes ?? null, data.enabled ? 1 : 0,
           data.minReserve ?? 10.0, data.minSenderThreshold ?? 0, data.previewOnly ? 1 : 0,
           data.batchSend !== false ? 1 : 0, data.memo ?? null, data.feeMultiplier ?? 1.0,
           JSON.stringify(data.excludeAddresses ?? []), Date.now()
@@ -295,8 +302,7 @@ export async function POST(req: NextRequest) {
         if (data.assetIssuer !== undefined) { fields.push("asset_issuer = ?"); vals.push(data.assetIssuer); }
         if (data.network !== undefined) { fields.push("network = ?"); vals.push(data.network); }
         // Only update key when caller supplies a non-empty value (empty/undefined = keep existing)
-        if (typeof data.secretKey === "string" && data.secretKey !== "") { fields.push("secret_key = ?"); vals.push(encryptStoredSecret(data.secretKey)); }
-        if (data.secretKey === null) { fields.push("secret_key = ?"); vals.push(""); } // explicit clear
+        if (signingUpdate !== undefined) { fields.push("secret_key = ?"); vals.push(signingUpdate); }
         if (data.intervalMinutes !== undefined) { fields.push("interval_minutes = ?"); vals.push(data.intervalMinutes ?? null); }
         if (data.enabled !== undefined) { fields.push("enabled = ?"); vals.push(data.enabled ? 1 : 0); }
         if (data.minReserve !== undefined) { fields.push("min_reserve = ?"); vals.push(data.minReserve); }

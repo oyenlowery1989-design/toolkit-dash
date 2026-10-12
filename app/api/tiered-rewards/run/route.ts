@@ -4,9 +4,9 @@ import { getSupabase, isSupabaseOnly, requireAuth } from "@/lib/supabase-server"
 import { refreshTieredRewardsScheduler } from "@/lib/tiered-rewards/scheduler";
 import { loadConfig } from "@/lib/tiered-rewards/db";
 import type { TieredRewardConfig, Tier, RewardAsset, RewardsPreview } from "@/lib/tiered-rewards/types";
-import { decryptStoredSecret } from "@/lib/secret-storage";
+import { rewardSigningFields } from "@/lib/tiered-rewards/signing";
 import { createPreviewApproval, stablePreviewDigest, validateMainnetRun, verifyPreviewApproval } from "@/lib/mainnet-safety";
-import { tieredRewardXlmLast24Hours } from "@/lib/mainnet-usage";
+import { getReservedMainnetXlm, MainnetSigningBudgetUnavailableError } from "@/lib/mainnet-signing-budget";
 
 type Row = Record<string, unknown>;
 
@@ -66,7 +66,7 @@ async function loadConfigFromSupabase(configId: string, userId: string): Promise
   );
   return {
     id: c.id, name: c.name, assetCode: c.asset_code, assetIssuer: c.asset_issuer,
-    network: "public", secretKey: decryptStoredSecret(c.secret_key as string | undefined) || null,
+    network: "public", ...rewardSigningFields(c.secret_key, true),
     intervalMinutes: c.interval_minutes ?? null,
     enabled: c.enabled === true || c.enabled === 1,
     minReserve: c.min_reserve ?? 10.0, minSenderThreshold: c.min_sender_threshold ?? 0,
@@ -107,16 +107,25 @@ export async function POST(req: NextRequest) {
   const { calculatePreview } = await import("@/lib/tiered-rewards/calculator");
 
   if (body.mode === "preview") {
-    const preview = await calculatePreview(config);
+    const preview = await calculatePreview(config, undefined, auth.userId ?? undefined);
     if ("error" in preview) return NextResponse.json(preview, { status: 400 });
-    const daily = await tieredRewardXlmLast24Hours(auth.userId ?? undefined);
-    const safetyWarnings = validateMainnetRun({ ...rewardsPreviewIntent(preview), xlmSentLast24Hours: daily });
+    let daily: number;
+    try { daily = await getReservedMainnetXlm(); }
+    catch (error) {
+      if (error instanceof MainnetSigningBudgetUnavailableError) {
+        return NextResponse.json({ error: error.message }, { status: 503 });
+      }
+      throw error;
+    }
+    const intent = rewardsPreviewIntent(preview);
+    const feePerOperation = Math.round(100 * Math.max(1, config.feeMultiplier)) / 1e7;
+    const safetyWarnings = validateMainnetRun({ ...intent, xlmAmount: intent.xlmAmount + intent.operationCount * feePerOperation, xlmSentLast24Hours: daily });
     const token = createPreviewApproval(`tiered-rewards:${config.id}`, auth.userId ?? "local", rewardsPreviewDigest(preview));
     return NextResponse.json({ ...preview, previewToken: token ?? undefined, safetyWarnings });
   }
 
   if (body.mode === "run") {
-    const preview = await calculatePreview(config);
+    const preview = await calculatePreview(config, undefined, auth.userId ?? undefined);
     if ("error" in preview) return NextResponse.json(preview, { status: 400 });
     if (preview.blocked) return NextResponse.json({ error: preview.blockReasons.join("; ") }, { status: 400 });
     if (!verifyPreviewApproval(
@@ -129,7 +138,7 @@ export async function POST(req: NextRequest) {
     }
 
     const { runConfig } = await import("@/lib/tiered-rewards/runner");
-    const result = await runConfig(config, preview.assignments, auth.userId ?? undefined);
+    const result = await runConfig(config, preview.assignments, auth.userId ?? undefined, preview.senderAddress);
 
     // Persist last_run_at after a successful run. This MUST be durable: if it silently fails,
     // the scheduler will see a stale last_run_at and may re-run (and re-pay) this config on its

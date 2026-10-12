@@ -191,3 +191,58 @@ describe("StandardStrategy.buildTransactions", () => {
     expect(op.asset.getCode()).not.toBe("MYTOKEN");
   });
 });
+
+describe("saved wallet role signing", () => {
+  it("routes each role to its own wallet ID with no browser key", async () => {
+    const { TransactionBuilder, Transaction } = await import("stellar-sdk");
+    const requests: { walletId: string; stepId: string; network: string; xdr: string }[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (_url, init) => {
+      const body = JSON.parse(init.body);
+      requests.push(body);
+      const tx = TransactionBuilder.fromXDR(body.xdr, Networks.PUBLIC) as InstanceType<typeof Transaction>;
+      const kp = body.walletId === "issuer" ? issuerKp : body.walletId === "distributor" ? distribKp : fundingKp;
+      tx.sign(kp);
+      return new Response(JSON.stringify({ xdr: tx.toXDR() }), { status: 200 });
+    }));
+    try {
+      const form = { ...baseForm, network: "public" as const, issuerSecretKey: "", distributorSecretKey: "", resolvedFundingSecretKey: "", issuerWalletId: "issuer", distributorWalletId: "distributor", fundingWalletId: "funder", fundingPublicKey: fundingKp.publicKey(), homeDomain: "example.com" };
+      await StandardStrategy.buildTransactions(form, ["fund-accounts"], makeServerWithMissing([issuerKp.publicKey(), distribKp.publicKey()]), Networks.PUBLIC, new AbortController().signal);
+      await StandardStrategy.buildTransactions(form, ["set-home-domain", "trustline", "issuance"], makeServer(), Networks.PUBLIC, new AbortController().signal);
+      expect(requests.map(({ walletId, stepId }) => [walletId, stepId])).toEqual([["funder", "fund-accounts"], ["issuer", "set-home-domain"], ["distributor", "trustline"], ["issuer", "issuance"]]);
+      expect(requests.map(({ network }) => network)).toEqual(["public", "public", "public", "public"]);
+      for (const { xdr } of requests) expect(new Transaction(xdr, Networks.PUBLIC).signatures).toHaveLength(0);
+    } finally { vi.unstubAllGlobals(); }
+  });
+
+  it("sends testnet network for a saved issuer wallet", async () => {
+    const { TransactionBuilder, Transaction } = await import("stellar-sdk");
+    const requests: { network: string; xdr: string }[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (_url, init) => {
+      const body = JSON.parse(init.body);
+      requests.push(body);
+      const tx = TransactionBuilder.fromXDR(body.xdr, Networks.TESTNET) as InstanceType<typeof Transaction>;
+      tx.sign(issuerKp);
+      return new Response(JSON.stringify({ xdr: tx.toXDR() }), { status: 200 });
+    }));
+    try {
+      const txns = await StandardStrategy.buildTransactions(
+        { ...baseForm, issuerSecretKey: "", issuerWalletId: "issuer" },
+        ["issuance"], makeServer(), Networks.TESTNET, new AbortController().signal,
+      );
+      expect(requests).toEqual([expect.objectContaining({ network: "testnet" })]);
+      const signed = new Transaction(txns[0].xdr, Networks.TESTNET);
+      expect(issuerKp.verify(signed.hash(), signed.signatures[0].signature())).toBe(true);
+    } finally { vi.unstubAllGlobals(); }
+  });
+
+  it("does not sign or remint supply already held by distributor", async () => {
+    const server = makeServer();
+    vi.mocked(server.loadAccount).mockResolvedValue({ balances: [{ asset_type: "credit_alphanum12", asset_code: baseForm.assetCode, asset_issuer: baseForm.issuerPublicKey, balance: String(baseForm.supply) }] } as never);
+    const fetchSpy = vi.fn(); vi.stubGlobal("fetch", fetchSpy);
+    try {
+      const txns = await StandardStrategy.buildTransactions({ ...baseForm, issuerSecretKey: "", issuerWalletId: "issuer" }, ["issuance"], server, Networks.PUBLIC, new AbortController().signal);
+      expect(txns).toHaveLength(0);
+      expect(fetchSpy).not.toHaveBeenCalled();
+    } finally { vi.unstubAllGlobals(); }
+  });
+});

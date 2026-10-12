@@ -1,6 +1,9 @@
 ## Payments
-- Route: `app/(tools)/payments/page.tsx` — single file (~2500 lines), no separate components
-- **4 tabs**: Send, Path, Claimable Balance, Fee Bump
+- Route: `app/(tools)/payments/page.tsx` — server shell wrapping `PaymentsPanel` in Suspense; heading/layout retained in the panel
+- UI: `components/payments/PaymentsPanel.tsx` composes the five independent tab views plus signing, memo/fee, address-book, confirmation, error, and success components
+- Shared state/actions: `components/payments/usePaymentsController.ts`; tab switching preserves all drafts, wallet-switch guards, confirmation timing, and recovery behavior
+- Pure transaction operations/recovery builders: `lib/payments/transactions.ts`; types/helpers in `lib/payments/{types,helpers}.ts`. Golden XDR fixtures captured from the pre-refactor implementation verify operation order, amounts, asset case, memo, and offer-cancel counts
+- **5 tabs**: Send, Path, Claimable Balance, Fee Bump, Sponsorship (reuses the existing shared RevokeSponsorshipPanel)
 - Uses shared `useHorizonServer()` hook everywhere (no inline `new Horizon.Server(...)`); all confirm-dialog address rows use `<ShortAddress>` (Send leg destination, Path destination, Claimable claimants) — not raw address strings
 - **Send tab**: multi-leg (asset + amount + destination per leg); wallet picker per leg; address book; ShortAddress badge on valid destinations
   - **Max button**: reserve+sponsorship-aware via `nativeMaxSpendable()` helper (reuses `lib/stellar-reserve.ts`'s `calcAvailableXlm`, fed `numSponsoring`/`numSponsored` now tracked on `AccountBalance`), minus an `estOps`-scaled tx fee estimate — not the old flat-reserve calc. Known ceiling: doesn't count cancel-ops for removeTrustline legs (`ponytail:` comment at the helper)

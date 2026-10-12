@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireAuth } from "@/lib/supabase-server";
 
 // ---------------------------------------------------------------------------
 // Horizon Proxy
@@ -24,6 +25,8 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ path: string[] }> },
 ) {
+  const auth = await requireAuth(request);
+  if (!auth.ok) return auth.response;
   const { path } = await params;
 
   const { searchParams } = request.nextUrl;
@@ -65,6 +68,7 @@ export async function GET(
   // Guard against unexpectedly large responses.
   const contentLength = upstream.headers.get("content-length");
   if (contentLength && parseInt(contentLength) > MAX_RESPONSE_BYTES) {
+    await upstream.body?.cancel();
     return NextResponse.json(
       { error: "Upstream response too large." },
       { status: 502 },
@@ -73,7 +77,22 @@ export async function GET(
 
   let body: unknown;
   try {
-    body = await upstream.json();
+    if (!upstream.body) throw new Error("Missing response body");
+    const reader = upstream.body.getReader();
+    const decoder = new TextDecoder();
+    let bytes = 0;
+    let json = "";
+    for (;;) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      bytes += chunk.value.byteLength;
+      if (bytes > MAX_RESPONSE_BYTES) {
+        await reader.cancel();
+        return NextResponse.json({ error: "Upstream response too large." }, { status: 502 });
+      }
+      json += decoder.decode(chunk.value, { stream: true });
+    }
+    body = JSON.parse(json + decoder.decode());
   } catch {
     return NextResponse.json(
       { error: "Upstream returned non-JSON response." },

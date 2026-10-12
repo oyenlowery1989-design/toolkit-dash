@@ -6,7 +6,7 @@
 - **4-step wizard**: Accounts → Asset Config → Preflight → Execute
 - **Network**: always read from global `useSettings()` — never has its own network selector
 - **Keypair fields**: enter secret key only — public key is derived automatically via `Keypair.fromSecret()`
-- **Wallet picker**: "Use wallet" dropdown on each keypair field loads all wallets from `useWalletsV2()`; picks secret + derives public
+- **Wallet picker**: saved issuer/distributor/funder selections retain wallet ID + public address only; `/api/asset-creator/sign` loads the owned signing key server-side, limits each request to its creation step, and enforces mainnet policy. Manual/generated keys still sign locally.
 - **Funding source** (mainnet/futurenet only): shown only when `network !== "testnet"`; uses `activeWallet` if connected, otherwise manual secret key field. On testnet: Friendbot funds accounts automatically.
 - **Preflight checks**: account existence + balance (≥1.5 XLM) for issuer + distrib, asset already-issued warning, fee estimate — all run on mount
 - **Execution**: `runAssetCreation` in `lib/asset-creator/runner.ts` — testnet uses Friendbot, mainnet submits `fund-accounts` → `set-home-domain` → `trustline` → `issuance` transactions sequentially
@@ -14,4 +14,4 @@
 - **`StandardStrategy`** in `builder.ts` implements `CreationStrategy` interface — pluggable for future multi-sig or custom strategies
 - **Execution progress**: live per-step checklist shown during execution (onStep wired, not a no-op)
 - **fund-accounts smart**: checks each account individually before creating — handles pre-existing accounts gracefully
-- **Mainnet safety**: funding wallet balance checked in preflight; missing funding key blocks execute with clear message
+- **Mainnet safety**: funding wallet address checked in preflight; missing saved-wallet reference/manual funding key blocks execute. Saved keys are never returned to the browser.

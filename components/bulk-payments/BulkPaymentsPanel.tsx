@@ -4,7 +4,7 @@ import { useRef, useState, useCallback, useEffect } from "react";
 import { useSearchParams } from "next/navigation";
 import { Asset, StrKey, Keypair } from "stellar-sdk";
 import { useAssetGroups } from "@/hooks/use-asset-groups";
-import { useActiveWallet } from "@/hooks/use-active-wallet";
+import { setActiveWalletId, useActiveWallet } from "@/hooks/use-active-wallet";
 import { WalletSelect } from "@/components/ui/wallet-select";
 import {
   Select,
@@ -199,6 +199,7 @@ export function BulkPaymentsPanel() {
   const [secretKey, setSecretKey] = useState("");
 
   const effectiveSecretKey = activeWallet?.secretKey ?? secretKey;
+  const signingIdentity = activeWallet ? `wallet:${activeWallet.id}` : `manual:${secretKey}`;
   const [batchSize, setBatchSize] = useState(BATCH_SIZE);
   const [feeMultiplier, setFeeMultiplier] = useState(1);
   const [showSecret, setShowSecret] = useState(false);
@@ -248,6 +249,16 @@ export function BulkPaymentsPanel() {
 
   const abortRef = useRef<AbortController | null>(null);
 
+  useEffect(() => {
+    if (phase === "preview") {
+      setPhase("configure");
+      setError("Signing wallet changed — please run Preview again.");
+    } else if (phase === "sending") {
+      abortRef.current?.abort();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [signingIdentity]);
+
   // Abort any in-flight send if the panel unmounts (e.g. user navigates away
   // mid-send) so the batch loop doesn't keep running with no UI to control it.
   useEffect(() => {
@@ -275,12 +286,13 @@ export function BulkPaymentsPanel() {
   );
 
   const getSenderPublicKey = useCallback((): string | null => {
+    if (activeWallet) return activeWallet.publicKey;
     try {
       return Keypair.fromSecret(effectiveSecretKey.trim()).publicKey();
     } catch {
       return null;
     }
-  }, [effectiveSecretKey]);
+  }, [activeWallet, effectiveSecretKey]);
 
   // Shared by handlePreview's group branch and handleSaveList, so "Save
   // List" works right after picking a group without requiring Preview first.
@@ -362,8 +374,9 @@ export function BulkPaymentsPanel() {
   function validateForm(): string | null {
     if (memoBytes > MEMO_MAX_BYTES)
       return `Memo exceeds ${MEMO_MAX_BYTES} bytes (currently ${memoBytes}).`;
-    if (!effectiveSecretKey.trim()) return "Signing secret key is required.";
-    if (!effectiveSecretKey.trim().startsWith("S") || effectiveSecretKey.trim().length !== 56)
+    if (activeWallet && !activeWallet.hasKey && !activeWallet.secretKey) return "Connected wallet has no saved signing key.";
+    if (!activeWallet && !effectiveSecretKey.trim()) return "Signing secret key is required.";
+    if (!activeWallet && (!effectiveSecretKey.trim().startsWith("S") || effectiveSecretKey.trim().length !== 56))
       return "Secret key must start with S and be 56 characters.";
     if (!amount.trim() || isNaN(parseFloat(amount)) || parseFloat(amount) <= 0)
       return "Payment amount must be a positive number.";
@@ -577,6 +590,8 @@ export function BulkPaymentsPanel() {
         horizonUrl,
         network,
         secretKey: effectiveSecretKey.trim(),
+        walletId: activeWallet?.id,
+        walletAddress: activeWallet?.publicKey,
         recipients,
         memo: memo.trim(),
         batchSize,
@@ -694,6 +709,8 @@ export function BulkPaymentsPanel() {
         horizonUrl,
         network,
         secretKey: effectiveSecretKey.trim(),
+        walletId: activeWallet?.id,
+        walletAddress: activeWallet?.publicKey,
         recipients: failedRecipients,
         memo: memo.trim(),
         batchSize: 1,
@@ -1034,7 +1051,7 @@ export function BulkPaymentsPanel() {
           <CardTitle className="text-sm font-medium">Message &amp; Signing</CardTitle>
           <CardDescription>
             The memo is attached to every transaction and visible on explorers.
-            The secret key never leaves your browser.
+            Manual keys sign in this browser. Saved wallet keys stay encrypted on the server and sign there.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4 px-4 pb-3">
@@ -1133,7 +1150,7 @@ export function BulkPaymentsPanel() {
                     <Label htmlFor="secret-key">Signing Secret Key</Label>
                     <WalletSelect
                       currentValue={secretKey}
-                      onPick={(w) => setSecretKey(w.secretKey)}
+                      onPick={(w) => { setSecretKey(""); setActiveWalletId(w.id); }}
                     />
                   </div>
                   <div className="relative">

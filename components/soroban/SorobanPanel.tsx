@@ -32,7 +32,7 @@ import {
 } from "@/components/ui/select";
 import { useSettings } from "@/lib/settings";
 import { useAssetGroups } from "@/hooks/use-asset-groups";
-import { useActiveWallet } from "@/hooks/use-active-wallet";
+import { setActiveWalletId, useActiveWallet } from "@/hooks/use-active-wallet";
 import { useAutoSaveSigningKey } from "@/hooks/use-auto-save-signing-key";
 import { WalletSelect } from "@/components/ui/wallet-select";
 import { shortAddr } from "@/lib/format";
@@ -177,8 +177,9 @@ export function SorobanPanel() {
 
   async function handleDeploy() {
     if (!contractId) return;
-    const effectiveSecretKey = activeWallet?.secretKey ?? secretKey.trim();
-    if (!effectiveSecretKey) return;
+    const walletId = activeWallet?.hasKey || activeWallet?.secretKey ? activeWallet.id : null;
+    const manualSecret = activeWallet ? "" : secretKey.trim();
+    if (!walletId && !manualSecret) return;
 
     abortRef.current?.abort();
     abortRef.current = new AbortController();
@@ -198,7 +199,7 @@ export function SorobanPanel() {
         body: JSON.stringify({
           assetCode: assetCode.trim(),
           issuer: issuer.trim(),
-          secretKey: effectiveSecretKey,
+          ...(walletId ? { walletId } : { secretKey: manualSecret }),
           network: settings.network,
         }),
       });
@@ -209,7 +210,7 @@ export function SorobanPanel() {
       setDeployResult({ contractId: data.contractId, txHash: data.txHash });
       setDeployStatus("deployed");
       if (!activeWallet) {
-        try { autoSaveSigningKey(Keypair.fromSecret(effectiveSecretKey).publicKey()); } catch { /* invalid key */ }
+        try { autoSaveSigningKey(Keypair.fromSecret(manualSecret).publicKey()); } catch { /* invalid key */ }
       }
     } catch (e) {
       if (!abortRef.current?.signal.aborted) {
@@ -246,10 +247,10 @@ export function SorobanPanel() {
         ? "https://stellar.expert/explorer/testnet"
         : null;
 
-  const effectiveSecretKey = activeWallet?.secretKey ?? secretKey.trim();
+  const hasSigner = activeWallet ? Boolean(activeWallet.hasKey || activeWallet.secretKey) : Boolean(secretKey.trim());
   const canDeploy =
     !!contractId &&
-    !!effectiveSecretKey &&
+    hasSigner &&
     deployStatus === "not_deployed" &&
     !deploying;
 
@@ -440,7 +441,7 @@ export function SorobanPanel() {
                   <Label htmlFor="secret-key">Secret Key (payer)</Label>
                   <WalletSelect
                     currentValue={secretKey}
-                    onPick={(w) => setSecretKey(w.secretKey)}
+                    onPick={(w) => { setSecretKey(""); setActiveWalletId(w.id); }}
                   />
                 </div>
                 <Input

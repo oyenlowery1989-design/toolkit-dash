@@ -8,7 +8,11 @@ export interface AssetCreatorForm {
   issuerSecretKey: string;
   distributorPublicKey: string;
   distributorSecretKey: string;
-  /** Resolved by panel: activeWallet.secretKey ?? manualFundingSecretKey. Empty string if mainnet funding not needed. */
+  issuerWalletId?: string;
+  distributorWalletId?: string;
+  fundingWalletId?: string;
+  fundingPublicKey?: string;
+  /** Manual funding key only; saved keys stay on the server. */
   resolvedFundingSecretKey: string;
   assetCode: string;     // case preserved — never uppercased
   tokenName: string;     // "" if not provided; TOML only

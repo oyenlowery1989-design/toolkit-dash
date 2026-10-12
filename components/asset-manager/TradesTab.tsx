@@ -51,7 +51,9 @@ export function TradesTab({ assetCode, issuer }: Props) {
 
   const [distribSecretKey, setDistribSecretKey] = useState("");
 
-  const effectiveSecretKey = activeWallet?.secretKey ?? distribSecretKey.trim();
+  const effectiveSecretKey = activeWallet ? "" : distribSecretKey.trim();
+  const savedSigner = activeWallet ?? undefined;
+  const canSign = !!savedSigner || !!effectiveSecretKey;
   const signerPublicKey = activeWallet?.publicKey ?? (() => {
     try {
       return effectiveSecretKey ? Keypair.fromSecret(effectiveSecretKey).publicKey() : "";
@@ -97,7 +99,7 @@ export function TradesTab({ assetCode, issuer }: Props) {
         : null;
 
   async function handleBatch() {
-    if (!effectiveSecretKey) return;
+    if (!canSign) return;
     const n = Math.min(50, Math.max(1, parseInt(batchCount) || 1));
     const confirmed = window.confirm(
       `Place ${n} ${batchSide.toUpperCase()} offer(s) for ${assetCode}, ${batchAmount} ${assetCode} each, price ${batchPriceFrom}${batchMode === "ladder" ? ` → ${batchPriceTo}` : ""} XLM per ${assetCode}?`
@@ -111,6 +113,7 @@ export function TradesTab({ assetCode, issuer }: Props) {
     await createBatchOffers({
       horizonUrl,
       secretKey: effectiveSecretKey,
+      savedSigner,
       assetCode,
       issuerAddress: issuer,
       side: batchSide,
@@ -135,7 +138,7 @@ export function TradesTab({ assetCode, issuer }: Props) {
   }
 
   const canBatch =
-    !!effectiveSecretKey &&
+    canSign &&
     parseFloat(batchAmount) > 0 &&
     parseFloat(batchPriceFrom) > 0 &&
     parseInt(batchCount) > 0 &&
@@ -167,7 +170,7 @@ export function TradesTab({ assetCode, issuer }: Props) {
   }
 
   async function handleCreate() {
-    if (!effectiveSecretKey || !amount || !price) return;
+    if (!canSign || !amount || !price) return;
     const confirmed = window.confirm(
       `Place a SELL offer: ${parseFloat(amount).toLocaleString()} ${assetCode} for ${(parseFloat(amount) * parseFloat(price)).toLocaleString(undefined, { maximumFractionDigits: 7 })} XLM total (price ${price} XLM per ${assetCode})?`
     );
@@ -184,6 +187,7 @@ export function TradesTab({ assetCode, issuer }: Props) {
         amount,
         price,
         settings.network,
+        savedSigner,
       );
       setCreateHash(hash);
       setAmount("");
@@ -199,7 +203,7 @@ export function TradesTab({ assetCode, issuer }: Props) {
   }
 
   async function handleDelete(offer: MyOffer) {
-    if (!effectiveSecretKey) return;
+    if (!canSign) return;
     const confirmed = window.confirm(
       `Cancel offer #${offer.id} (${offer.side === "sell" ? "SELL" : "BUY"}, ${offer.amount} ${assetCode} @ ${offer.price} XLM)?`
     );
@@ -215,6 +219,7 @@ export function TradesTab({ assetCode, issuer }: Props) {
         offer.price,
         offer.side,
         settings.network,
+        savedSigner,
       );
       setDeleteResults((prev) => ({ ...prev, [offer.id]: { hash } }));
       setOffers((prev) => prev.filter((o) => o.id !== offer.id));
@@ -229,7 +234,7 @@ export function TradesTab({ assetCode, issuer }: Props) {
   }
 
   const canCreate =
-    !!effectiveSecretKey &&
+    canSign &&
     amount.trim().length > 0 &&
     parseFloat(amount) > 0 &&
     price.trim().length > 0 &&
@@ -243,7 +248,10 @@ export function TradesTab({ assetCode, issuer }: Props) {
     setLoaded(false);
     setLoadError(null);
     setDeleteResults({});
-  }, [assetCode, issuer]);
+    batchAbortRef.current?.abort();
+  }, [assetCode, issuer, signerPublicKey]);
+
+  useEffect(() => () => batchAbortRef.current?.abort(), []);
 
   // Only one write action (place / batch / cancel) may be in flight at a
   // time — they all sign with the same distributor account and would
@@ -741,7 +749,7 @@ export function TradesTab({ assetCode, issuer }: Props) {
                               <Button
                                 variant="ghost"
                                 onClick={() => handleDelete(offer)}
-                                disabled={!effectiveSecretKey || anyActionInFlight}
+                                disabled={!canSign || anyActionInFlight}
                                 className="h-auto inline-flex items-center gap-1 rounded border border-destructive/40 bg-destructive/10 px-2 py-0.5 text-[10px] font-medium text-destructive hover:bg-destructive/20 hover:text-destructive disabled:opacity-40"
                               >
                                 <Trash2 className="h-3 w-3" />

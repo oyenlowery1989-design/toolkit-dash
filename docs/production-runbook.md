@@ -21,6 +21,8 @@ Set these in the deployment secret manager, never in a committed `.env` file:
 
 Keep the encryption key stable across deployments. Losing it makes encrypted signing keys unrecoverable. Rotate it only with a planned decrypt-and-reencrypt migration.
 
+`MAINNET_MAX_XLM_PER_DAY` is enforced through a shared reservation for saved-wallet signing, browser submissions (including manually entered keys), and server-run automations. The browser submits signed XDR through `/api/transactions/submit`, which checks the full transaction before forwarding it to Horizon. `ALLOW_BROWSER_SIGNING_KEYS=false` prevents exporting saved keys to the browser. A person who knows a manual secret can still submit outside this application; this policy controls only transactions sent through the app. During the first 24 hours after enabling the shared budget, reconcile earlier Auto-Send and Tiered Rewards payments because their past transactions are not backfilled into the new reservation table.
+
 ## Deployment order
 
 1. Apply `supabase-schema.sql`, then `supabase-rls-migration.sql` using a privileged migration connection.
@@ -67,6 +69,8 @@ npm run drill:backup
 ```
 
 Also schedule Supabase platform backups according to the required recovery-point objective. At least quarterly, restore a platform backup into an isolated project, apply the current application, run the health check, verify record counts, and confirm that encrypted keys decrypt with the production encryption key supplied through the isolated secret manager.
+
+The in-app JSON export and `/api/db/restore` cover user data, not the server-only `mainnet_signing_budget` and `asset_creator_issuance_claims` tables. Preserve these tables in platform/SQLite database snapshots. After restoring an older snapshot, keep mainnet execution disabled until every signature issued since that snapshot and every asset issuance is reconciled against Horizon. A missing issuance claim can permit another mint; an incomplete daily budget can permit spending past the configured cap. An expired issuance claim remains locked: inspect its stored `unsigned_hash` on the correct network and reconcile the ledger before any manual database correction. Never clear a claim just to make Retry work.
 
 Database backups contain Storage metadata, not the stored objects themselves. If Supabase Storage is added to this application, back up and restore those objects separately.
 

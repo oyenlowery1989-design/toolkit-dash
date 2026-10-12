@@ -5,8 +5,9 @@ import { AutoSendRunInProgressError, runGroup, previewGroup } from "@/lib/auto-s
 import { refreshScheduler } from "@/lib/auto-send/scheduler";
 import { rowToGroup } from "@/lib/auto-send/db-map";
 import type { AutoSendGroup, DestinationRunResult } from "@/lib/auto-send/types";
-import { autoSendXlmLast24Hours } from "@/lib/mainnet-usage";
+import { getReservedMainnetXlm, MainnetSigningBudgetUnavailableError } from "@/lib/mainnet-signing-budget";
 import { createPreviewApproval, stablePreviewDigest, validateMainnetRun, verifyPreviewApproval } from "@/lib/mainnet-safety";
+import { AutoSendReconciliationRequiredError, deleteAutoSendRunGuard, readAutoSendRunGuard } from "@/lib/auto-send/run-guard";
 
 type Row = Record<string, unknown>;
 
@@ -46,7 +47,7 @@ async function loadGroup(groupId: string, userId: string | null): Promise<AutoSe
  * the actual send/skip/fail results to the client (money may already have moved). Instead this
  * resolves to `{ ok: false }` so the route can surface `logWriteFailed: true` in the response.
  */
-async function writeRunLog(userId: string | null, groupId: string, walletAddress: string, results: DestinationRunResult[], ranAt: number): Promise<{ ok: boolean }> {
+async function writeRunLog(groupId: string, walletAddress: string, results: DestinationRunResult[], ranAt: number): Promise<{ ok: boolean }> {
   if (!isSupabaseOnly()) return { ok: true }; // SQLite logging is handled inside runner.ts for local mode
   if (results.length === 0) return { ok: true };
   try {
@@ -78,7 +79,6 @@ async function writeRunLog(userId: string | null, groupId: string, walletAddress
  *  error propagates to the outer handler. (runGroup never throws today; it always resolves a
  *  GroupRunResult.) */
 async function runAndLog(
-  userId: string | null,
   group: AutoSendGroup,
   runFn: () => Promise<Awaited<ReturnType<typeof runGroup>>>
 ): Promise<{ result: Awaited<ReturnType<typeof runGroup>>; logWriteFailed: boolean }> {
@@ -88,11 +88,25 @@ async function runAndLog(
     result = await runFn();
   } finally {
     if (result) {
-      const { ok } = await writeRunLog(userId, group.id, result.walletAddress, result.results, result.ranAt);
+      const { ok } = await writeRunLog(group.id, result.walletAddress, result.results, result.ranAt);
       logWriteFailed = !ok;
     }
   }
   return { result, logWriteFailed };
+}
+
+export async function GET(req: NextRequest) {
+  const auth = await requireAuth(req);
+  if (!auth.ok) return auth.response;
+  const groupId = req.nextUrl.searchParams.get("groupId");
+  if (!groupId) return NextResponse.json({ error: "groupId required" }, { status: 400 });
+  try {
+    if (!await loadGroup(groupId, auth.userId ?? null)) return NextResponse.json({ error: "Group not found" }, { status: 404 });
+    return NextResponse.json({ guard: await readAutoSendRunGuard(groupId) });
+  } catch (error) {
+    console.error("[auto-send/run] GET guard failed:", error);
+    return NextResponse.json({ error: "Could not check run status" }, { status: 500 });
+  }
 }
 
 export async function POST(req: NextRequest) {
@@ -114,17 +128,38 @@ export async function POST(req: NextRequest) {
 
     const group = await loadGroup(groupId as string, auth.userId ?? null);
     if (!group) return NextResponse.json({ error: "Group not found. It may have been deleted or not yet saved." }, { status: 404 });
+
+    if (action === "resolve-guard") {
+      if (body.confirmation !== "I checked every transaction hash and the wallet balance") {
+        return NextResponse.json({ error: "Ledger reconciliation confirmation required" }, { status: 400 });
+      }
+      const guard = await readAutoSendRunGuard(group.id);
+      if (!guard) return NextResponse.json({ error: "No blocked run found" }, { status: 404 });
+      if (guard.state === "running" && Date.now() - guard.startedAt < 24 * 60 * 60 * 1000) {
+        return NextResponse.json({ error: "This run may still be active. Wait 24 hours before resolving an interrupted run." }, { status: 409 });
+      }
+      const lease = isSupabaseOnly()
+        ? await getSupabase()!.from("auto_send_run_leases").select("expires_at").eq("resource_id", group.id).maybeSingle()
+        : { data: getDb().prepare("SELECT expires_at FROM auto_send_run_leases WHERE resource_id = ?").get(group.id) as { expires_at: number } | undefined, error: null };
+      if (lease.error) throw new Error(`Could not check active run: ${lease.error.message}`);
+      if (Number(lease.data?.expires_at ?? 0) > Date.now()) {
+        return NextResponse.json({ error: "A run is still active" }, { status: 409 });
+      }
+      await deleteAutoSendRunGuard(group.id, guard);
+      return NextResponse.json({ ok: true });
+    }
+
     if (!group.secretKey) return NextResponse.json({ error: "This group has no secret key configured. Edit the group and set a wallet key." }, { status: 400 });
 
     if (dryRun) {
       const preview = await previewGroup(group);
       if ("error" in preview) return NextResponse.json(preview, { status: 400 });
-      const daily = await autoSendXlmLast24Hours(preview.walletAddress);
+      const daily = await getReservedMainnetXlm();
       const intended = preview.items.filter((item) => !item.wouldSkip);
       const safetyWarnings = validateMainnetRun({
         destinations: intended.map((item) => item.destination),
         operationCount: intended.length,
-        xlmAmount: intended.reduce((sum, item) => sum + item.amountXlm, 0),
+        xlmAmount: intended.reduce((sum, item) => sum + item.amountXlm, 0) + intended.length * 100 / 1e7,
         xlmSentLast24Hours: daily,
       });
       const token = createPreviewApproval(`auto-send:${group.id}`, auth.userId ?? "local", previewDigest(preview));
@@ -133,7 +168,7 @@ export async function POST(req: NextRequest) {
 
     if (testRun) {
       const testGroup = { ...group, testMode: true };
-      const { result, logWriteFailed } = await runAndLog(auth.userId ?? null, group, () => runGroup(testGroup));
+      const { result, logWriteFailed } = await runAndLog(group, () => runGroup(testGroup));
       return NextResponse.json(logWriteFailed ? { ...result, logWriteFailed: true } : result);
     }
 
@@ -149,10 +184,13 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Preview approval is missing, expired, or the payment amounts changed. Preview again." }, { status: 428 });
     }
 
-    const { result, logWriteFailed } = await runAndLog(auth.userId ?? null, group, () => runGroup(group));
+    const { result, logWriteFailed } = await runAndLog(group, () => runGroup(group));
     return NextResponse.json(logWriteFailed ? { ...result, logWriteFailed: true } : result);
   } catch (e) {
-    if (e instanceof AutoSendRunInProgressError) {
+    if (e instanceof MainnetSigningBudgetUnavailableError) {
+      return NextResponse.json({ error: e.message }, { status: 503 });
+    }
+    if (e instanceof AutoSendRunInProgressError || e instanceof AutoSendReconciliationRequiredError) {
       return NextResponse.json({ error: e.message }, { status: 409 });
     }
     console.error("[auto-send/run] POST unhandled:", e);

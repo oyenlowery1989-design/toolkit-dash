@@ -7,6 +7,7 @@ import {
   Memo,
   BASE_FEE,
 } from "stellar-sdk";
+import { signCreationTransaction } from "./signing";
 import type { Horizon } from "stellar-sdk";
 import type { AssetCreatorForm, SignedTx, CreationStrategy } from "./types";
 
@@ -73,8 +74,8 @@ export const StandardStrategy: CreationStrategy = {
         // If both already exist, nothing to do
         if (issuerExists && distribExists) continue;
 
-        const fundingKp = Keypair.fromSecret(form.resolvedFundingSecretKey);
-        const fundingAccount = await server.loadAccount(fundingKp.publicKey());
+        const fundingPublicKey = form.fundingWalletId ? form.fundingPublicKey! : Keypair.fromSecret(form.resolvedFundingSecretKey).publicKey();
+        const fundingAccount = await server.loadAccount(fundingPublicKey);
         if (signal.aborted) throw new DOMException("Aborted", "AbortError");
 
         const builder = new TransactionBuilder(fundingAccount, { fee: BASE_FEE, networkPassphrase });
@@ -93,19 +94,19 @@ export const StandardStrategy: CreationStrategy = {
         }
 
         const tx = builder.setTimeout(TX_TIMEOUT).build();
-        tx.sign(fundingKp);
+        const xdr = await signCreationTransaction(tx, form.fundingWalletId, form.resolvedFundingSecretKey, stepId, signal, networkPassphrase);
         results.push({
           stepId: "fund-accounts",
           label: "Fund issuer + distributor accounts",
-          xdr: tx.toEnvelope().toXDR("base64"),
-          sourceAccount: fundingKp.publicKey(),
+          xdr,
+          sourceAccount: fundingPublicKey,
         });
       }
 
       if (stepId === "set-home-domain") {
         if (!form.homeDomain) continue;
-        const issuerKp = Keypair.fromSecret(form.issuerSecretKey);
-        const issuerAccount = await server.loadAccount(issuerKp.publicKey());
+        const issuerPublicKey = form.issuerPublicKey;
+        const issuerAccount = await server.loadAccount(issuerPublicKey);
         if (signal.aborted) throw new DOMException("Aborted", "AbortError");
 
         const tx = new TransactionBuilder(issuerAccount, { fee: BASE_FEE, networkPassphrase })
@@ -113,18 +114,18 @@ export const StandardStrategy: CreationStrategy = {
           .setTimeout(TX_TIMEOUT)
           .build();
 
-        tx.sign(issuerKp);
+        const xdr = await signCreationTransaction(tx, form.issuerWalletId, form.issuerSecretKey, stepId, signal, networkPassphrase);
         results.push({
           stepId: "set-home-domain",
           label: "Set home domain on issuer",
-          xdr: tx.toEnvelope().toXDR("base64"),
-          sourceAccount: issuerKp.publicKey(),
+          xdr,
+          sourceAccount: issuerPublicKey,
         });
       }
 
       if (stepId === "trustline") {
-        const distribKp = Keypair.fromSecret(form.distributorSecretKey);
-        const distribAccount = await server.loadAccount(distribKp.publicKey());
+        const distributorPublicKey = form.distributorPublicKey;
+        const distribAccount = await server.loadAccount(distributorPublicKey);
         if (signal.aborted) throw new DOMException("Aborted", "AbortError");
 
         const asset = new Asset(form.assetCode, form.issuerPublicKey);
@@ -133,12 +134,12 @@ export const StandardStrategy: CreationStrategy = {
           .setTimeout(TX_TIMEOUT)
           .build();
 
-        tx.sign(distribKp);
+        const xdr = await signCreationTransaction(tx, form.distributorWalletId, form.distributorSecretKey, stepId, signal, networkPassphrase);
         results.push({
           stepId: "trustline",
           label: "Distributor establishes trustline",
-          xdr: tx.toEnvelope().toXDR("base64"),
-          sourceAccount: distribKp.publicKey(),
+          xdr,
+          sourceAccount: distributorPublicKey,
         });
       }
 
@@ -157,8 +158,8 @@ export const StandardStrategy: CreationStrategy = {
         if (signal.aborted) throw new DOMException("Aborted", "AbortError");
         if (alreadyIssued) continue;
 
-        const issuerKp = Keypair.fromSecret(form.issuerSecretKey);
-        const issuerAccount = await server.loadAccount(issuerKp.publicKey());
+        const issuerPublicKey = form.issuerPublicKey;
+        const issuerAccount = await server.loadAccount(issuerPublicKey);
         if (signal.aborted) throw new DOMException("Aborted", "AbortError");
 
         const builder = new TransactionBuilder(issuerAccount, { fee: BASE_FEE, networkPassphrase })
@@ -171,12 +172,12 @@ export const StandardStrategy: CreationStrategy = {
         if (form.memo) builder.addMemo(Memo.text(form.memo));
 
         const tx = builder.setTimeout(TX_TIMEOUT).build();
-        tx.sign(issuerKp);
+        const xdr = await signCreationTransaction(tx, form.issuerWalletId, form.issuerSecretKey, stepId, signal, networkPassphrase);
         results.push({
           stepId: "issuance",
           label: "Issuer mints supply to distributor",
-          xdr: tx.toEnvelope().toXDR("base64"),
-          sourceAccount: issuerKp.publicKey(),
+          xdr,
+          sourceAccount: issuerPublicKey,
         });
       }
     }

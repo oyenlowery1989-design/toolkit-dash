@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { Plus, Loader2, Wallet } from "lucide-react";
+import { Plus, Loader2, Wallet, AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -11,6 +11,7 @@ import { useTieredRewardConfigs } from "@/hooks/use-tiered-reward-configs";
 import { useActiveWallet } from "@/hooks/use-active-wallet";
 import { useSettings } from "@/lib/settings";
 import { shortAddr } from "@/lib/format";
+import { authHeaders, waitForAuth } from "@/lib/db-client";
 import { TierConfigCard } from "./TierConfigCard";
 
 const INTERVALS = [
@@ -26,7 +27,7 @@ const INTERVALS = [
 
 export function TieredRewardsPanel() {
   const { configs, isLoaded, createConfig, updateConfig, deleteConfig, upsertTier, deleteTier, upsertRewardAsset, deleteRewardAsset } = useTieredRewardConfigs();
-  const { activeWallet } = useActiveWallet();
+  const { activeWallet, connect } = useActiveWallet();
   const { settings } = useSettings();
 
   const [showNew, setShowNew] = useState(false);
@@ -36,6 +37,7 @@ export function TieredRewardsPanel() {
   const [newNetwork, setNewNetwork] = useState<string>(settings.network ?? "public");
   const [newSecretKey, setNewSecretKey] = useState("");
   const [newInterval, setNewInterval] = useState("1440");
+  const [isServerless, setIsServerless] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
   const newNetworkTouchedRef = useRef(false);
 
@@ -46,7 +48,14 @@ export function TieredRewardsPanel() {
     }
   }, [settings.network]);
 
-  const effectiveSecretKey = activeWallet?.secretKey ?? newSecretKey;
+  useEffect(() => {
+    waitForAuth().then(() => fetch("/api/tiered-rewards/scheduler-status", { headers: authHeaders() }))
+      .then((response) => response.json())
+      .then((data: { serverless: boolean }) => setIsServerless(data.serverless))
+      .catch(() => {});
+  }, []);
+
+  const effectiveSecretKey = activeWallet ? "" : newSecretKey;
 
   function handleCreate() {
     if (!newName.trim()) { setCreateError("Name required"); return; }
@@ -59,11 +68,12 @@ export function TieredRewardsPanel() {
       assetIssuer: newAssetIssuer.trim(),
       network: newNetwork,
       secretKey: effectiveSecretKey.trim() || null,
-      intervalMinutes: newInterval && newInterval !== "manual" ? parseInt(newInterval) : null,
+      walletId: activeWallet?.id ?? null,
+      intervalMinutes: !isServerless && newInterval !== "manual" ? parseInt(newInterval) : null,
       enabled: false,
       minReserve: 10.0,
       minSenderThreshold: 0,
-      previewOnly: !effectiveSecretKey.trim(),
+      previewOnly: !activeWallet && !effectiveSecretKey.trim(),
       batchSend: true,
       memo: null,
       feeMultiplier: 1.0,
@@ -82,6 +92,11 @@ export function TieredRewardsPanel() {
 
   return (
     <div className="space-y-4">
+      {isServerless && (
+        <div className="flex items-center gap-2 rounded-lg border border-yellow-500/20 bg-yellow-500/10 px-4 py-2.5 text-xs text-yellow-500">
+          <AlertTriangle className="h-4 w-4 shrink-0" />Scheduled rewards are unavailable on this deployment. Use Run Now for manual sends.
+        </div>
+      )}
       <div className="flex items-center justify-between">
         <Button onClick={() => setShowNew((v) => !v)}>
           <Plus className="h-4 w-4 mr-1" />New Config
@@ -116,7 +131,7 @@ export function TieredRewardsPanel() {
               <Label className="text-xs">Asset Issuer</Label>
               <Input placeholder="GABC..." value={newAssetIssuer} onChange={(e) => setNewAssetIssuer(e.target.value)} />
             </div>
-            <div>
+            {!isServerless && <div>
               <Label className="text-xs">Schedule</Label>
               <Select value={newInterval} onValueChange={setNewInterval}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
@@ -124,14 +139,14 @@ export function TieredRewardsPanel() {
                   {INTERVALS.map((i) => <SelectItem key={i.value} value={i.value}>{i.label}</SelectItem>)}
                 </SelectContent>
               </Select>
-            </div>
+            </div>}
             <div className="space-y-1">
               <div className="flex items-center justify-between">
                 <Label className="text-xs">Sender Secret Key <span className="text-muted-foreground">(optional)</span></Label>
                 {!activeWallet && (
                   <WalletSelect
                     currentValue={newSecretKey}
-                    onPick={(w) => setNewSecretKey(w.secretKey)}
+                    onPick={(w) => connect(w.id)}
                     onClear={() => setNewSecretKey("")}
                   />
                 )}
@@ -164,6 +179,7 @@ export function TieredRewardsPanel() {
         <TierConfigCard
           key={config.id}
           config={config}
+          isServerless={isServerless}
           onUpdate={updateConfig}
           onDelete={deleteConfig}
           onUpsertTier={upsertTier}

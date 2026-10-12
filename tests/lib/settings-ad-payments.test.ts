@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { DEFAULT_SETTINGS, loadFromStorage } from "@/lib/settings";
+import { Networks } from "stellar-sdk";
+import { DEFAULT_SETTINGS, loadFromStorage, NETWORK_PASSPHRASES } from "@/lib/settings";
 
 const STORAGE_KEY = "stellar-toolkit-settings";
 const store = new Map<string, string>();
@@ -10,6 +11,15 @@ Object.defineProperty(globalThis, "localStorage", { value: {
 }, configurable: true });
 
 afterEach(() => store.clear());
+
+it("keeps the signing network passphrases identical to the Stellar SDK", () => {
+  expect(NETWORK_PASSPHRASES).toEqual({
+    public: Networks.PUBLIC,
+    testnet: Networks.TESTNET,
+    futurenet: Networks.FUTURENET,
+    local: Networks.TESTNET,
+  });
+});
 
 describe("adPaymentRecipient setting", () => {
   it("defaults to empty and sanitizes a malformed persisted value", () => {

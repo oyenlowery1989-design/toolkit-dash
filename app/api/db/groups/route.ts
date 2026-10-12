@@ -135,7 +135,7 @@ export async function POST(req: NextRequest) {
             notes: notes ?? null,
             created_at: now,
             updated_at: now,
-          });
+          }).throwOnError();
         });
 
         return NextResponse.json({ ok: true });
@@ -282,8 +282,8 @@ export async function POST(req: NextRequest) {
           added_at: now,
         },
         { onConflict: "group_id,address" },
-      );
-      await sb.from("asset_groups").update({ updated_at: now }).eq("id", groupId).eq("user_id", userId!);
+      ).throwOnError();
+      await sb.from("asset_groups").update({ updated_at: now }).eq("id", groupId).eq("user_id", userId!).throwOnError();
     });
 
     return NextResponse.json({ ok: true });
@@ -379,7 +379,7 @@ export async function PATCH(req: NextRequest) {
       if (telegramLink !== undefined) patch.telegram_link = telegramLink;
       if (clearPersonId) patch.person_id = null;
       else if (personId !== undefined) patch.person_id = personId;
-      await getSupabase()!.from("asset_groups").update(patch).eq("id", id).eq("user_id", userId!);
+      await getSupabase()!.from("asset_groups").update(patch).eq("id", id).eq("user_id", userId!).throwOnError();
     });
 
     return NextResponse.json({ ok: true });
@@ -445,10 +445,10 @@ export async function PATCH(req: NextRequest) {
       if (role !== undefined) patch.role = role;
       if (homeDomain !== undefined) patch.home_domain = homeDomain;
       if (Object.keys(patch).length > 0) {
-        await getSupabase()!.from("asset_group_members").update(patch).eq("id", id);
+        await getSupabase()!.from("asset_group_members").update(patch).eq("id", id).throwOnError();
       }
       if (groupId) {
-        await getSupabase()!.from("asset_groups").update({ updated_at: now }).eq("id", groupId).eq("user_id", userId!);
+        await getSupabase()!.from("asset_groups").update({ updated_at: now }).eq("id", groupId).eq("user_id", userId!).throwOnError();
       }
     });
 
@@ -506,9 +506,9 @@ export async function DELETE(req: NextRequest) {
       return sb.from("asset_groups").delete().eq("id", key).eq("user_id", userId!);
     } else {
       // asset_group_members has no user_id — scope via parent group ownership
-      const { data: member } = await sb.from("asset_group_members").select("group_id").eq("id", key).single();
+      const { data: member } = await sb.from("asset_group_members").select("group_id").eq("id", key).maybeSingle().throwOnError();
       if (!member) return;
-      const { data: parentGroup } = await sb.from("asset_groups").select("id").eq("id", member.group_id).eq("user_id", userId!).single();
+      const { data: parentGroup } = await sb.from("asset_groups").select("id").eq("id", member.group_id).eq("user_id", userId!).maybeSingle().throwOnError();
       if (!parentGroup) return; // caller doesn't own the parent group — abort
       return sb.from("asset_group_members").delete().eq("id", key);
     }

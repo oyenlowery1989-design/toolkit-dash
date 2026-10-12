@@ -57,7 +57,7 @@ export function useTieredRewardConfigs() {
   const createConfig = useCallback(
     (entry: Omit<TieredRewardConfig, "id" | "createdAt" | "tiers" | "lastRunAt" | "lastFailureAt">) => {
       const id = crypto.randomUUID();
-      const optimistic: TieredRewardConfig = { ...entry, id, createdAt: Date.now(), tiers: [] };
+      const optimistic: TieredRewardConfig = { ...entry, secretKey: null, hasKey: !!entry.walletId || !!entry.secretKey, id, createdAt: Date.now(), tiers: [] };
       _cache.set([optimistic, ..._cache.get()]);
       dbAction("create", "config", { id, ...entry }).catch(handleActionError);
       if (entry.intervalMinutes) triggerSchedulerRefresh();
@@ -67,7 +67,13 @@ export function useTieredRewardConfigs() {
 
   const updateConfig = useCallback(
     (id: string, updates: Partial<Omit<TieredRewardConfig, "tiers">>) => {
-      _cache.set(_cache.get().map((c) => (c.id === id ? { ...c, ...updates } : c)));
+      _cache.set(_cache.get().map((c) => {
+        if (c.id !== id) return c;
+        const signingChanged = updates.walletId !== undefined || updates.secretKey === null || !!updates.secretKey;
+        return { ...c, ...updates, secretKey: null,
+          hasKey: signingChanged ? !!updates.walletId || !!updates.secretKey : c.hasKey,
+          walletId: signingChanged ? updates.walletId ?? null : c.walletId };
+      }));
       dbAction("update", "config", { id, ...updates }).catch(handleActionError);
       if (updates.enabled !== undefined || updates.intervalMinutes !== undefined) {
         triggerSchedulerRefresh();

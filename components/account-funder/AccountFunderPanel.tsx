@@ -20,8 +20,6 @@ import {
   useRef,
   useEffect,
   useCallback,
-  Dispatch,
-  SetStateAction,
 } from "react";
 import {
   Keypair,
@@ -70,6 +68,9 @@ import {
   resolveHorizonUrl,
   resolveNetworkPassphrase,
 } from "@/lib/settings";
+import { resolveFundingFailure, summarizeFunderRun, type RunOutcome } from "@/lib/account-funder/results";
+import { signFunderTransaction } from "@/lib/account-funder/signing";
+import { submitMainnetTransaction } from "@/lib/mainnet-submit-client";
 import { useActiveWallet } from "@/hooks/use-active-wallet";
 import { useWalletsV2 } from "@/hooks/use-wallets-v2";
 import { useAssetGroups } from "@/hooks/use-asset-groups";
@@ -90,41 +91,6 @@ interface GeneratedAccount {
   secretKey: string;
   status: FundStatus;
   error?: string; // Horizon result code if failed (e.g. "op_already_exists")
-}
-
-// ---------------------------------------------------------------------------
-// Verification helper
-//
-// Stellar transactions are atomic — if a batch submission fails, NOTHING in
-// it was committed to the ledger, even though Horizon's per-op result codes
-// can still list "op_success" for ops that would have succeeded had the tx
-// not aborted. The only way to know whether an address actually exists
-// on-ledger after a failed submission is to ask Horizon directly.
-// ---------------------------------------------------------------------------
-
-async function verifyAmbiguousAccounts(
-  addresses: string[],
-  server: InstanceType<typeof StellarSdk.Horizon.Server>,
-  setAccounts: Dispatch<SetStateAction<GeneratedAccount[]>>
-) {
-  for (const address of addresses) {
-    let confirmed = false;
-    try {
-      await server.loadAccount(address);
-      confirmed = true;
-    } catch {
-      confirmed = false;
-    }
-    setAccounts((prev) =>
-      prev.map((a) =>
-        a.publicKey === address
-          ? confirmed
-            ? { ...a, status: "funded" as FundStatus, error: undefined }
-            : { ...a, status: "failed" as FundStatus, error: "unconfirmed on ledger" }
-          : a
-      )
-    );
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -175,12 +141,13 @@ function WalletPicker({
 
       {/* Green chip — shown when a wallet is selected */}
       {selectedWallet && (
-        <div className="flex items-center gap-2 rounded-md border border-green-500/40 bg-green-500/5 px-3 py-2 text-sm">
+        <div className={`flex items-center gap-2 rounded-md border px-3 py-2 text-sm ${selectedWallet.hasKey || selectedWallet.secretKey ? "border-green-500/40 bg-green-500/5" : "border-amber-500/40 bg-amber-500/5"}`}>
           <Wallet className="h-4 w-4 shrink-0 text-green-500" />
           <span className="flex-1 font-medium">{selectedWallet.name}</span>
           <span className="text-xs text-muted-foreground">
             <ShortAddress address={selectedWallet.publicKey} network={network} />
           </span>
+          {!selectedWallet.hasKey && !selectedWallet.secretKey && <span className="text-xs text-amber-600">Watch-only</span>}
         </div>
       )}
 
@@ -605,7 +572,7 @@ export function AccountFunderPanel() {
   function resolveParentKey(): string {
     if (parentMode === "wallet") {
       if (parentWalletId) {
-        return wallets.find((w) => w.id === parentWalletId)?.secretKey ?? "";
+        return "";
       }
       return parentManualKey.trim();
     }
@@ -629,15 +596,13 @@ export function AccountFunderPanel() {
     return generatedParentPublic;
   }
 
-  /** Resolve key from a wallet picker (used for close-tab sponsor) */
-  function resolveKey(walletId: string | null, manualKey: string): string {
-    if (walletId) return wallets.find((w) => w.id === walletId)?.secretKey ?? "";
-    return manualKey.trim();
-  }
-
   const parentSecretKey = resolveParentKey();
   const parentPublicKey = resolveParentPublicKey();
-  const hasParent = parentSecretKey.length > 0 && parentPublicKey.length > 0;
+  const savedParentId = parentMode === "wallet" ? parentWalletId : null;
+  const savedParent = wallets.find((wallet) => wallet.id === savedParentId);
+  const hasParent = !!parentPublicKey && (savedParentId ? !!(savedParent?.hasKey || savedParent?.secretKey) : !!parentSecretKey);
+  const savedCloseSponsor = wallets.find((w) => w.id === closeSponsorWalletId);
+  const canCloseSponsor = closeSponsorWalletId ? !!(savedCloseSponsor?.hasKey || savedCloseSponsor?.secretKey) : !!closeSponsorManualKey.trim();
 
   // ---------------------------------------------------------------------------
   // Step 1: Parent balance fetching
@@ -815,18 +780,18 @@ export function AccountFunderPanel() {
   async function handleDirectFund() {
     if (isDirectFunding) return;
     if (!accounts.length) { toast.error("Generate children first."); return; }
-    if (!parentSecretKey) { toast.error("Select or generate a parent account."); return; }
+    if (!hasParent) { toast.error("Select or generate a parent account."); return; }
 
     const amount = parseFloat(xlmEach);
     if (!amount || amount < 1) { toast.error("Minimum starting balance is 1 XLM."); return; }
 
-    let parentKeypair: Keypair;
-    try { parentKeypair = Keypair.fromSecret(parentSecretKey); }
+    let parentKeypair: Keypair | null = null;
+    try { if (!savedParentId) parentKeypair = Keypair.fromSecret(parentSecretKey); }
     catch { toast.error("Invalid parent secret key."); return; }
 
     // Capture the actual funding parent now — the live selector may be
     // switched later, before the user saves to a group.
-    setFundedByParentPublicKey(parentKeypair.publicKey());
+    setFundedByParentPublicKey(parentPublicKey);
 
     setIsDirectFunding(true);
     abortRef.current = new AbortController();
@@ -840,6 +805,7 @@ export function AccountFunderPanel() {
     setAccounts((prev) => prev.map((a) => ({ ...a, status: "pending", error: undefined })));
 
     const snapshot = [...accounts]; // stable copy so indices don't shift mid-run
+    const outcomes: RunOutcome[] = snapshot.map(() => "pending");
 
     for (let i = 0; i < snapshot.length; i += BATCH_SIZE) {
       if (signal.aborted) break;
@@ -855,7 +821,7 @@ export function AccountFunderPanel() {
 
       try {
         // Reload account before each batch for fresh sequence number
-        const parentAccount = await server.loadAccount(parentKeypair.publicKey());
+        const parentAccount = await server.loadAccount(parentPublicKey);
         const fee = await server.fetchBaseFee();
 
         const builder = new TransactionBuilder(parentAccount, {
@@ -874,9 +840,11 @@ export function AccountFunderPanel() {
         }
 
         const tx = builder.setTimeout(60).build();
-        tx.sign(parentKeypair);
-        await server.submitTransaction(tx);
+        const signed = await signFunderTransaction(tx, savedParentId, parentKeypair, "direct", networkPassphrase, signal);
+        if (signal.aborted) break;
+        await submitMainnetTransaction(signed);
 
+        for (let j = i; j < i + batch.length; j++) outcomes[j] = "success";
         // All ops in the batch succeeded
         setAccounts((prev) =>
           prev.map((a, idx) =>
@@ -884,42 +852,29 @@ export function AccountFunderPanel() {
           )
         );
       } catch (err: any) {
+        if (signal.aborted) break;
         // Horizon returns per-op result codes in the error extras
         const opCodes: string[] =
           err?.response?.data?.extras?.result_codes?.operations ?? [];
 
-        // Stellar transactions are atomic — since submitTransaction threw,
-        // NOTHING in this batch was committed to the ledger, even though
-        // Horizon may still report "op_success" for ops that would have
-        // succeeded had the tx not aborted. Only "op_already_exists" is real
-        // evidence (the account genuinely exists on-ledger already); anything
-        // reported as "op_success" here is ambiguous and must be verified
-        // directly against Horizon before it can be trusted.
-        const ambiguous: string[] = [];
-        setAccounts((prev) =>
-          prev.map((a, idx) => {
-            if (idx < i || idx >= i + BATCH_SIZE) return a;
-            const opIdx = idx - i;
-            const code = opCodes[opIdx] ?? "unknown";
-            if (code === "op_already_exists") {
-              return { ...a, status: "funded" };
-            }
-            if (code === "op_success") {
-              ambiguous.push(a.publicKey);
-              return { ...a, status: "failed", error: "unconfirmed — verifying…" };
-            }
-            return { ...a, status: "failed", error: code };
-          })
+        const batchResults = await resolveFundingFailure(
+          batch.map((account) => account.publicKey),
+          batch.map((_, idx) => opCodes[idx] ?? err?.message ?? "unknown"),
+          (address) => server.loadAccount(address),
         );
-
-        if (ambiguous.length > 0) {
-          await verifyAmbiguousAccounts(ambiguous, server, setAccounts);
-        }
+        batchResults.forEach((result, idx) => {
+          outcomes[i + idx] = result.status === "funded" ? "success" : "failed";
+        });
+        setAccounts((prev) => prev.map((account, idx) =>
+          idx >= i && idx < i + batch.length ? { ...account, ...batchResults[idx - i] } : account
+        ));
       }
     }
 
+    if (signal.aborted) setAccounts((prev) => prev.map((account) => account.status === "funding" ? { ...account, status: "pending" } : account));
     setIsDirectFunding(false);
-    toast.success("Direct funding complete.");
+    const summary = summarizeFunderRun("Direct funding", outcomes, signal.aborted);
+    toast[summary.tone](summary.message);
   }
 
   // ---------------------------------------------------------------------------
@@ -937,15 +892,15 @@ export function AccountFunderPanel() {
   async function handleSponsoredCreate() {
     if (isSponsoring) return;
     if (!accounts.length) { toast.error("Generate children first."); return; }
-    if (!parentSecretKey) { toast.error("Select or generate a parent account."); return; }
+    if (!hasParent) { toast.error("Select or generate a parent account."); return; }
 
-    let parentKeypair: Keypair;
-    try { parentKeypair = Keypair.fromSecret(parentSecretKey); }
+    let parentKeypair: Keypair | null = null;
+    try { if (!savedParentId) parentKeypair = Keypair.fromSecret(parentSecretKey); }
     catch { toast.error("Invalid parent secret key."); return; }
 
     // Capture the actual funding parent now — the live selector may be
     // switched later, before the user saves to a group.
-    setFundedByParentPublicKey(parentKeypair.publicKey());
+    setFundedByParentPublicKey(parentPublicKey);
 
     setIsSponsoring(true);
     abortRef.current = new AbortController();
@@ -958,6 +913,7 @@ export function AccountFunderPanel() {
     setAccounts((prev) => prev.map((a) => ({ ...a, status: "pending", error: undefined })));
 
     const snapshot = [...accounts];
+    const outcomes: RunOutcome[] = snapshot.map(() => "pending");
 
     for (let i = 0; i < snapshot.length; i += BATCH_SIZE) {
       if (signal.aborted) break;
@@ -972,7 +928,7 @@ export function AccountFunderPanel() {
       );
 
       try {
-        const parentAccount = await server.loadAccount(parentKeypair.publicKey());
+        const parentAccount = await server.loadAccount(parentPublicKey);
         const fee = await server.fetchBaseFee();
 
         const builder = new TransactionBuilder(parentAccount, {
@@ -989,7 +945,7 @@ export function AccountFunderPanel() {
           builder.addOperation(
             Operation.beginSponsoringFutureReserves({
               sponsoredId: acc.publicKey,
-              source: parentKeypair.publicKey(),
+              source: parentPublicKey,
             })
           );
 
@@ -1014,17 +970,17 @@ export function AccountFunderPanel() {
 
         const tx = builder.setTimeout(60).build();
 
-        // Parent signs the whole transaction
-        tx.sign(parentKeypair);
-
         // Each child in the batch must also sign (for EndSponsoringFutureReserves)
         for (const acc of batch) {
           const childKp = Keypair.fromSecret(acc.secretKey);
           tx.sign(childKp);
         }
 
-        await server.submitTransaction(tx);
+        const signed = await signFunderTransaction(tx, savedParentId, parentKeypair, "sponsored", networkPassphrase, signal);
+        if (signal.aborted) break;
+        await submitMainnetTransaction(signed);
 
+        for (let j = i; j < i + batch.length; j++) outcomes[j] = "success";
         // Mark batch as successfully created
         setAccounts((prev) =>
           prev.map((a, idx) =>
@@ -1032,41 +988,29 @@ export function AccountFunderPanel() {
           )
         );
       } catch (err: any) {
+        if (signal.aborted) break;
         // Each child maps to 3 ops; op index / 3 gives child index within batch
         const opCodes: string[] =
           err?.response?.data?.extras?.result_codes?.operations ?? [];
 
-        // Stellar transactions are atomic — since submitTransaction threw,
-        // NOTHING in this batch was committed to the ledger, even though
-        // Horizon may still report "op_success" for ops that would have
-        // succeeded had the tx not aborted. Only "op_already_exists" is real
-        // evidence; "op_success" here is ambiguous and must be verified
-        // directly against Horizon before it can be trusted.
-        const ambiguous: string[] = [];
-        setAccounts((prev) =>
-          prev.map((a, idx) => {
-            if (idx < i || idx >= i + BATCH_SIZE) return a;
-            const acctIdx = idx - i;
-            const code = opCodes[acctIdx * 3 + 2] ?? opCodes[acctIdx * 3] ?? "unknown";
-            if (code === "op_already_exists") {
-              return { ...a, status: "funded" };
-            }
-            if (code === "op_success") {
-              ambiguous.push(a.publicKey);
-              return { ...a, status: "failed", error: "unconfirmed — verifying…" };
-            }
-            return { ...a, status: "failed", error: code };
-          })
+        const batchResults = await resolveFundingFailure(
+          batch.map((account) => account.publicKey),
+          batch.map((_, idx) => opCodes[idx * 3 + 2] ?? opCodes[idx * 3] ?? err?.message ?? "unknown"),
+          (address) => server.loadAccount(address),
         );
-
-        if (ambiguous.length > 0) {
-          await verifyAmbiguousAccounts(ambiguous, server, setAccounts);
-        }
+        batchResults.forEach((result, idx) => {
+          outcomes[i + idx] = result.status === "funded" ? "success" : "failed";
+        });
+        setAccounts((prev) => prev.map((account, idx) =>
+          idx >= i && idx < i + batch.length ? { ...account, ...batchResults[idx - i] } : account
+        ));
       }
     }
 
+    if (signal.aborted) setAccounts((prev) => prev.map((account) => account.status === "funding" ? { ...account, status: "pending" } : account));
     setIsSponsoring(false);
-    toast.success("Sponsored account creation complete.");
+    const summary = summarizeFunderRun("Sponsored creation", outcomes, signal.aborted);
+    toast[summary.tone](summary.message);
   }
 
   // ---------------------------------------------------------------------------
@@ -1082,8 +1026,8 @@ export function AccountFunderPanel() {
 
   async function handleCloseAccounts() {
     if (isClosing) return;
-    const sponsorKey = resolveKey(closeSponsorWalletId, closeSponsorManualKey);
-    if (!sponsorKey) { toast.error("Select a sponsor wallet or enter a secret key."); return; }
+    const sponsorKey = closeSponsorWalletId ? "" : closeSponsorManualKey.trim();
+    if (!canCloseSponsor) { toast.error("Select a signing sponsor wallet or enter a secret key."); return; }
 
     // Parse "PUBLIC<tab or comma>SECRET" pairs from the textarea
     const pairs = closeKeypairsText
@@ -1101,18 +1045,20 @@ export function AccountFunderPanel() {
       return;
     }
 
-    let sponsorKeypair: Keypair;
-    try { sponsorKeypair = Keypair.fromSecret(sponsorKey); }
+    let sponsorKeypair: Keypair | null = null;
+    try { if (!closeSponsorWalletId) sponsorKeypair = Keypair.fromSecret(sponsorKey); }
     catch { toast.error("Invalid sponsor secret key."); return; }
 
+    const sponsorPublicKey = savedCloseSponsor?.publicKey ?? sponsorKeypair!.publicKey();
     // Destination defaults to sponsor's address if left blank
-    const destination = closeDestination.trim() || sponsorKeypair.publicKey();
+    const destination = closeDestination.trim() || sponsorPublicKey;
 
     setIsClosing(true);
     abortRef.current = new AbortController();
     const signal = abortRef.current.signal;
     const server = new StellarSdk.Horizon.Server(horizonUrl);
 
+    const outcomes: RunOutcome[] = pairs.map(() => "pending");
     // Initialize results list
     setCloseResults(pairs.map((p) => ({ publicKey: p.publicKey, status: "pending" })));
 
@@ -1130,6 +1076,7 @@ export function AccountFunderPanel() {
         let accountKeypair: Keypair;
         try { accountKeypair = Keypair.fromSecret(secretKey); }
         catch {
+          outcomes[i] = "failed";
           setCloseResults((prev) =>
             prev.map((r, idx) => (idx === i ? { ...r, status: "failed", error: "invalid secret key" } : r))
           );
@@ -1156,24 +1103,28 @@ export function AccountFunderPanel() {
 
         // Fee bump: sponsor pays the fee so 0-XLM accounts can close
         const feeBumpTx = TransactionBuilder.buildFeeBumpTransaction(
-          sponsorKeypair,
+          sponsorPublicKey,
           String(fee * 2),
           innerTx,
           networkPassphrase
         );
 
-        feeBumpTx.sign(sponsorKeypair);
-        await server.submitTransaction(feeBumpTx);
+        const signed = await signFunderTransaction(feeBumpTx, closeSponsorWalletId, sponsorKeypair, "close", networkPassphrase, signal);
+        if (signal.aborted) break;
+        await submitMainnetTransaction(signed);
 
+        outcomes[i] = "success";
         // Account deleted, reserve returned to sponsor
         setCloseResults((prev) =>
           prev.map((r, idx) => (idx === i ? { ...r, status: "closed" } : r))
         );
       } catch (err: any) {
+        if (signal.aborted) break;
         const opCodes: string[] =
           err?.response?.data?.extras?.result_codes?.inner_result_codes?.operations ??
           err?.response?.data?.extras?.result_codes?.operations ?? [];
         const code = opCodes[0] ?? err?.message ?? "unknown error";
+        outcomes[i] = "failed";
 
         setCloseResults((prev) =>
           prev.map((r, idx) => (idx === i ? { ...r, status: "failed", error: code } : r))
@@ -1181,8 +1132,10 @@ export function AccountFunderPanel() {
       }
     }
 
+    if (signal.aborted) setCloseResults((prev) => prev.map((result) => result.status === "closing" ? { ...result, status: "pending" } : result));
     setIsClosing(false);
-    toast.success("Done — accounts closed.");
+    const summary = summarizeFunderRun("Close accounts", outcomes, signal.aborted);
+    toast[summary.tone](summary.message);
   }
 
   // ---------------------------------------------------------------------------
@@ -1529,7 +1482,7 @@ export function AccountFunderPanel() {
           </CardTitle>
           <CardDescription>
             New keypairs are created entirely in your browser using cryptographic randomness.
-            They are never transmitted anywhere until you fund them.
+            Generated secret keys stay in your browser; only public addresses and signatures are sent when funding.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -1856,7 +1809,7 @@ export function AccountFunderPanel() {
                 <Button
                   variant="destructive"
                   onClick={handleCloseAccounts}
-                  disabled={!closeKeypairsText.trim() || !resolveKey(closeSponsorWalletId, closeSponsorManualKey)}
+                  disabled={!closeKeypairsText.trim() || !canCloseSponsor}
                   className="gap-2"
                 >
                   <Trash2 className="h-4 w-4" />

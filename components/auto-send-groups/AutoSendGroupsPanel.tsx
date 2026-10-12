@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import {
   ChevronDown,
   ChevronRight,
@@ -34,10 +34,12 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useSettings } from "@/lib/settings";
 import { shortAddr } from "@/lib/format";
 import { timeAgo } from "@/lib/stellar-helpers";
 import { authHeaders, waitForAuth } from "@/lib/db-client";
+import type { AutoSendRunGuard } from "@/lib/auto-send/run-guard";
 import type { GroupRunResult, DestinationRunResult, GroupPreview, RunLogEntry, AutoSendDestination } from "@/lib/auto-send/types";
 import type { AutoSendStats } from "@/app/api/auto-send/stats/route";
 
@@ -312,23 +314,28 @@ function AddGroupForm({ onDone }: { onDone: () => void }) {
   const [name, setName] = useState("");
   const [network, setNetwork] = useState<string>(settings.network);
   const [secretKey, setSecretKey] = useState("");
+  const [savedWallet, setSavedWallet] = useState<{ id: string; publicKey: string; hasKey?: boolean } | null>(null);
   const [intervalMinutes, setIntervalMinutes] = useState<number | null>(null);
   const [keyError, setKeyError] = useState<string | null>(null);
 
-  const pubkey = derivePublicKey(secretKey);
+  const pubkey = savedWallet?.publicKey ?? derivePublicKey(secretKey);
 
-  function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!name.trim()) return;
-    try {
-      Keypair.fromSecret(secretKey.trim());
-    } catch {
-      setKeyError("Invalid secret key");
-      return;
+    if (savedWallet) {
+      if (!savedWallet.hasKey) { setKeyError("This wallet has no saved signing key"); return; }
+    } else {
+      try { Keypair.fromSecret(secretKey.trim()); }
+      catch { setKeyError("Invalid secret key"); return; }
     }
     setKeyError(null);
-    createGroup({ name: name.trim(), network, secretKey: secretKey.trim(), intervalMinutes });
-    onDone();
+    try {
+      await createGroup({ name: name.trim(), network, secretKey: secretKey.trim(), walletId: savedWallet?.id, intervalMinutes });
+      onDone();
+    } catch {
+      setKeyError("Could not save this group. Check the selected wallet and try again.");
+    }
   }
 
   return (
@@ -357,16 +364,17 @@ function AddGroupForm({ onDone }: { onDone: () => void }) {
 
       <div className="flex flex-col gap-1">
         <div className="flex items-center justify-between">
-          <label className="text-xs text-muted-foreground">Source wallet secret key</label>
-          <WalletSelect onPick={(w) => setSecretKey(w.secretKey)} align="start" />
+          <label className="text-xs text-muted-foreground">Source wallet</label>
+          <WalletSelect onPick={(w) => { setSavedWallet(w); setSecretKey(""); }} onClear={() => setSavedWallet(null)} currentId={savedWallet?.id} align="start" />
         </div>
-        <Input
+        {savedWallet ? <p className="text-xs text-muted-foreground font-mono">{shortAddr(savedWallet.publicKey)}{!savedWallet.hasKey && " · No signing key saved"}</p> : <Input
           value={secretKey}
           onChange={(e) => setSecretKey(e.target.value)}
           placeholder="S… (secret key)"
           className="font-mono"
-        />
-        {secretKey.trim() && (
+        />}
+        {savedWallet?.hasKey && <p className="text-xs text-muted-foreground">A copy of this key is saved with the group for scheduled sends. Deleting the wallet does not stop the group.</p>}
+        {!savedWallet && secretKey.trim() && (
           <p className={`text-xs px-1 font-mono ${pubkey ? "text-muted-foreground" : "text-red-400"}`}>
             {pubkey ? `Public key: ${shortAddr(pubkey)}` : "Invalid secret key"}
           </p>
@@ -392,7 +400,7 @@ function AddGroupForm({ onDone }: { onDone: () => void }) {
       </div>
 
       <div className="flex gap-2">
-        <Button type="submit" disabled={!name.trim() || !pubkey}>
+        <Button type="submit" disabled={!name.trim() || !pubkey || (savedWallet !== null && !savedWallet.hasKey)}>
           Create Group
         </Button>
         <Button type="button" variant="ghost" onClick={onDone}>
@@ -410,15 +418,16 @@ function EditGroupForm({ group, onDone }: { group: { id: string; name: string; n
   const [name, setName] = useState(group.name);
   const [network, setNetwork] = useState(group.network);
   const [secretKey, setSecretKey] = useState("");
+  const [savedWallet, setSavedWallet] = useState<{ id: string; publicKey: string; hasKey?: boolean } | null>(null);
   const [intervalMinutes, setIntervalMinutes] = useState<number | null>(group.intervalMinutes);
 
-  const pubkey = derivePublicKey(secretKey);
-  const keyValid = !secretKey.trim() ? group.hasKey : !!pubkey;
+  const pubkey = savedWallet?.publicKey ?? derivePublicKey(secretKey);
+  const keyValid = savedWallet ? !!savedWallet.hasKey : (!secretKey.trim() ? group.hasKey : !!pubkey);
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!name.trim() || !keyValid) return;
-    updateGroup(group.id, { name: name.trim(), network, secretKey: secretKey.trim(), intervalMinutes });
+    updateGroup(group.id, { name: name.trim(), network, secretKey: secretKey.trim(), walletId: savedWallet?.id, intervalMinutes });
     onDone();
   }
 
@@ -444,19 +453,20 @@ function EditGroupForm({ group, onDone }: { group: { id: string; name: string; n
       </div>
       <div className="flex flex-col gap-1">
         <div className="flex items-center justify-between">
-          <label className="text-xs text-muted-foreground">Source wallet secret key</label>
-          <WalletSelect onPick={(w) => setSecretKey(w.secretKey)} align="start" />
+          <label className="text-xs text-muted-foreground">Source wallet</label>
+          <WalletSelect onPick={(w) => { setSavedWallet(w); setSecretKey(""); }} onClear={() => setSavedWallet(null)} currentId={savedWallet?.id} align="start" />
         </div>
-        <Input
+        {savedWallet ? <p className="text-xs text-muted-foreground font-mono">{shortAddr(savedWallet.publicKey)}{!savedWallet.hasKey && " · No signing key saved"}</p> : <Input
           value={secretKey}
           onChange={(e) => setSecretKey(e.target.value)}
           placeholder={group.hasKey ? "Leave blank to keep existing key" : "S… (secret key)"}
           className="font-mono"
-        />
-        {!secretKey.trim() && group.hasKey && (
+        />}
+        {savedWallet?.hasKey && <p className="text-xs text-muted-foreground">A copy of this key is saved with the group for scheduled sends. Deleting the wallet does not stop the group.</p>}
+        {!savedWallet && !secretKey.trim() && group.hasKey && (
           <p className="text-xs px-1 text-emerald-400/70">Key saved — leave blank to keep</p>
         )}
-        {secretKey.trim() && (
+        {!savedWallet && secretKey.trim() && (
           <p className={`text-xs px-1 font-mono ${pubkey ? "text-muted-foreground" : "text-red-400"}`}>
             {pubkey ? `Public key: ${shortAddr(pubkey)}` : "Invalid secret key"}
           </p>
@@ -495,11 +505,13 @@ function PreviewTable({
   onApprove,
   onCancel,
   approving,
+  showActions = true,
 }: {
   preview: GroupPreview;
   onApprove: () => void;
   onCancel: () => void;
   approving: boolean;
+  showActions?: boolean;
 }) {
   const sendCount = preview.items.filter((i) => !i.wouldSkip).length;
   const totalXlm = preview.items.reduce((s, i) => s + (i.wouldSkip ? 0 : i.amountXlm), 0);
@@ -576,7 +588,7 @@ function PreviewTable({
         </div>
       )}
 
-      <div className="flex gap-2 items-center">
+      {showActions && <div className="flex gap-2 items-center">
         <Button
           onClick={onApprove}
           disabled={approving || sendCount === 0 || !preview.previewToken || (preview.safetyWarnings?.length ?? 0) > 0}
@@ -597,7 +609,7 @@ function PreviewTable({
               : "All destinations skipped"}
           </span>
         )}
-      </div>
+      </div>}
     </div>
   );
 }
@@ -713,6 +725,25 @@ function GroupCard({ groupId, runAllStatus }: { groupId: string; runAllStatus?: 
   const testResult = _testResults.get(groupId) ?? null;
   const setTestResult = useCallback((r: GroupRunResult | null) => { if (r) _testResults.set(groupId, r); else _testResults.delete(groupId); forceRender((n) => n + 1); }, [groupId]);
   const [dismissedFailure, setDismissedFailure] = useState(false);
+  const [pendingRun, setPendingRun] = useState<AutoSendRunGuard | null>(group?.pendingRun ?? null);
+  const [guardError, setGuardError] = useState<string | null>(null);
+  const [guardRefresh, setGuardRefresh] = useState(0);
+  const [resolvingGuard, setResolvingGuard] = useState(false);
+
+  useEffect(() => { setPendingRun(group?.pendingRun ?? null); }, [group?.pendingRun]);
+
+  useEffect(() => {
+    if (!expanded) return;
+    let cancelled = false;
+    waitForAuth().then(() => fetch(`/api/auto-send/run?groupId=${encodeURIComponent(groupId)}`, { headers: authHeaders() }))
+      .then(async (response) => {
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error ?? "Could not check payment status");
+        if (!cancelled) { setPendingRun(data.guard ?? null); setGuardError(null); }
+      })
+      .catch((error) => { if (!cancelled) setGuardError(error instanceof Error ? error.message : "Could not check payment status"); });
+    return () => { cancelled = true; };
+  }, [expanded, groupId, guardRefresh]);
   const [dragIdx, setDragIdx] = useState<number | null>(null);
   const [dragOverIdx, setDragOverIdx] = useState<number | null>(null);
 
@@ -859,6 +890,8 @@ function GroupCard({ groupId, runAllStatus }: { groupId: string; runAllStatus?: 
           const t = await totalsRes.json();
           if (t && !t.error) setDestTotals(t);
         }).catch(() => {});
+      } else if (data?.error) {
+        setPreviewError(data.error);
       }
       setExpanded(true);
     } catch (err) {
@@ -868,6 +901,32 @@ function GroupCard({ groupId, runAllStatus }: { groupId: string; runAllStatus?: 
     } finally {
       clearTimeout(timeout);
       setRunning(false);
+      setGuardRefresh((value) => value + 1);
+    }
+  }
+
+  async function handleResolveGuard() {
+    if (!confirm("Check every listed transaction on Stellar.Expert and verify the sender balance. Only continue if you know which payments succeeded. Clear the block?")) return;
+    setResolvingGuard(true);
+    setGuardError(null);
+    try {
+      await waitForAuth();
+      const response = await fetch("/api/auto-send/run", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify({
+          action: "resolve-guard", groupId,
+          confirmation: "I checked every transaction hash and the wallet balance",
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error ?? "Could not clear payment block");
+      setPendingRun(null);
+      setGuardRefresh((value) => value + 1);
+    } catch (error) {
+      setGuardError(error instanceof Error ? error.message : "Could not clear payment block");
+    } finally {
+      setResolvingGuard(false);
     }
   }
 
@@ -889,6 +948,8 @@ function GroupCard({ groupId, runAllStatus }: { groupId: string; runAllStatus?: 
       if (data && Array.isArray(data.results)) {
         setTestResult(data as GroupRunResult);
         notify(`Test run: ${group!.name}`, `Test complete — ${data.results.filter((r: DestinationRunResult) => r.status === "sent").length} reached`);
+      } else if (data?.error) {
+        setPreviewError(data.error);
       }
     } catch (err) {
       if (err instanceof Error && err.name === "AbortError") {
@@ -897,6 +958,7 @@ function GroupCard({ groupId, runAllStatus }: { groupId: string; runAllStatus?: 
     } finally {
       clearTimeout(timeout);
       setTestRunning(false);
+      setGuardRefresh((value) => value + 1);
     }
   }
 
@@ -908,7 +970,8 @@ function GroupCard({ groupId, runAllStatus }: { groupId: string; runAllStatus?: 
       id: newId,
       name: newName,
       network: group!.network,
-      secretKey: group!.secretKey,
+      secretKey: "",
+      copyFromGroupId: group!.id,
       intervalMinutes: group!.intervalMinutes,
       enabled: false,
     });
@@ -979,6 +1042,7 @@ function GroupCard({ groupId, runAllStatus }: { groupId: string; runAllStatus?: 
             {runAllStatus === "done" && <CheckCircle size={11} className="text-green-400 flex-shrink-0" />}
             {runAllStatus === "failed" && <span className="text-xs text-red-400 flex-shrink-0">failed</span>}
             {runAllStatus === "pending" && <span className="text-xs text-muted-foreground/70 flex-shrink-0">queued</span>}
+            {pendingRun && <span className="text-xs text-red-400 flex-shrink-0">payments blocked</span>}
           </div>
           <p className="text-xs text-muted-foreground mt-0.5 flex items-center gap-2 flex-wrap">
             <Key size={10} className="inline" />
@@ -1047,13 +1111,14 @@ function GroupCard({ groupId, runAllStatus }: { groupId: string; runAllStatus?: 
           variant="outline"
           size="sm"
           className={`h-auto px-2 py-0.5 text-xs font-medium ${
-            group.enabled
+            group.enabled && !pendingRun
               ? "bg-green-500/15 border-green-500/30 text-green-400 hover:bg-green-500/20"
               : "bg-muted/50 border-border text-muted-foreground/70"
           }`}
+          disabled={!!pendingRun && !group.enabled}
           onClick={() => updateGroup(group.id, { enabled: !group.enabled })}
         >
-          {group.enabled ? "On" : "Off"}
+          {pendingRun && group.enabled ? "Blocked" : group.enabled ? "On" : "Off"}
         </Button>
         {/* Check */}
         <Button
@@ -1070,7 +1135,7 @@ function GroupCard({ groupId, runAllStatus }: { groupId: string; runAllStatus?: 
           variant="outline"
           size="sm"
           onClick={handleTestRun}
-          disabled={testRunning || running || checking || destCount === 0 || !keyPresent}
+          disabled={testRunning || running || checking || !!pendingRun || destCount === 0 || !keyPresent}
           title="Send 0.0000001 XLM to each destination to verify reachability"
         >
           {testRunning ? <RefreshCw size={12} className="animate-spin mr-1" /> : <FlaskConical size={12} className="mr-1" />}
@@ -1080,7 +1145,7 @@ function GroupCard({ groupId, runAllStatus }: { groupId: string; runAllStatus?: 
         <Button
           size="sm"
           onClick={handleRun}
-          disabled={running || checking || testRunning || destCount === 0 || !keyPresent || group.previewOnly || destinations.every(d => d.paused)}
+          disabled={running || checking || testRunning || !!pendingRun || destCount === 0 || !keyPresent || group.previewOnly || destinations.every(d => d.paused)}
           title={group.previewOnly ? "Group is in preview-only mode — disable to send real transactions" : undefined}
         >
           {running ? <RefreshCw size={12} className="animate-spin mr-1" /> : <Play size={12} className="mr-1" />}
@@ -1123,6 +1188,26 @@ function GroupCard({ groupId, runAllStatus }: { groupId: string; runAllStatus?: 
       {/* Expanded body */}
       {expanded && (
         <div className="px-4 py-3 flex flex-col gap-3 border-t border-border">
+          {pendingRun && (
+            <div className="rounded border border-red-500/40 bg-red-500/10 px-3 py-2 text-xs text-red-300 space-y-2">
+              <p className="font-semibold">Payments blocked: a previous run may have moved XLM. No further sends will start until this run is reconciled.</p>
+              <p>Started {new Date(pendingRun.startedAt).toLocaleString()} from {shortAddr(pendingRun.walletAddress)}.</p>
+              {pendingRun.transactions.length === 0 && <p>No transaction hash was recorded. Verify the sender balance before clearing the block.</p>}
+              {pendingRun.transactions.map((tx) => (
+                <div key={tx.hash} className="flex flex-wrap items-center gap-2">
+                  <span>{tx.status === "sent" ? "Confirmed by Horizon" : "Outcome uncertain"} · {tx.amount.toFixed(7)} XLM</span>
+                  <a href={`https://stellar.expert/explorer/public/tx/${tx.hash}`} target="_blank" rel="noopener noreferrer" className="font-mono underline break-all">{tx.hash}</a>
+                </div>
+              ))}
+              <Button size="sm" variant="outline" disabled={resolvingGuard || (pendingRun.state === "running" && Date.now() - pendingRun.startedAt < 24 * 60 * 60 * 1000)} onClick={handleResolveGuard}>
+                {resolvingGuard ? "Checking…" : "I reconciled these payments — clear block"}
+              </Button>
+              {pendingRun.state === "running" && Date.now() - pendingRun.startedAt < 24 * 60 * 60 * 1000 && (
+                <p>An interrupted run can only be cleared after 24 hours, once its transactions have expired.</p>
+              )}
+            </div>
+          )}
+          {guardError && <div className="rounded border border-red-500/20 bg-red-500/10 px-3 py-2 text-xs text-red-300">{guardError}</div>}
           {/* No destinations warning */}
           {group.intervalMinutes && destinations.length === 0 && (
             <div className="flex items-center gap-2 px-3 py-2 rounded bg-yellow-500/10 border border-yellow-500/20 text-xs text-yellow-400">
@@ -1534,7 +1619,12 @@ export function AutoSendGroupsPanel() {
   const [showNewGroup, setShowNewGroup] = useState(false);
   const [stats, setStats] = useState<AutoSendStats | null>(null);
   const [runAllStatus, setRunAllStatus] = useState<Map<string, RunAllStatus>>(new Map());
+  const [runAllPreviews, setRunAllPreviews] = useState<Array<{ id: string; name: string; preview: GroupPreview }> | null>(null);
+  const [runAllError, setRunAllError] = useState<string | null>(null);
+  const [runAllLoading, setRunAllLoading] = useState(false);
+  const runAllSubmittingRef = useRef(false);
   const runAllActive = Array.from(runAllStatus.values()).some((s) => s === "running" || s === "pending");
+  const runAllEligible = groups.filter((g) => g.destinations.length > 0 && (g.hasKey || !!g.secretKey) && !g.previewOnly && !g.pendingRun);
   const [notifPermission, setNotifPermission] = useState<NotificationPermission | null>(null);
   const [isServerless, setIsServerless] = useState(false);
 
@@ -1562,33 +1652,59 @@ export function AutoSendGroupsPanel() {
   }, []);
 
   async function handleRunAll() {
-    const eligible = groups.filter((g) => g.destinations.length > 0 && (g.hasKey || !!g.secretKey) && !g.previewOnly);
-    if (eligible.length === 0) return;
-    const updates = new Map<string, RunAllStatus>();
-    for (const g of eligible) updates.set(g.id, "pending");
-    setRunAllStatus(updates);
-    await waitForAuth();
+    if (runAllEligible.length < 2) return;
+    setRunAllError(null);
+    setRunAllLoading(true);
+    try {
+      await waitForAuth();
+      const previews: Array<{ id: string; name: string; preview: GroupPreview }> = [];
+      for (const group of runAllEligible) {
+        const res = await fetch("/api/auto-send/run", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", ...authHeaders() },
+          body: JSON.stringify({ groupId: group.id, dryRun: true }),
+        });
+        const preview = await res.json() as GroupPreview & { error?: string };
+        if (!res.ok || preview.error) throw new Error(`${group.name}: ${preview.error ?? "Could not load preview"}`);
+        previews.push({ id: group.id, name: group.name, preview });
+      }
+      setRunAllPreviews(previews);
+    } catch (error) {
+      setRunAllError(error instanceof Error ? error.message : "Could not load previews");
+    } finally {
+      setRunAllLoading(false);
+    }
+  }
 
-    await Promise.allSettled(
-      eligible.map(async (g) => {
-        setRunAllStatus((prev) => new Map(prev).set(g.id, "running"));
-        try {
-          const res = await fetch("/api/auto-send/run", {
-            method: "POST",
-            headers: { "Content-Type": "application/json", ...authHeaders() },
-            body: JSON.stringify({ groupId: g.id }),
-          });
-          const data = await res.json();
-          setRunAllStatus((prev) => new Map(prev).set(g.id,
-            data.results?.some((r: DestinationRunResult) => r.status === "failed") ? "failed" : "done"
-          ));
-        } catch {
-          setRunAllStatus((prev) => new Map(prev).set(g.id, "failed"));
-        }
-      })
-    );
+  async function approveRunAll() {
+    if (!runAllPreviews || runAllSubmittingRef.current) return;
+    runAllSubmittingRef.current = true;
+    const approved = runAllPreviews.filter(({ preview }) => preview.items.some((item) => !item.wouldSkip));
+    setRunAllPreviews(null);
+    const updates = new Map<string, RunAllStatus>();
+    for (const g of approved) updates.set(g.id, "pending");
+    setRunAllStatus(updates);
+    for (const g of approved) {
+      setRunAllStatus((prev) => new Map(prev).set(g.id, "running"));
+      try {
+        const res = await fetch("/api/auto-send/run", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", ...authHeaders() },
+          body: JSON.stringify({ groupId: g.id, previewToken: g.preview.previewToken }),
+        });
+        const data = await res.json();
+        if (!res.ok || !Array.isArray(data.results)) throw new Error(`${g.name}: ${data.error ?? "Run failed"}`);
+        const failed = data.results.some((r: DestinationRunResult) => r.status === "failed");
+        setRunAllStatus((prev) => new Map(prev).set(g.id, failed ? "failed" : "done"));
+        if (failed) setRunAllError((prev) => [prev, `${g.name}: some payments failed`].filter(Boolean).join("; "));
+      } catch (error) {
+        setRunAllStatus((prev) => new Map(prev).set(g.id, "failed"));
+        setRunAllError((prev) => [prev, error instanceof Error ? error.message : `${g.name}: run failed`].filter(Boolean).join("; "));
+      }
+    }
     // Clear status after short delay so indicators fade
     setTimeout(() => setRunAllStatus(new Map()), 3000);
+    runAllSubmittingRef.current = false;
   }
 
   if (!isLoaded) {
@@ -1626,13 +1742,13 @@ export function AutoSendGroupsPanel() {
               <Bell size={13} />
             </Button>
           )}
-          {groups.filter((g) => g.destinations.length > 0).length > 1 && (
+          {runAllEligible.length > 1 && (
             <Button
               variant="outline"
               onClick={handleRunAll}
-              disabled={runAllActive}
+              disabled={runAllActive || runAllLoading}
             >
-              {runAllActive ? <RefreshCw size={14} className="animate-spin mr-1.5" /> : <PlayCircle size={14} className="mr-1.5" />}
+              {runAllActive || runAllLoading ? <RefreshCw size={14} className="animate-spin mr-1.5" /> : <PlayCircle size={14} className="mr-1.5" />}
               Run All
             </Button>
           )}
@@ -1642,6 +1758,30 @@ export function AutoSendGroupsPanel() {
           </Button>
         </div>
       </div>
+
+      {runAllError && <p role="alert" className="text-sm text-red-400">{runAllError}</p>}
+      <Dialog open={!!runAllPreviews} onOpenChange={(open) => { if (!open && !runAllActive) setRunAllPreviews(null); }}>
+        <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Review all payments</DialogTitle>
+            <DialogDescription>Check every destination and amount before sending XLM from these wallets.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            {runAllPreviews?.map(({ id, name, preview }) => (
+              <div key={id}>
+                <h3 className="font-medium mb-2">{name}</h3>
+                <PreviewTable preview={preview} onApprove={() => {}} onCancel={() => {}} approving={false} showActions={false} />
+              </div>
+            ))}
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={() => setRunAllPreviews(null)}>Cancel</Button>
+            <Button onClick={approveRunAll} disabled={!runAllPreviews?.some(({ preview }) => preview.items.some((item) => !item.wouldSkip)) || !runAllPreviews?.every(({ preview }) => !preview.items.some((item) => !item.wouldSkip) || (preview.previewToken && !preview.safetyWarnings?.length))}>
+              Approve &amp; send all
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {showNewGroup && <AddGroupForm onDone={() => setShowNewGroup(false)} />}
 

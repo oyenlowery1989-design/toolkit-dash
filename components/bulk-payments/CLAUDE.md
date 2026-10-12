@@ -1,6 +1,6 @@
 ## Bulk Payments
 - `lib/bulk-payments/builder.ts` — `buildBatchTransaction(account, recipients, memo, keypair, networkPassphrase, feeMultiplier, amount, asset)` — amount + asset are optional (default: 0.0000001, XLM native)
-- `lib/bulk-payments/runner.ts` — `RunBulkOptions` has `amount?` and `asset?` passed through to builder
+- `lib/bulk-payments/runner.ts` — `RunBulkOptions` has `amount?` and `asset?` passed through to builder; `walletId`/`walletAddress` sign with a connected saved wallet when its key is masked, while manual keys still sign locally
 - `lib/bulk-payments/builder.ts` — `estimateCost(recipientCount, batchSize, feeMultiplier, paymentXlmEach)` — 4th param is 0 for non-native assets
 - **"From Group" tab**: loads member addresses from any saved asset group; deduplicated + exclude list applied
 - **Min balance filter**: in Asset Holders tab — `minBalance` state filters holders below threshold before adding to recipients

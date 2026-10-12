@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Horizon, Keypair } from "stellar-sdk";
+import { Horizon } from "stellar-sdk";
 import {
   Wallet,
   Globe,
@@ -25,7 +25,9 @@ import {
   Pencil,
 } from "lucide-react";
 import { useActiveWallet } from "@/hooks/use-active-wallet";
-import { useSettings, resolveHorizonUrl } from "@/lib/settings";
+import { useSettings, resolveHorizonUrl, resolveNetworkPassphrase } from "@/lib/settings";
+import { signPaymentTransaction } from "@/lib/payments-signing";
+import { submitMainnetTransaction } from "@/lib/mainnet-submit-client";
 import { timeAgo } from "@/lib/stellar-helpers";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -320,14 +322,12 @@ export default function MyWalletPage() {
     () => new Horizon.Server(horizonUrl, { allowHttp: horizonUrl.startsWith("http://") }),
     [horizonUrl],
   );
-  const signerKeypair = useMemo(() => {
-    if (!activeWallet?.secretKey) return null;
-    try {
-      return Keypair.fromSecret(activeWallet.secretKey);
-    } catch {
-      return null;
-    }
-  }, [activeWallet?.secretKey]);
+  const activeWalletIdRef = useRef(activeWallet?.id);
+  const activeWalletVersionRef = useRef(0);
+  useEffect(() => {
+    activeWalletIdRef.current = activeWallet?.id;
+    activeWalletVersionRef.current += 1;
+  }, [activeWallet?.id]);
 
   const [details, setDetails] = useState<WalletDetails | null>(null);
   const [loading, setLoading] = useState(false);
@@ -564,29 +564,36 @@ export default function MyWalletPage() {
     setTimeout(() => setCopied(false), 1500);
   }
 
-  async function buildAndSubmit(ops: unknown[]) {
-    const { Keypair, TransactionBuilder, BASE_FEE, Networks } = await import("stellar-sdk");
+  async function buildAndSubmit(ops: unknown[], expectedVersion: number) {
+    const selectedWallet = activeWallet;
+    if (!selectedWallet || !(selectedWallet.hasKey || selectedWallet.secretKey)) throw new Error("Connected wallet has no saved signing key");
+    const assertCurrent = () => {
+      if (activeWalletIdRef.current !== selectedWallet.id || activeWalletVersionRef.current !== expectedVersion) {
+        throw new Error("Connected wallet changed; retry the transaction");
+      }
+    };
+    const { TransactionBuilder, BASE_FEE } = await import("stellar-sdk");
     const server = new Horizon.Server(horizonUrl, { allowHttp: horizonUrl.startsWith("http://") });
-    const keypair = Keypair.fromSecret(activeWallet!.secretKey);
-    const acct = await server.loadAccount(keypair.publicKey());
-    const passphrase = settings.network === "testnet" ? Networks.TESTNET
-      : settings.network === "futurenet" ? Networks.FUTURENET
-      : Networks.PUBLIC;
-    const builder = new TransactionBuilder(acct, { fee: BASE_FEE, networkPassphrase: passphrase });
+    const acct = await server.loadAccount(selectedWallet.publicKey);
+    const builder = new TransactionBuilder(acct, { fee: BASE_FEE, networkPassphrase: resolveNetworkPassphrase(settings.network) });
     for (const op of ops) builder.addOperation(op as any);
     const tx = builder.setTimeout(30).build();
-    tx.sign(keypair);
-    await server.submitTransaction(tx);
+    assertCurrent();
+    const signed = await signPaymentTransaction(tx, selectedWallet.id, "");
+    assertCurrent();
+    await submitMainnetTransaction(signed);
   }
 
   async function claimBalance(balanceId: string) {
-    if (!activeWallet?.secretKey) return;
+    if (!activeWallet || !(activeWallet.hasKey || activeWallet.secretKey)) return;
+    const walletId = activeWallet.id;
+    const walletVersion = activeWalletVersionRef.current;
     setClaiming(balanceId);
     setClaimError(null);
     try {
       const { Operation } = await import("stellar-sdk");
-      await buildAndSubmit([Operation.claimClaimableBalance({ balanceId })]);
-      await load(activeWallet.publicKey);
+      await buildAndSubmit([Operation.claimClaimableBalance({ balanceId })], walletVersion);
+      if (activeWalletIdRef.current === walletId && activeWalletVersionRef.current === walletVersion) await load(activeWallet.publicKey);
     } catch (e: unknown) {
       setClaimError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -595,7 +602,9 @@ export default function MyWalletPage() {
   }
 
   async function mergeAccount() {
-    if (!activeWallet?.secretKey || !mergeTarget.trim()) return;
+    if (!activeWallet || !(activeWallet.hasKey || activeWallet.secretKey) || !mergeTarget.trim()) return;
+    const walletId = activeWallet.id;
+    const walletVersion = activeWalletVersionRef.current;
     setMerging(true);
     setMergeError(null);
     try {
@@ -603,8 +612,8 @@ export default function MyWalletPage() {
       if (!StrKey.isValidEd25519PublicKey(mergeTarget.trim())) throw new Error("Invalid destination address");
       if (details && details.assets.length > 0) throw new Error(`Remove all ${details.assets.length} trustline${details.assets.length !== 1 ? "s" : ""} before merging`);
       if (details && details.offers.length > 0) throw new Error(`Cancel all ${details.offers.length} open offer${details.offers.length !== 1 ? "s" : ""} before merging`);
-      await buildAndSubmit([Operation.accountMerge({ destination: mergeTarget.trim() })]);
-      setMergeSuccess(true);
+      await buildAndSubmit([Operation.accountMerge({ destination: mergeTarget.trim() })], walletVersion);
+      if (activeWalletIdRef.current === walletId && activeWalletVersionRef.current === walletVersion) setMergeSuccess(true);
     } catch (e: unknown) {
       setMergeError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -613,7 +622,9 @@ export default function MyWalletPage() {
   }
 
   async function saveHomeDomain() {
-    if (!activeWallet?.secretKey) return;
+    if (!activeWallet || !(activeWallet.hasKey || activeWallet.secretKey)) return;
+    const walletId = activeWallet.id;
+    const walletVersion = activeWalletVersionRef.current;
     const trimmedDomain = domainInput.trim();
     if (trimmedDomain.length > 32) {
       setDomainError("Home domain must be 32 characters or fewer.");
@@ -623,7 +634,8 @@ export default function MyWalletPage() {
     setDomainError(null);
     try {
       const { Operation } = await import("stellar-sdk");
-      await buildAndSubmit([Operation.setOptions({ homeDomain: trimmedDomain || undefined })]);
+      await buildAndSubmit([Operation.setOptions({ homeDomain: trimmedDomain })], walletVersion);
+      if (activeWalletIdRef.current !== walletId || activeWalletVersionRef.current !== walletVersion) return;
       setEditingDomain(false);
       await load(activeWallet.publicKey);
     } catch (e: unknown) {
@@ -651,7 +663,7 @@ export default function MyWalletPage() {
     ? "https://stellar.expert/explorer/testnet"
     : "https://stellar.expert/explorer/public";
 
-  const isFullWallet = !!activeWallet.secretKey;
+  const isFullWallet = !!(activeWallet.hasKey || activeWallet.secretKey);
 
   return (
     <div className="space-y-6">
@@ -1171,7 +1183,11 @@ export default function MyWalletPage() {
               <div className="p-4">
                 <RevokeSponsorshipPanel
                   sponsorPublicKey={activeWallet.publicKey}
-                  signerKeypair={signerKeypair}
+                  signerKeypair={null}
+                  walletId={activeWallet.id}
+                  assertSignerCurrent={() => {
+                    if (activeWalletIdRef.current !== activeWallet.id) throw new Error("Connected wallet changed; retry the transaction");
+                  }}
                   horizonServer={horizonServer}
                   horizonUrl={horizonUrl}
                   network={settings.network}

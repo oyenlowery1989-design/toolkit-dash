@@ -35,6 +35,8 @@ function KeypairField({
   network,
   onSecretChange,
   onGenerate,
+  walletId,
+  onWalletPick,
 }: {
   label: string;
   secretKey: string;
@@ -42,6 +44,8 @@ function KeypairField({
   network: AssetCreatorForm["network"];
   onSecretChange: (secret: string, publicKey: string) => void;
   onGenerate: () => void;
+  walletId?: string;
+  onWalletPick: (walletId: string, publicKey: string) => void;
 }) {
   const [showSecret, setShowSecret] = useState(false);
 
@@ -56,8 +60,10 @@ function KeypairField({
         <Label className="text-sm font-semibold">{label}</Label>
         <div className="flex items-center gap-1">
           <WalletSelect
+            currentId={walletId}
             currentValue={secretKey}
-            onPick={(w) => onSecretChange(w.secretKey, w.publicKey)}
+            onClear={() => onSecretChange("", "")}
+            onPick={(w) => onWalletPick(w.id, w.publicKey)}
             triggerClassName="h-7"
           />
           <Button type="button" variant="ghost" size="sm" onClick={onGenerate} className="h-7 text-xs gap-1">
@@ -65,7 +71,7 @@ function KeypairField({
           </Button>
         </div>
       </div>
-      <div className="relative">
+      {walletId ? <p className="text-xs text-muted-foreground">Using saved signing key.</p> : <div className="relative">
         <Input
           type={showSecret ? "text" : "password"}
           placeholder="Secret key (S…)"
@@ -82,7 +88,7 @@ function KeypairField({
         >
           {showSecret ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
         </Button>
-      </div>
+      </div>}
       {derivedPublicKey && (
         <ShortAddress address={derivedPublicKey} network={network} />
       )}
@@ -94,9 +100,9 @@ function KeypairField({
 }
 
 function validateStep1(form: AssetCreatorForm): string | null {
-  if (!form.issuerSecretKey) return "Issuer secret key is required";
+  if (!form.issuerSecretKey && !form.issuerWalletId) return "Issuer secret key is required";
   if (!form.issuerPublicKey) return "Invalid issuer secret key";
-  if (!form.distributorSecretKey) return "Distributor secret key is required";
+  if (!form.distributorSecretKey && !form.distributorWalletId) return "Distributor secret key is required";
   if (!form.distributorPublicKey) return "Invalid distributor secret key";
   if (form.issuerPublicKey === form.distributorPublicKey) return "Issuer and distributor must be different keypairs";
   return null;
@@ -116,9 +122,9 @@ export function Step1Accounts({ form, onChange, activeWalletName, activeWalletKe
   const generateKeypair = (which: "issuer" | "distributor") => {
     const kp = Keypair.random();
     if (which === "issuer") {
-      onChange({ issuerPublicKey: kp.publicKey(), issuerSecretKey: kp.secret() });
+      onChange({ issuerPublicKey: kp.publicKey(), issuerSecretKey: kp.secret(), issuerWalletId: undefined });
     } else {
-      onChange({ distributorPublicKey: kp.publicKey(), distributorSecretKey: kp.secret() });
+      onChange({ distributorPublicKey: kp.publicKey(), distributorSecretKey: kp.secret(), distributorWalletId: undefined });
     }
   };
 
@@ -141,17 +147,20 @@ export function Step1Accounts({ form, onChange, activeWalletName, activeWalletKe
             <div className="space-y-1">
               <div className="flex justify-end">
                 <WalletSelect
+                  currentId={form.fundingWalletId}
                   currentValue={form.resolvedFundingSecretKey}
-                  onPick={(w) => onChange({ resolvedFundingSecretKey: w.secretKey })}
+                  onClear={() => onChange({ fundingWalletId: "", fundingPublicKey: "", resolvedFundingSecretKey: "" })}
+                  onPick={(w) => onChange({ fundingWalletId: w.id, fundingPublicKey: w.publicKey, resolvedFundingSecretKey: "" })}
                   triggerClassName="h-7"
                 />
               </div>
               <div className="relative">
                 <Input
                   type={showFundingSecret ? "text" : "password"}
-                  placeholder="Funding secret key (S…)"
+                  disabled={!!form.fundingWalletId}
+                  placeholder={form.fundingWalletId ? "Using saved signing key" : "Funding secret key (S…)"}
                   value={form.resolvedFundingSecretKey}
-                  onChange={(e) => onChange({ resolvedFundingSecretKey: e.target.value.trim() })}
+                  onChange={(e) => onChange({ resolvedFundingSecretKey: e.target.value.trim(), fundingWalletId: "", fundingPublicKey: "" })}
                   className="font-mono text-xs pr-10"
                 />
                 <Button
@@ -181,7 +190,9 @@ export function Step1Accounts({ form, onChange, activeWalletName, activeWalletKe
         secretKey={form.issuerSecretKey}
         derivedPublicKey={form.issuerPublicKey}
         network={form.network}
-        onSecretChange={(secret, pubKey) => onChange({ issuerSecretKey: secret, issuerPublicKey: pubKey })}
+        walletId={form.issuerWalletId}
+        onWalletPick={(id, publicKey) => onChange({ issuerWalletId: id, issuerPublicKey: publicKey, issuerSecretKey: "" })}
+        onSecretChange={(secret, pubKey) => onChange({ issuerWalletId: undefined, issuerSecretKey: secret, issuerPublicKey: pubKey })}
         onGenerate={() => generateKeypair("issuer")}
       />
 
@@ -191,7 +202,9 @@ export function Step1Accounts({ form, onChange, activeWalletName, activeWalletKe
         secretKey={form.distributorSecretKey}
         derivedPublicKey={form.distributorPublicKey}
         network={form.network}
-        onSecretChange={(secret, pubKey) => onChange({ distributorSecretKey: secret, distributorPublicKey: pubKey })}
+        walletId={form.distributorWalletId}
+        onWalletPick={(id, publicKey) => onChange({ distributorWalletId: id, distributorPublicKey: publicKey, distributorSecretKey: "" })}
+        onSecretChange={(secret, pubKey) => onChange({ distributorWalletId: undefined, distributorSecretKey: secret, distributorPublicKey: pubKey })}
         onGenerate={() => generateKeypair("distributor")}
       />
 

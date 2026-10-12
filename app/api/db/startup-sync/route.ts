@@ -15,6 +15,7 @@ import {
 } from "@/lib/supabase-server";
 import { encryptImportedStoredSecret } from "@/lib/secret-storage";
 import { readSavedAnalysisRows } from "@/lib/saved-analyses/server";
+import { readAllChildRows, readAllUserRows } from "@/lib/supabase-read-all";
 
 export async function POST(req: NextRequest) {
   const auth = await requireAuth(req);
@@ -42,11 +43,33 @@ export async function POST(req: NextRequest) {
   const sb = getSupabase()!;
   const db = getDb();
 
+  const parentReads = await Promise.all([
+    readAllUserRows(sb, "address_book", userId),
+    readAllUserRows(sb, "known_intermediaries", userId),
+    readAllUserRows(sb, "known_creators", userId),
+    readSavedAnalysisRows(userId),
+    readAllUserRows(sb, "bulk_recipients", userId),
+    readAllUserRows(sb, "proceeds_presets", userId),
+    readAllUserRows(sb, "saved_searches", userId),
+    readAllUserRows(sb, "bulk_run_history", userId),
+    readAllUserRows(sb, "asset_groups", userId),
+    readAllUserRows(sb, "wallet_folders", userId),
+    readAllUserRows(sb, "wallets", userId),
+    readAllUserRows(sb, "app_state", userId),
+    readAllUserRows(sb, "auto_send_groups", userId),
+    readAllUserRows(sb, "persons", userId),
+    readAllUserRows(sb, "creator_children", userId),
+    readAllUserRows(sb, "bulk_scan_state", userId),
+    readAllUserRows(sb, "tiered_reward_configs", userId),
+  ]);
+  const parentError = parentReads.find((read) => read.error)?.error;
+  if (parentError) return NextResponse.json({ error: parentError.message }, { status: 502 });
+
   const [
     { data: addressBook },
     { data: knownIntermediaries },
     { data: knownCreators },
-    { data: savedAnalyses, error: savedAnalysesError },
+    { data: savedAnalyses },
     { data: bulkRecipients },
     { data: proceedsPresets },
     { data: savedSearches },
@@ -60,35 +83,25 @@ export async function POST(req: NextRequest) {
     { data: creatorChildren },
     { data: bulkScanState },
     { data: tieredRewardConfigs },
-  ] = await Promise.all([
-    sb.from("address_book").select("*").eq("user_id", userId),
-    sb.from("known_intermediaries").select("*").eq("user_id", userId),
-    sb.from("known_creators").select("*").eq("user_id", userId),
-    readSavedAnalysisRows(userId),
-    sb.from("bulk_recipients").select("*").eq("user_id", userId),
-    sb.from("proceeds_presets").select("*").eq("user_id", userId),
-    sb.from("saved_searches").select("*").eq("user_id", userId),
-    sb.from("bulk_run_history").select("*").eq("user_id", userId),
-    sb.from("asset_groups").select("*").eq("user_id", userId),
-    sb.from("wallet_folders").select("*").eq("user_id", userId),
-    sb.from("wallets").select("*").eq("user_id", userId),
-    sb.from("app_state").select("*").eq("user_id", userId),
-    sb.from("auto_send_groups").select("*").eq("user_id", userId),
-    sb.from("persons").select("*").eq("user_id", userId),
-    sb.from("creator_children").select("*").eq("user_id", userId),
-    sb.from("bulk_scan_state").select("*").eq("user_id", userId),
-    sb.from("tiered_reward_configs").select("*").eq("user_id", userId),
-  ]);
-
-  if (savedAnalysesError) {
-    return NextResponse.json({ error: savedAnalysesError.message }, { status: 502 });
-  }
+  ] = parentReads;
 
   // Child tables with no user_id column of their own — scoped through their parent instead
   const assetGroupIds = (assetGroups ?? []).map((g) => g.id as string);
   const autoSendGroupIds = (autoSendGroups ?? []).map((g) => g.id as string);
   const personIds = (persons ?? []).map((p) => p.id as string);
   const tieredRewardConfigIds = (tieredRewardConfigs ?? []).map((c) => c.id as string);
+  const childReads = await Promise.all([
+    readAllChildRows(sb, "asset_group_members", "group_id", assetGroupIds),
+    readAllChildRows(sb, "auto_send_destinations", "group_id", autoSendGroupIds),
+    readAllChildRows(sb, "auto_send_run_log", "group_id", autoSendGroupIds),
+    readAllChildRows(sb, "person_addresses", "person_id", personIds),
+    readAllChildRows(sb, "person_relationships", "person_a_id", personIds),
+    readAllChildRows(sb, "tiered_reward_tiers", "config_id", tieredRewardConfigIds),
+    readAllUserRows(sb, "tiered_reward_run_log", userId),
+  ]);
+  const childError = childReads.find((read) => read.error)?.error;
+  if (childError) return NextResponse.json({ error: childError.message }, { status: 502 });
+
   const [
     { data: assetGroupMembers },
     { data: autoSendDestinations },
@@ -97,34 +110,13 @@ export async function POST(req: NextRequest) {
     { data: personRelationships },
     { data: tieredRewardTiers },
     { data: tieredRewardRunLog },
-  ] = await Promise.all([
-    assetGroupIds.length > 0
-      ? sb.from("asset_group_members").select("*").in("group_id", assetGroupIds)
-      : Promise.resolve({ data: [] as Record<string, unknown>[] }),
-    autoSendGroupIds.length > 0
-      ? sb.from("auto_send_destinations").select("*").in("group_id", autoSendGroupIds)
-      : Promise.resolve({ data: [] as Record<string, unknown>[] }),
-    autoSendGroupIds.length > 0
-      ? sb.from("auto_send_run_log").select("*").in("group_id", autoSendGroupIds)
-      : Promise.resolve({ data: [] as Record<string, unknown>[] }),
-    personIds.length > 0
-      ? sb.from("person_addresses").select("*").in("person_id", personIds)
-      : Promise.resolve({ data: [] as Record<string, unknown>[] }),
-    personIds.length > 0
-      ? sb.from("person_relationships").select("*").in("person_a_id", personIds)
-      : Promise.resolve({ data: [] as Record<string, unknown>[] }),
-    tieredRewardConfigIds.length > 0
-      ? sb.from("tiered_reward_tiers").select("*").in("config_id", tieredRewardConfigIds)
-      : Promise.resolve({ data: [] as Record<string, unknown>[] }),
-    tieredRewardConfigIds.length > 0
-      ? sb.from("tiered_reward_run_log").select("*").eq("user_id", userId)
-      : Promise.resolve({ data: [] as Record<string, unknown>[] }),
-  ]);
+  ] = childReads;
   const tieredRewardTierIds = (tieredRewardTiers ?? []).map((t) => t.id as string);
-  const { data: tieredRewardAssets } =
-    tieredRewardTierIds.length > 0
-      ? await sb.from("tiered_reward_assets").select("*").in("tier_id", tieredRewardTierIds)
-      : { data: [] as Record<string, unknown>[] };
+  const { data: tieredRewardAssets, error: tieredRewardAssetsError } =
+    await readAllChildRows(sb, "tiered_reward_assets", "tier_id", tieredRewardTierIds);
+  if (tieredRewardAssetsError) {
+    return NextResponse.json({ error: tieredRewardAssetsError.message }, { status: 502 });
+  }
 
   let merged = 0;
 

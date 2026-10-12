@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect } from "react";
 import Link from "next/link";
 import { useSettings, resolveHorizonUrl, NETWORK_LABELS, type Network } from "@/lib/settings";
-import { Horizon } from "stellar-sdk";
+import { fetchJson } from "@/lib/horizon-fetch";
 import { useActiveWallet } from "@/hooks/use-active-wallet";
 import { useWalletsV2 } from "@/hooks/use-wallets-v2";
 import { useWalletFolders } from "@/hooks/use-wallet-folders";
@@ -91,16 +91,16 @@ function WalletButton() {
       setBalance(null);
       return;
     }
-    let cancelled = false;
-    const server = new Horizon.Server(horizonUrl);
-    server.loadAccount(activeWallet.publicKey)
+    const controller = new AbortController();
+    const url = `${horizonUrl.replace(/\/$/, "")}/accounts/${activeWallet.publicKey}`;
+    fetchJson(url, controller.signal)
       .then((acc: { balances: Array<{ asset_type: string; balance: string }> }) => {
-        if (cancelled) return;
+        if (controller.signal.aborted) return;
         const native = acc.balances.find((b: { asset_type: string }) => b.asset_type === "native");
         setBalance(native ? parseFloat(native.balance).toFixed(2) : "0.00");
       })
-      .catch(() => { if (!cancelled) setBalance(null); });
-    return () => { cancelled = true; };
+      .catch(() => { if (!controller.signal.aborted) setBalance(null); });
+    return () => controller.abort();
   }, [activeWallet, horizonUrl]);
 
   // Close dropdown when clicking outside
@@ -162,7 +162,7 @@ function WalletButton() {
                             key={w.id}
                             wallet={w}
                             icon={
-                              w.secretKey
+                              (w.hasKey || w.secretKey)
                                 ? <span title="Full wallet"><KeyRound className="h-3.5 w-3.5 shrink-0 text-muted-foreground" /></span>
                                 : <span title="Watch only"><Eye className="h-3.5 w-3.5 shrink-0 text-muted-foreground" /></span>
                             }
@@ -228,7 +228,7 @@ function WalletButton() {
       >
         <span className="h-1.5 w-1.5 rounded-full bg-green-500 shrink-0" />
         <span className="font-medium max-w-[100px] truncate">{activeWallet.name}</span>
-        {!activeWallet.secretKey && (
+        {!(activeWallet.hasKey || activeWallet.secretKey) && (
           <span className="flex items-center gap-1 text-amber-400 hidden sm:inline-flex">
             <Eye className="h-3 w-3" />
             <span className="text-[10px]">watch</span>

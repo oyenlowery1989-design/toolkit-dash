@@ -1,5 +1,6 @@
 import { Horizon, Asset } from "stellar-sdk";
 import { fetchJson } from "../horizon-fetch";
+import { authHeaders, waitForAuth } from "@/lib/db-client";
 import { resolveAssetToXlmTrade } from "@/lib/trade-helpers";
 import type {
   Holder,
@@ -832,15 +833,11 @@ export async function fetchClaimableBalances(
   let totalAmount = 0;
   let cursor: string | undefined;
 
+  await waitForAuth();
+
   while (!signal.aborted) {
     const url = `/api/horizon/claimable_balances?asset=${encodeURIComponent(assetParam)}&limit=200${cursor ? `&cursor=${cursor}` : ""}`;
-    let data: any;
-    try {
-      data = await fetchJson(url, signal);
-    } catch (e) {
-      if (e instanceof DOMException && e.name === "AbortError") throw e;
-      break;
-    }
+    const data = await fetchJson(url, signal, { headers: authHeaders() });
     const records = data._embedded?.records ?? [];
     for (const r of records) {
       count++;

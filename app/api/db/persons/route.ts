@@ -197,7 +197,7 @@ export async function POST(req: NextRequest) {
         telegram_username: telegramUsername ?? null,
         created_at: now,
         updated_at: now,
-      });
+      }).throwOnError();
     });
 
     return NextResponse.json({ ok: true });
@@ -252,8 +252,8 @@ export async function POST(req: NextRequest) {
       await sb.from("person_addresses").upsert(
         { id, person_id: personId, address, label: label ?? null, added_at: now },
         { onConflict: "person_id,address" },
-      );
-      await sb.from("persons").update({ updated_at: now }).eq("id", personId).eq("user_id", userId!);
+      ).throwOnError();
+      await sb.from("persons").update({ updated_at: now }).eq("id", personId).eq("user_id", userId!).throwOnError();
     });
 
     return NextResponse.json({ ok: true });
@@ -308,7 +308,7 @@ export async function POST(req: NextRequest) {
         person_b_id: personBId,
         type: relationshipType,
         created_at: now,
-      });
+      }).throwOnError();
     });
 
     return NextResponse.json({ ok: true });
@@ -368,7 +368,7 @@ export async function PATCH(req: NextRequest) {
     if (telegramChannel !== undefined) patch.telegram_channel = telegramChannel;
     if (telegramLink !== undefined) patch.telegram_link = telegramLink;
     if (telegramUsername !== undefined) patch.telegram_username = telegramUsername;
-    await getSupabase()!.from("persons").update(patch).eq("id", id).eq("user_id", userId!);
+    await getSupabase()!.from("persons").update(patch).eq("id", id).eq("user_id", userId!).throwOnError();
   });
 
   return NextResponse.json({ ok: true });
@@ -426,15 +426,15 @@ export async function DELETE(req: NextRequest) {
     if (type === "person") {
       return sb.from("persons").delete().eq("id", key).eq("user_id", userId!);
     } else if (type === "relationship") {
-      const { data: rel } = await sb.from("person_relationships").select("person_a_id").eq("id", key).single();
+      const { data: rel } = await sb.from("person_relationships").select("person_a_id").eq("id", key).maybeSingle().throwOnError();
       if (!rel) return;
-      const { data: parentPerson } = await sb.from("persons").select("id").eq("id", rel.person_a_id).eq("user_id", userId!).single();
+      const { data: parentPerson } = await sb.from("persons").select("id").eq("id", rel.person_a_id).eq("user_id", userId!).maybeSingle().throwOnError();
       if (!parentPerson) return;
       return sb.from("person_relationships").delete().eq("id", key);
     } else {
-      const { data: addr } = await sb.from("person_addresses").select("person_id").eq("id", key).single();
+      const { data: addr } = await sb.from("person_addresses").select("person_id").eq("id", key).maybeSingle().throwOnError();
       if (!addr) return;
-      const { data: parentPerson } = await sb.from("persons").select("id").eq("id", addr.person_id).eq("user_id", userId!).single();
+      const { data: parentPerson } = await sb.from("persons").select("id").eq("id", addr.person_id).eq("user_id", userId!).maybeSingle().throwOnError();
       if (!parentPerson) return;
       return sb.from("person_addresses").delete().eq("id", key);
     }

@@ -4,6 +4,7 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import { Horizon, Keypair } from "stellar-sdk";
 import { CheckCircle2, XCircle, AlertTriangle, Loader2, ChevronDown, ChevronUp, SkipForward } from "lucide-react";
+import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
 import { resolveHorizonUrl, resolveNetworkPassphrase } from "@/lib/settings";
 import {
@@ -80,10 +81,10 @@ export function Step3Preflight({ form, completedSteps, onBack, onComplete }: Pro
       push(await checkBalance(form.distributorPublicKey, 1.51, server, onLog, signal, horizonUrl));
       push(await checkAssetExists(form.assetCode, form.issuerPublicKey, server, onLog, signal, horizonUrl));
 
-      // On mainnet: also check funding wallet balance if key is present
-      if (form.network !== "testnet" && form.resolvedFundingSecretKey) {
+      // On mainnet: also check the selected funding wallet balance
+      if (form.network !== "testnet" && (form.resolvedFundingSecretKey || form.fundingWalletId)) {
         try {
-          const fundingPub = Keypair.fromSecret(form.resolvedFundingSecretKey).publicKey();
+          const fundingPub = form.fundingWalletId ? form.fundingPublicKey! : Keypair.fromSecret(form.resolvedFundingSecretKey).publicKey();
           push(await checkBalance(fundingPub, 5, server, onLog, signal, horizonUrl));
         } catch {
           push({ id: "funding-balance", label: "Funding wallet balance", status: "fail", message: "Invalid funding key", blocking: true });
@@ -109,7 +110,7 @@ export function Step3Preflight({ form, completedSteps, onBack, onComplete }: Pro
   const bothAccountsExist =
     checks.some((c) => c.id === `exists-${form.issuerPublicKey}` && c.status === "pass") &&
     checks.some((c) => c.id === `exists-${form.distributorPublicKey}` && c.status === "pass");
-  const needsFundingKey = form.network !== "testnet" && !form.resolvedFundingSecretKey && !bothAccountsExist;
+  const needsFundingKey = form.network !== "testnet" && !form.resolvedFundingSecretKey && !form.fundingWalletId && !bothAccountsExist;
   const canExecute = !checking && !running && !hasBlockingFail && !needsFundingKey && (!hasWarning || warningAcked);
 
   const handleExecute = async () => {
@@ -190,11 +191,9 @@ export function Step3Preflight({ form, completedSteps, onBack, onComplete }: Pro
       {/* Warning acknowledgement */}
       {hasWarning && (
         <label className="flex items-center gap-2 text-sm cursor-pointer">
-          <input
-            type="checkbox"
+          <Switch
             checked={warningAcked}
-            onChange={(e) => setWarningAcked(e.target.checked)}
-            className="rounded"
+            onCheckedChange={setWarningAcked}
           />
           Proceed anyway (I understand the warnings above)
         </label>

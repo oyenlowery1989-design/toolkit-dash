@@ -111,7 +111,7 @@ export async function POST(req: NextRequest) {
       notes: b.notes ?? null,
       tags: b.tags ?? null,
       created_at: now,
-    });
+    }).throwOnError();
   });
 
   return NextResponse.json({ ok: true });
@@ -185,7 +185,7 @@ export async function PATCH(req: NextRequest) {
     if (notes !== undefined) patch.notes = notes;
     if (tags !== undefined) patch.tags = tags;
     if (Object.keys(patch).length > 0) {
-      await getSupabase()!.from("saved_analyses").update(patch).eq("id", id).eq("user_id", userId!);
+      await getSupabase()!.from("saved_analyses").update(patch).eq("id", id).eq("user_id", userId!).throwOnError();
     }
   });
 

@@ -8,6 +8,7 @@ import type { ScheduledTask } from "node-cron";
 import type { AutoSendGroup } from "./types";
 import { rowToGroup } from "./db-map";
 import { getSupabase, isSupabaseOnly } from "@/lib/supabase-server";
+import { readAllChildRows } from "@/lib/supabase-read-all";
 
 declare global {
   var _autoSendTasks: Map<string, ScheduledTask> | undefined;
@@ -46,8 +47,7 @@ function loadEnabledGroupsFromSqlite(): ScheduledGroup[] {
       return rowToGroup(g, dests);
     });
   } catch (err) {
-    console.error("[auto-send] Failed to load groups from DB:", err);
-    return [];
+    throw new Error("[auto-send] Failed to load groups from DB", { cause: err });
   }
 }
 
@@ -58,30 +58,37 @@ function loadEnabledGroupsFromSqlite(): ScheduledGroup[] {
  *  Uses the service-role client (bypasses RLS) since the scheduler runs across all users. */
 async function loadEnabledGroupsFromSupabase(): Promise<ScheduledGroup[]> {
   const sb = getSupabase();
-  if (!sb) return [];
+  if (!sb) throw new Error("[auto-send] Supabase is unavailable");
 
-  const { data: groups, error } = await sb
-    .from("auto_send_groups")
-    .select("*")
-    .eq("enabled", 1)
-    .not("interval_minutes", "is", null)
-    .order("created_at", { ascending: true });
-
-  if (error || !groups) {
-    console.error("[auto-send] Failed to load groups from Supabase:", error);
-    return [];
+  const groups: Record<string, unknown>[] = [];
+  let total: number | null = null;
+  while (total === null || groups.length < total) {
+    const { data, error, count } = await sb.from("auto_send_groups")
+      .select("*", { count: "exact" })
+      .eq("enabled", 1)
+      .not("interval_minutes", "is", null)
+      .order("id")
+      .range(groups.length, groups.length + 999);
+    if (error || count == null || (total !== null && count !== total) || (!data?.length && groups.length < count)) {
+      throw new Error(`[auto-send] Failed to load all groups: ${error?.message ?? "incomplete read"}`);
+    }
+    total = count;
+    groups.push(...(data ?? []));
   }
 
-  const result: ScheduledGroup[] = [];
-  for (const g of groups as Record<string, unknown>[]) {
-    const { data: dests } = await sb
-      .from("auto_send_destinations")
-      .select("*")
-      .eq("group_id", g.id)
-      .order("position", { ascending: true });
-    result.push({ ...rowToGroup(g, dests ?? []), userId: (g.user_id as string | undefined) || undefined });
+  const { data: destinations, error } = await readAllChildRows(sb, "auto_send_destinations", "group_id", groups.map((g) => String(g.id)));
+  if (error || !destinations) throw new Error(`[auto-send] Failed to load destinations: ${error?.message ?? "incomplete read"}`);
+  const byGroup = new Map<string, Record<string, unknown>[]>();
+  for (const destination of destinations) {
+    const groupId = String(destination.group_id);
+    const rows = byGroup.get(groupId) ?? [];
+    rows.push(destination);
+    byGroup.set(groupId, rows);
   }
-  return result;
+  return groups.map((g) => ({
+    ...rowToGroup(g, byGroup.get(String(g.id)) ?? []),
+    userId: (g.user_id as string | undefined) || undefined,
+  }));
 }
 
 async function loadEnabledGroups(): Promise<ScheduledGroup[]> {
@@ -175,11 +182,11 @@ async function scheduleAll(): Promise<void> {
   const cron = require("node-cron") as typeof import("node-cron");
   const tasks = global._autoSendTasks!;
 
-  // Destroy existing tasks
+  const groups = await loadEnabledGroups();
+
+  // Keep existing schedules if loading fails; replace them only after a complete read.
   for (const task of tasks.values()) task.stop();
   tasks.clear();
-
-  const groups = await loadEnabledGroups();
   for (const group of groups) {
     if (!group.intervalMinutes) continue;
     const expr = minutesToCronExpression(group.intervalMinutes);

@@ -2,7 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
 import { getSupabase, isSupabaseOnly, requireAuth } from "@/lib/supabase-server";
 import type { AutoSendGroup, AutoSendDestination } from "@/lib/auto-send/types";
-import { encryptStoredSecret } from "@/lib/secret-storage";
+import { decryptStoredSecret, encryptStoredSecret } from "@/lib/secret-storage";
+import type { AutoSendRunGuard } from "@/lib/auto-send/run-guard";
+import { readAllChildRows, readPages } from "@/lib/supabase-read-all";
+import { loadSavedWalletSigner } from "@/lib/saved-wallet-server";
 
 type Row = Record<string, unknown>;
 
@@ -22,12 +25,20 @@ function rowToDestination(r: Row): AutoSendDestination {
   };
 }
 
-function buildGroups(groups: Row[], allDests: Row[]): AutoSendGroup[] {
+function buildGroups(groups: Row[], allDests: Row[], guardRows: Row[]): AutoSendGroup[] {
   const destsByGroup = new Map<string, AutoSendDestination[]>();
   for (const d of allDests) {
     const gid = d.group_id as string;
     if (!destsByGroup.has(gid)) destsByGroup.set(gid, []);
     destsByGroup.get(gid)!.push(rowToDestination(d));
+  }
+  const guards = new Map<string, AutoSendRunGuard>();
+  for (const row of guardRows) {
+    try {
+      guards.set(row.group_id as string, JSON.parse(row.error as string) as AutoSendRunGuard);
+    } catch {
+      guards.set(row.group_id as string, { startedAt: row.ran_at as number, walletAddress: row.wallet_address as string, state: "blocked", transactions: [] });
+    }
   }
   return groups.map((g) => ({
     id: g.id as string,
@@ -43,6 +54,7 @@ function buildGroups(groups: Row[], allDests: Row[]): AutoSendGroup[] {
     minSenderThreshold: (g.min_sender_threshold as number) ?? 0,
     previewOnly: Number(g.preview_only) === 1,
     lastFailureAt: (g.last_failure_at as number) ?? undefined,
+    pendingRun: guards.get(g.id as string) ?? null,
     createdAt: g.created_at as number,
     destinations: (destsByGroup.get(g.id as string) ?? []).sort((a, b) => a.position - b.position),
   }));
@@ -54,17 +66,26 @@ export async function GET(req: NextRequest) {
 
   if (isSupabaseOnly()) {
     const sb = getSupabase()!;
-    const { data: groups, error: ge } = await sb.from("auto_send_groups").select("*").eq("user_id", auth.userId!).order("created_at", { ascending: false });
+    const { data: groups, error: ge } = await readPages((from, to) => sb.from("auto_send_groups")
+      .select("*", { count: "exact" }).eq("user_id", auth.userId!).order("id").range(from, to));
     if (ge) return NextResponse.json({ error: ge.message }, { status: 500 });
-    const { data: dests, error: de } = await sb.from("auto_send_destinations").select("*").in("group_id", (groups ?? []).map((g) => g.id));
+    const { data: dests, error: de } = await readAllChildRows(sb, "auto_send_destinations", "group_id", (groups ?? []).map((g) => String(g.id)));
     if (de) return NextResponse.json({ error: de.message }, { status: 500 });
-    return NextResponse.json(buildGroups(groups ?? [], dests ?? []));
+    const guards: Row[] = [];
+    for (let i = 0; i < (groups?.length ?? 0); i += 100) {
+      const ids = groups!.slice(i, i + 100).map((group) => `auto-send-guard:${group.id}`);
+      const { data, error } = await sb.from("auto_send_run_log").select("group_id, wallet_address, error, ran_at").in("id", ids);
+      if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+      guards.push(...(data ?? []));
+    }
+    return NextResponse.json(buildGroups(groups ?? [], dests ?? [], guards).sort((a, b) => b.createdAt - a.createdAt));
   }
 
   const db = getDb();
   const groups = db.prepare(`SELECT * FROM auto_send_groups ORDER BY created_at DESC`).all() as Row[];
   const allDests = db.prepare(`SELECT * FROM auto_send_destinations ORDER BY position ASC`).all() as Row[];
-  return NextResponse.json(buildGroups(groups, allDests));
+  const guards = db.prepare("SELECT group_id, wallet_address, error, ran_at FROM auto_send_run_log WHERE status = 'guard'").all() as Row[];
+  return NextResponse.json(buildGroups(groups, allDests, guards));
 }
 
 export async function POST(req: NextRequest) {
@@ -78,7 +99,7 @@ export async function POST(req: NextRequest) {
     const now = Date.now();
 
     if (body.type === "group") {
-      const { id, name, network, secretKey, intervalMinutes, enabled } = body as Record<string, unknown>;
+      const { id, name, network, secretKey, walletId, copyFromGroupId, intervalMinutes, enabled } = body as Record<string, unknown>;
       if (!id || !name) return NextResponse.json({ error: "id and name required" }, { status: 400 });
       if (network !== undefined && network !== "public") {
         return NextResponse.json({ error: "Only mainnet is supported" }, { status: 400 });
@@ -86,7 +107,27 @@ export async function POST(req: NextRequest) {
       if (secretKey !== undefined && typeof secretKey !== "string") {
         return NextResponse.json({ error: "secretKey must be a string" }, { status: 400 });
       }
-      const storedSecretKey = encryptStoredSecret(secretKey ?? "");
+      if ((walletId !== undefined && (typeof walletId !== "string" || !walletId)) ||
+        (copyFromGroupId !== undefined && (typeof copyFromGroupId !== "string" || !copyFromGroupId)) ||
+        [!!walletId, !!copyFromGroupId, !!secretKey].filter(Boolean).length > 1) {
+        return NextResponse.json({ error: "Choose one signing key source" }, { status: 400 });
+      }
+      const savedSigner = walletId ? await loadSavedWalletSigner(walletId, auth.userId) : null;
+      if (walletId && !savedSigner) return NextResponse.json({ error: "Saved wallet not found" }, { status: 404 });
+      let copiedSecret = "";
+      if (copyFromGroupId) {
+        let source: { secret_key: string } | null | undefined;
+        if (isSupabaseOnly()) {
+          const result = await getSupabase()!.from("auto_send_groups").select("secret_key").eq("id", copyFromGroupId).eq("user_id", auth.userId!).maybeSingle();
+          if (result.error) return NextResponse.json({ error: result.error.message }, { status: 500 });
+          source = result.data;
+        } else {
+          source = getDb().prepare("SELECT secret_key FROM auto_send_groups WHERE id = ?").get(copyFromGroupId) as { secret_key: string } | undefined;
+        }
+        if (!source) return NextResponse.json({ error: "Source group not found" }, { status: 404 });
+        copiedSecret = decryptStoredSecret(source.secret_key);
+      }
+      const storedSecretKey = encryptStoredSecret(savedSigner?.secret() || copiedSecret || secretKey || "");
       const enabledFlag = enabled === undefined ? 1 : (enabled ? 1 : 0);
 
       if (isSupabaseOnly()) {
@@ -143,6 +184,9 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ error: "unknown type — expected 'group' or 'destination'" }, { status: 400 });
   } catch (e) {
+    if (e instanceof Error && /watch-only|does not match the wallet address/.test(e.message)) {
+      return NextResponse.json({ error: e.message }, { status: 400 });
+    }
     console.error("[auto-send-groups] POST unhandled:", e);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
@@ -157,7 +201,7 @@ export async function PATCH(req: NextRequest) {
     try { body = await req.json(); } catch { return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 }); }
 
     if (body.type === "group") {
-      const { id, name, network, secretKey, intervalMinutes, enabled, batchSend, batchMemo, minReserve, minSenderThreshold, previewOnly, lastFailureAt } = body;
+      const { id, name, network, secretKey, walletId, intervalMinutes, enabled, batchSend, batchMemo, minReserve, minSenderThreshold, previewOnly, lastFailureAt } = body;
       if (!id) return NextResponse.json({ error: "id required" }, { status: 400 });
       if (network !== undefined && network !== "public") {
         return NextResponse.json({ error: "Only mainnet is supported" }, { status: 400 });
@@ -165,13 +209,19 @@ export async function PATCH(req: NextRequest) {
       if (secretKey !== undefined && secretKey !== null && typeof secretKey !== "string") {
         return NextResponse.json({ error: "secretKey must be a string" }, { status: 400 });
       }
+      if (walletId !== undefined && (typeof walletId !== "string" || !walletId || !!secretKey)) {
+        return NextResponse.json({ error: "Choose either a saved wallet or a manual key" }, { status: 400 });
+      }
+      const savedSigner = walletId ? await loadSavedWalletSigner(walletId, auth.userId) : null;
+      if (walletId && !savedSigner) return NextResponse.json({ error: "Saved wallet not found" }, { status: 404 });
+      const newSecret = savedSigner?.secret() ?? (typeof secretKey === "string" ? secretKey : "");
 
       if (isSupabaseOnly()) {
         const updates: Row = {};
         if (name !== undefined) updates.name = (name as string).trim();
         if (network !== undefined) updates.network = network;
         // Only update key when caller supplies a non-empty value (empty = keep existing)
-        if (typeof secretKey === "string" && secretKey !== "") updates.secret_key = encryptStoredSecret(secretKey);
+        if (newSecret) updates.secret_key = encryptStoredSecret(newSecret);
         if (intervalMinutes !== undefined) updates.interval_minutes = intervalMinutes ?? null;
         if (enabled !== undefined) updates.enabled = enabled ? 1 : 0;
         if (batchSend !== undefined) updates.batch_send = batchSend ? 1 : 0;
@@ -190,7 +240,7 @@ export async function PATCH(req: NextRequest) {
         if (name !== undefined) { fields.push("name = ?"); values.push((name as string).trim()); }
         if (network !== undefined) { fields.push("network = ?"); values.push(network); }
         // Only update key when caller supplies a non-empty value (empty = keep existing)
-        if (typeof secretKey === "string" && secretKey !== "") { fields.push("secret_key = ?"); values.push(encryptStoredSecret(secretKey)); }
+        if (newSecret) { fields.push("secret_key = ?"); values.push(encryptStoredSecret(newSecret)); }
         if (intervalMinutes !== undefined) { fields.push("interval_minutes = ?"); values.push(intervalMinutes ?? null); }
         if (enabled !== undefined) { fields.push("enabled = ?"); values.push(enabled ? 1 : 0); }
         if (batchSend !== undefined) { fields.push("batch_send = ?"); values.push(batchSend ? 1 : 0); }
@@ -208,6 +258,9 @@ export async function PATCH(req: NextRequest) {
 
     return NextResponse.json({ error: "unknown type — expected 'group'" }, { status: 400 });
   } catch (e) {
+    if (e instanceof Error && /watch-only|does not match the wallet address/.test(e.message)) {
+      return NextResponse.json({ error: e.message }, { status: 400 });
+    }
     console.error("[auto-send-groups] PATCH unhandled:", e);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }

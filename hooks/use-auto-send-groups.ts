@@ -30,7 +30,7 @@ export function useAutoSendGroups() {
   const groups = _cache.get();
 
   const createGroup = useCallback(
-    (entry: { id?: string; name: string; network: string; secretKey: string; intervalMinutes: number | null; enabled?: boolean }) => {
+    (entry: { id?: string; name: string; network: string; secretKey: string; walletId?: string; copyFromGroupId?: string; intervalMinutes: number | null; enabled?: boolean }) => {
       const id = entry.id ?? crypto.randomUUID();
       const enabled = entry.enabled ?? true;
       const optimistic: AutoSendGroup = {
@@ -38,6 +38,7 @@ export function useAutoSendGroups() {
         name: entry.name,
         network: entry.network,
         secretKey: entry.secretKey,
+        hasKey: !!entry.walletId || !!entry.secretKey || !!_cache.get().find((group) => group.id === entry.copyFromGroupId)?.hasKey,
         intervalMinutes: entry.intervalMinutes,
         enabled,
         batchSend: false,
@@ -49,10 +50,13 @@ export function useAutoSendGroups() {
         destinations: [],
       };
       _cache.set([optimistic, ..._cache.get()]);
-      const promise = dbPost(ENDPOINT, { type: "group", id, ...entry, enabled }).catch(() => _cache.reload(ENDPOINT));
+      const promise = dbPost(ENDPOINT, { type: "group", id, ...entry, enabled }).catch(async (error) => {
+        await _cache.reload(ENDPOINT);
+        throw error;
+      });
       // Notify scheduler about new group if it has an interval
       if (entry.intervalMinutes) {
-        waitForAuth().then(() => fetch("/api/auto-send/run", {
+        promise.then(() => waitForAuth()).then(() => fetch("/api/auto-send/run", {
           method: "POST",
           headers: { "Content-Type": "application/json", ...authHeaders() },
           body: JSON.stringify({ action: "refresh-scheduler" }),
@@ -66,9 +70,9 @@ export function useAutoSendGroups() {
   const updateGroup = useCallback(
     (
       id: string,
-      updates: Partial<Pick<AutoSendGroup, "name" | "network" | "secretKey" | "intervalMinutes" | "enabled" | "batchSend" | "batchMemo" | "minReserve" | "minSenderThreshold" | "previewOnly" | "lastFailureAt">>
+      updates: Partial<Pick<AutoSendGroup, "name" | "network" | "secretKey" | "intervalMinutes" | "enabled" | "batchSend" | "batchMemo" | "minReserve" | "minSenderThreshold" | "previewOnly" | "lastFailureAt">> & { walletId?: string }
     ) => {
-      _cache.set(_cache.get().map((g) => (g.id === id ? { ...g, ...updates } : g)));
+      _cache.set(_cache.get().map((g) => (g.id === id ? { ...g, ...updates, hasKey: !!updates.walletId || !!updates.secretKey || g.hasKey } : g)));
       dbPatch(ENDPOINT, { type: "group", id, ...updates }).catch(() => _cache.reload(ENDPOINT));
       if (updates.enabled !== undefined || updates.intervalMinutes !== undefined) {
         waitForAuth().then(() => fetch("/api/auto-send/run", {

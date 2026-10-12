@@ -6,7 +6,8 @@ import { Asset, StrKey, Keypair, TransactionBuilder, Operation, Memo } from "ste
 import { Ghost } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAssetGroups } from "@/hooks/use-asset-groups";
-import { useActiveWallet } from "@/hooks/use-active-wallet";
+import { setActiveWalletId, useActiveWallet } from "@/hooks/use-active-wallet";
+import { useWalletsV2 } from "@/hooks/use-wallets-v2";
 import { WalletSelect, WalletAppendSelect } from "@/components/ui/wallet-select";
 import {
   Select,
@@ -51,6 +52,9 @@ import { downloadCSV } from "@/lib/csv-export";
 import { fetchAllHolders } from "@/lib/asset-lookup/fetchers";
 import { estimateCost } from "@/lib/bulk-payments/builder";
 import { runBulkPayments } from "@/lib/bulk-payments/runner";
+import { parseGhostSenders } from "@/lib/bulk-payments/ghost-senders";
+import { signPaymentTransaction } from "@/lib/payments-signing";
+import { submitMainnetTransaction } from "@/lib/mainnet-submit-client";
 import type { BatchResult, AssetSource } from "@/lib/bulk-payments/types";
 import { useBulkRecipients } from "@/hooks/use-bulk-recipients";
 import { useHorizonServer } from "@/hooks/use-horizon-server";
@@ -256,6 +260,7 @@ export function GhostPaymentsPanel() {
   const urlAssets = searchParams.get("assets");
 
   const { activeWallet } = useActiveWallet();
+  const { wallets } = useWalletsV2();
 
   const { autoSave: autoSaveSigningKey } = useAutoSaveSigningKey();
 
@@ -264,6 +269,7 @@ export function GhostPaymentsPanel() {
   const [secretKey, setSecretKey] = useState("");
 
   const effectiveSecretKey = activeWallet?.secretKey ?? secretKey;
+  const signingIdentity = activeWallet ? `wallet:${activeWallet.id}` : `manual:${secretKey}`;
   const [senderMode, setSenderMode] = useState<SenderMode>("single");
   const [multipleKeysText, setMultipleKeysText] = useState("");
   const [batchSize, setBatchSize] = useState(100);
@@ -307,15 +313,14 @@ export function GhostPaymentsPanel() {
   // Only in no_trust mode. Recipients have no trust line → op_no_trust → fails on-chain.
   useEffect(() => {
     if (ghostMode !== "no_trust") return;
-    try {
-      const pub = Keypair.fromSecret(effectiveSecretKey.trim()).publicKey();
+    const pub = getSenderPublicKey();
+    if (pub) {
       setAssetType("custom");
       setCustomAssetCode("GHOST");
       setCustomAssetIssuer(pub);
-    } catch {
-      // Invalid key — leave asset as-is
     }
-  }, [effectiveSecretKey, ghostMode]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeWallet?.publicKey, effectiveSecretKey, ghostMode, senderMode, multipleKeysText]);
 
   // When switching modes, reset asset to match mode defaults
   useEffect(() => {
@@ -333,13 +338,11 @@ export function GhostPaymentsPanel() {
       setAssetType("custom");
     } else {
       // Reapply ghost asset auto-fill
-      try {
-        const pub = Keypair.fromSecret(effectiveSecretKey.trim()).publicKey();
+      const pub = getSenderPublicKey();
+      if (pub) {
         setCustomAssetCode("GHOST");
         setCustomAssetIssuer(pub);
         setAssetType("custom");
-      } catch {
-        // key not valid yet
       }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -356,12 +359,14 @@ export function GhostPaymentsPanel() {
     if (underfundedAmount !== null) {
       setUnderfundedAmount(null);
     }
-    if (phase === "preview" && ghostMode === "underfunded") {
+    if (phase === "preview") {
       setPhase("configure");
       setError("Signing wallet changed — please run Preview again.");
+    } else if (phase === "sending") {
+      abortRef.current?.abort();
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [effectiveSecretKey]);
+  }, [signingIdentity]);
 
   const abortRef = useRef<AbortController | null>(null);
   const submittingRef = useRef(false);
@@ -462,22 +467,20 @@ export function GhostPaymentsPanel() {
   }
 
   function parseMultipleKeys(): string[] {
-    return multipleKeysText
-      .split(/[\n,]+/)
-      .map((s) => s.trim())
-      .filter((s) => s.startsWith("S") && s.length === 56);
+    return parseGhostSenders(multipleKeysText, wallets);
   }
 
   function validateForm(): string | null {
     if (memoBytes > MEMO_MAX_BYTES)
       return `Memo exceeds ${MEMO_MAX_BYTES} bytes (currently ${memoBytes}).`;
     if (senderMode === "single") {
-      if (!effectiveSecretKey.trim()) return "Signing secret key is required.";
-      if (!effectiveSecretKey.trim().startsWith("S") || effectiveSecretKey.trim().length !== 56)
+      if (activeWallet && !activeWallet.hasKey && !activeWallet.secretKey) return "Connected wallet has no saved signing key.";
+      if (!activeWallet && !effectiveSecretKey.trim()) return "Signing secret key is required.";
+      if (!activeWallet && (!effectiveSecretKey.trim().startsWith("S") || effectiveSecretKey.trim().length !== 56))
         return "Secret key must start with S and be 56 characters.";
     } else {
       const keys = parseMultipleKeys();
-      if (keys.length < 2) return "Enter at least 2 secret keys for multi-sender mode.";
+      if (keys.length < 2) return "Enter at least 2 signing keys or saved wallet addresses for multi-sender mode.";
     }
     if (ghostMode === "underfunded" && senderMode !== "single") {
       return "Underfunded mode only supports a single sender — the overshoot amount is computed from one account's balance and cannot safely be reused across multiple senders.";
@@ -523,8 +526,10 @@ export function GhostPaymentsPanel() {
     if (senderMode !== "single") {
       const keys = parseMultipleKeys();
       if (keys.length === 0) return null;
+      if (keys[0].startsWith("G")) return keys[0];
       try { return Keypair.fromSecret(keys[0]).publicKey(); } catch { return null; }
     }
+    if (activeWallet) return activeWallet.publicKey;
     try {
       return Keypair.fromSecret(effectiveSecretKey.trim()).publicKey();
     } catch {
@@ -541,6 +546,7 @@ export function GhostPaymentsPanel() {
       const keys = parseMultipleKeys();
       const pubs: string[] = [];
       for (const key of keys) {
+        if (key.startsWith("G")) { pubs.push(key); continue; }
         try {
           pubs.push(Keypair.fromSecret(key).publicKey());
         } catch {
@@ -788,8 +794,10 @@ export function GhostPaymentsPanel() {
       });
 
       try {
-        const keypair = Keypair.fromSecret(key);
-        const account = await horizonServer.loadAccount(keypair.publicKey());
+        const keypair = key.startsWith("G") || (activeWallet && senderMode === "single") ? null : Keypair.fromSecret(key);
+        const senderAddress = keypair?.publicKey() ?? (senderMode === "single" ? activeWallet?.publicKey : key);
+        if (!senderAddress) throw new Error("Signing wallet is missing");
+        const account = await horizonServer.loadAccount(senderAddress);
         const txBuilder = new TransactionBuilder(account, {
           fee: String(100 * feeMultiplier),
           networkPassphrase,
@@ -798,8 +806,12 @@ export function GhostPaymentsPanel() {
           .setTimeout(180);
         if (memoText) txBuilder.addMemo(Memo.text(memoText));
         const tx = txBuilder.build();
-        tx.sign(keypair);
-        const result = await horizonServer.submitTransaction(tx);
+        const savedWallet = key.startsWith("G") ? wallets.find((w) => w.publicKey === key && (w.hasKey || w.secretKey)) : (senderMode === "single" ? activeWallet : null);
+        const signed = savedWallet
+          ? await signPaymentTransaction(tx, savedWallet.id, "")
+          : await signPaymentTransaction(tx, null, key);
+        if (abortRef.current?.signal.aborted) throw new Error("Signing wallet changed — transaction was not submitted");
+        const result = await submitMainnetTransaction(signed);
         const hash = (result as { hash?: string }).hash ?? "";
         setBatchResults((prev) => {
           const next = [...prev];
@@ -916,6 +928,8 @@ export function GhostPaymentsPanel() {
             horizonUrl,
             network,
             secretKey: run.key,
+            walletId: run.key.startsWith("G") ? wallets.find((w) => w.publicKey === run.key)?.id : (senderMode === "single" ? activeWallet?.id : undefined),
+            walletAddress: run.key.startsWith("G") ? run.key : (senderMode === "single" ? activeWallet?.publicKey : undefined),
             recipients: run.recips,
             memo: memo.trim(),
             batchSize,
@@ -1387,7 +1401,7 @@ export function GhostPaymentsPanel() {
               <p className="text-sm text-muted-foreground mb-2">
                 Recipients are split evenly across all senders. Each sender handles its own slice.
               </p>
-              <Label htmlFor="multi-keys-rr">Secret Keys (one per line)</Label>
+              <Label htmlFor="multi-keys-rr">Signing keys or saved wallet addresses (one per line)</Label>
               <textarea
                 id="multi-keys-rr"
                 className="w-full min-h-28 rounded-md border border-input bg-transparent px-3 py-2 text-sm font-mono"
@@ -1395,7 +1409,7 @@ export function GhostPaymentsPanel() {
                 value={multipleKeysText}
                 onChange={(e) => setMultipleKeysText(e.target.value)}
               />
-              <p className="text-xs text-muted-foreground">{parseMultipleKeys().length} valid keys</p>
+              <p className="text-xs text-muted-foreground">{parseMultipleKeys().length} valid signers</p>
               <WalletAppendSelect
                 onAppend={(sk) => setMultipleKeysText((prev) => prev ? prev + "\n" + sk : sk)}
               />
@@ -1404,7 +1418,7 @@ export function GhostPaymentsPanel() {
               <p className="text-sm text-muted-foreground mb-2">
                 Every sender pays every recipient. N senders × M recipients = N×M transactions total.
               </p>
-              <Label htmlFor="multi-keys-ata">Secret Keys (one per line)</Label>
+              <Label htmlFor="multi-keys-ata">Signing keys or saved wallet addresses (one per line)</Label>
               <textarea
                 id="multi-keys-ata"
                 className="w-full min-h-28 rounded-md border border-input bg-transparent px-3 py-2 text-sm font-mono"
@@ -1412,7 +1426,7 @@ export function GhostPaymentsPanel() {
                 value={multipleKeysText}
                 onChange={(e) => setMultipleKeysText(e.target.value)}
               />
-              <p className="text-xs text-muted-foreground">{parseMultipleKeys().length} valid keys</p>
+              <p className="text-xs text-muted-foreground">{parseMultipleKeys().length} valid signers</p>
               <WalletAppendSelect
                 onAppend={(sk) => setMultipleKeysText((prev) => prev ? prev + "\n" + sk : sk)}
               />
@@ -1421,7 +1435,7 @@ export function GhostPaymentsPanel() {
               <p className="text-sm text-muted-foreground mb-2">
                 Each repeat round uses the next key in the list (cycles). Requires Repeat × ≥ 2.
               </p>
-              <Label htmlFor="multi-keys-rot">Secret Keys (one per line)</Label>
+              <Label htmlFor="multi-keys-rot">Signing keys or saved wallet addresses (one per line)</Label>
               <textarea
                 id="multi-keys-rot"
                 className="w-full min-h-28 rounded-md border border-input bg-transparent px-3 py-2 text-sm font-mono"
@@ -1429,7 +1443,7 @@ export function GhostPaymentsPanel() {
                 value={multipleKeysText}
                 onChange={(e) => setMultipleKeysText(e.target.value)}
               />
-              <p className="text-xs text-muted-foreground">{parseMultipleKeys().length} valid keys</p>
+              <p className="text-xs text-muted-foreground">{parseMultipleKeys().length} valid signers</p>
               <WalletAppendSelect
                 onAppend={(sk) => setMultipleKeysText((prev) => prev ? prev + "\n" + sk : sk)}
               />
@@ -1444,7 +1458,7 @@ export function GhostPaymentsPanel() {
           <CardTitle className="text-sm font-medium">Message &amp; Signing</CardTitle>
           <CardDescription>
             The memo is attached to every ghost transaction and visible on explorers.
-            The secret key never leaves your browser.
+            Manual keys sign in this browser. Saved wallet keys stay encrypted on the server and sign there.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4 px-4 pb-3">
@@ -1604,7 +1618,7 @@ export function GhostPaymentsPanel() {
                     <Label htmlFor="secret-key">Signing Secret Key</Label>
                     <WalletSelect
                       currentValue={secretKey}
-                      onPick={(w) => setSecretKey(w.secretKey)}
+                      onPick={(w) => { setSecretKey(""); setActiveWalletId(w.id); }}
                     />
                   </div>
                   <div className="relative">

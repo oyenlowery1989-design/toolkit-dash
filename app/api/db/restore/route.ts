@@ -12,6 +12,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
 import { getSupabase, isSupabaseConfigured, requireAuth } from "@/lib/supabase-server";
 import { encryptImportedStoredSecret } from "@/lib/secret-storage";
+import { readAllChildRows, readAllUserRows } from "@/lib/supabase-read-all";
 
 type SupabaseRead = { data: Record<string, unknown>[] | null; error?: { message: string } | null };
 
@@ -48,23 +49,23 @@ export async function POST(req: NextRequest) {
       "persons", "creator_children", "bulk_scan_state", "tiered_reward_configs",
     ];
     const parentReads = await Promise.all([
-      sb.from("address_book").select("*").eq("user_id", userId),
-      sb.from("known_intermediaries").select("*").eq("user_id", userId),
-      sb.from("known_creators").select("*").eq("user_id", userId),
-      sb.from("saved_analyses").select("*").eq("user_id", userId),
-      sb.from("bulk_recipients").select("*").eq("user_id", userId),
-      sb.from("proceeds_presets").select("*").eq("user_id", userId),
-      sb.from("saved_searches").select("*").eq("user_id", userId),
-      sb.from("bulk_run_history").select("*").eq("user_id", userId),
-      sb.from("asset_groups").select("*").eq("user_id", userId),
-      sb.from("wallet_folders").select("*").eq("user_id", userId),
-      sb.from("wallets").select("*").eq("user_id", userId),
-      sb.from("app_state").select("*").eq("user_id", userId),
-      sb.from("auto_send_groups").select("*").eq("user_id", userId),
-      sb.from("persons").select("*").eq("user_id", userId),
-      sb.from("creator_children").select("*").eq("user_id", userId),
-      sb.from("bulk_scan_state").select("*").eq("user_id", userId),
-      sb.from("tiered_reward_configs").select("*").eq("user_id", userId),
+      readAllUserRows(sb, "address_book", userId),
+      readAllUserRows(sb, "known_intermediaries", userId),
+      readAllUserRows(sb, "known_creators", userId),
+      readAllUserRows(sb, "saved_analyses", userId),
+      readAllUserRows(sb, "bulk_recipients", userId),
+      readAllUserRows(sb, "proceeds_presets", userId),
+      readAllUserRows(sb, "saved_searches", userId),
+      readAllUserRows(sb, "bulk_run_history", userId),
+      readAllUserRows(sb, "asset_groups", userId),
+      readAllUserRows(sb, "wallet_folders", userId),
+      readAllUserRows(sb, "wallets", userId),
+      readAllUserRows(sb, "app_state", userId),
+      readAllUserRows(sb, "auto_send_groups", userId),
+      readAllUserRows(sb, "persons", userId),
+      readAllUserRows(sb, "creator_children", userId),
+      readAllUserRows(sb, "bulk_scan_state", userId),
+      readAllUserRows(sb, "tiered_reward_configs", userId),
     ]);
     const [
       addressBook, knownIntermediaries, knownCreators, savedAnalyses, bulkRecipients,
@@ -83,25 +84,25 @@ export async function POST(req: NextRequest) {
     ];
     const childReads = await Promise.all([
       assetGroupIds.length > 0
-        ? sb.from("asset_group_members").select("*").in("group_id", assetGroupIds)
+        ? readAllChildRows(sb, "asset_group_members", "group_id", assetGroupIds)
         : Promise.resolve({ data: [], error: null }),
       autoSendGroupIds.length > 0
-        ? sb.from("auto_send_destinations").select("*").in("group_id", autoSendGroupIds)
+        ? readAllChildRows(sb, "auto_send_destinations", "group_id", autoSendGroupIds)
         : Promise.resolve({ data: [], error: null }),
       autoSendGroupIds.length > 0
-        ? sb.from("auto_send_run_log").select("*").in("group_id", autoSendGroupIds)
+        ? readAllChildRows(sb, "auto_send_run_log", "group_id", autoSendGroupIds)
         : Promise.resolve({ data: [], error: null }),
       personIds.length > 0
-        ? sb.from("person_addresses").select("*").in("person_id", personIds)
+        ? readAllChildRows(sb, "person_addresses", "person_id", personIds)
         : Promise.resolve({ data: [], error: null }),
       personIds.length > 0
-        ? sb.from("person_relationships").select("*").in("person_a_id", personIds)
+        ? readAllChildRows(sb, "person_relationships", "person_a_id", personIds)
         : Promise.resolve({ data: [], error: null }),
       tieredConfigIds.length > 0
-        ? sb.from("tiered_reward_tiers").select("*").in("config_id", tieredConfigIds)
+        ? readAllChildRows(sb, "tiered_reward_tiers", "config_id", tieredConfigIds)
         : Promise.resolve({ data: [], error: null }),
       tieredConfigIds.length > 0
-        ? sb.from("tiered_reward_run_log").select("*").in("config_id", tieredConfigIds)
+        ? readAllChildRows(sb, "tiered_reward_run_log", "config_id", tieredConfigIds)
         : Promise.resolve({ data: [], error: null }),
     ]);
     const [
@@ -110,7 +111,7 @@ export async function POST(req: NextRequest) {
     ] = unwrapReads(childReads as SupabaseRead[], childTables);
     const tierIds = (tieredRewardTiers ?? []).map((t) => t.id as string);
     const tieredRewardAssetsRead = tierIds.length > 0
-      ? await sb.from("tiered_reward_assets").select("*").in("tier_id", tierIds)
+      ? await readAllChildRows(sb, "tiered_reward_assets", "tier_id", tierIds)
       : { data: [], error: null };
     const [tieredRewardAssets] = unwrapReads(
       [tieredRewardAssetsRead as SupabaseRead], ["tiered_reward_assets"],
@@ -159,7 +160,8 @@ export async function POST(req: NextRequest) {
       }
       // People must exist before groups that refer to them.
       for (const r of persons ?? []) {
-        db.prepare(`INSERT OR REPLACE INTO persons (id, name, role, notes, telegram_channel, telegram_link, telegram_username, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        db.prepare(`INSERT INTO persons (id, name, role, notes, telegram_channel, telegram_link, telegram_username, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT(id) DO UPDATE SET name = excluded.name, role = excluded.role, notes = excluded.notes, telegram_channel = excluded.telegram_channel, telegram_link = excluded.telegram_link, telegram_username = excluded.telegram_username, created_at = excluded.created_at, updated_at = excluded.updated_at`)
           .run(r.id, r.name, r.role, r.notes, r.telegram_channel, r.telegram_link, r.telegram_username, r.created_at, r.updated_at);
       }
       for (const r of personAddresses ?? []) {
@@ -172,7 +174,8 @@ export async function POST(req: NextRequest) {
       }
       // Asset groups (parents before children)
       for (const r of assetGroups ?? []) {
-        db.prepare(`INSERT OR REPLACE INTO asset_groups (id, name, asset_code, issuer, network, notes, domain, telegram_channel, telegram_link, person_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        db.prepare(`INSERT INTO asset_groups (id, name, asset_code, issuer, network, notes, domain, telegram_channel, telegram_link, person_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT(id) DO UPDATE SET name = excluded.name, asset_code = excluded.asset_code, issuer = excluded.issuer, network = excluded.network, notes = excluded.notes, domain = excluded.domain, telegram_channel = excluded.telegram_channel, telegram_link = excluded.telegram_link, person_id = excluded.person_id, created_at = excluded.created_at, updated_at = excluded.updated_at`)
           .run(r.id, r.name, r.asset_code, r.issuer, r.network, r.notes, r.domain, r.telegram_channel, r.telegram_link, r.person_id, r.created_at, r.updated_at);
       }
       for (const r of assetGroupMembers ?? []) {
@@ -193,7 +196,8 @@ export async function POST(req: NextRequest) {
           .run(r.key, r.value);
       }
       for (const r of autoSendGroups ?? []) {
-        db.prepare(`INSERT OR REPLACE INTO auto_send_groups (id, name, network, secret_key, interval_minutes, enabled, batch_send, batch_memo, min_reserve, min_sender_threshold, preview_only, last_failure_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        db.prepare(`INSERT INTO auto_send_groups (id, name, network, secret_key, interval_minutes, enabled, batch_send, batch_memo, min_reserve, min_sender_threshold, preview_only, last_failure_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT(id) DO UPDATE SET name = excluded.name, network = excluded.network, secret_key = excluded.secret_key, interval_minutes = excluded.interval_minutes, enabled = excluded.enabled, batch_send = excluded.batch_send, batch_memo = excluded.batch_memo, min_reserve = excluded.min_reserve, min_sender_threshold = excluded.min_sender_threshold, preview_only = excluded.preview_only, last_failure_at = excluded.last_failure_at, created_at = excluded.created_at`)
           .run(r.id, r.name, "public", encryptImportedStoredSecret(r.secret_key), r.interval_minutes, r.enabled, r.batch_send, r.batch_memo, r.min_reserve, r.min_sender_threshold, r.preview_only, r.last_failure_at, r.created_at);
       }
       for (const r of autoSendDestinations ?? []) {
@@ -219,11 +223,13 @@ export async function POST(req: NextRequest) {
       for (const r of tieredRewardConfigs ?? []) {
         const excludeAddresses = typeof r.exclude_addresses === "string"
           ? r.exclude_addresses : JSON.stringify(r.exclude_addresses ?? []);
-        db.prepare(`INSERT OR REPLACE INTO tiered_reward_configs (id, name, asset_code, asset_issuer, network, secret_key, interval_minutes, enabled, min_reserve, min_sender_threshold, preview_only, batch_send, memo, fee_multiplier, exclude_addresses, last_run_at, last_failure_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        db.prepare(`INSERT INTO tiered_reward_configs (id, name, asset_code, asset_issuer, network, secret_key, interval_minutes, enabled, min_reserve, min_sender_threshold, preview_only, batch_send, memo, fee_multiplier, exclude_addresses, last_run_at, last_failure_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT(id) DO UPDATE SET name = excluded.name, asset_code = excluded.asset_code, asset_issuer = excluded.asset_issuer, network = excluded.network, secret_key = excluded.secret_key, interval_minutes = excluded.interval_minutes, enabled = excluded.enabled, min_reserve = excluded.min_reserve, min_sender_threshold = excluded.min_sender_threshold, preview_only = excluded.preview_only, batch_send = excluded.batch_send, memo = excluded.memo, fee_multiplier = excluded.fee_multiplier, exclude_addresses = excluded.exclude_addresses, last_run_at = excluded.last_run_at, last_failure_at = excluded.last_failure_at, created_at = excluded.created_at`)
           .run(r.id, r.name, r.asset_code, r.asset_issuer, "public", encryptImportedStoredSecret(r.secret_key), r.interval_minutes, r.enabled, r.min_reserve, r.min_sender_threshold, r.preview_only, r.batch_send, r.memo, r.fee_multiplier, excludeAddresses, r.last_run_at, r.last_failure_at, r.created_at);
       }
       for (const r of tieredRewardTiers ?? []) {
-        db.prepare(`INSERT OR REPLACE INTO tiered_reward_tiers (id, config_id, tier_number, min_tokens, max_tokens, position) VALUES (?, ?, ?, ?, ?, ?)`)
+        db.prepare(`INSERT INTO tiered_reward_tiers (id, config_id, tier_number, min_tokens, max_tokens, position) VALUES (?, ?, ?, ?, ?, ?)
+          ON CONFLICT(id) DO UPDATE SET config_id = excluded.config_id, tier_number = excluded.tier_number, min_tokens = excluded.min_tokens, max_tokens = excluded.max_tokens, position = excluded.position`)
           .run(r.id, r.config_id, r.tier_number, r.min_tokens, r.max_tokens, r.position);
       }
       for (const r of tieredRewardAssets ?? []) {

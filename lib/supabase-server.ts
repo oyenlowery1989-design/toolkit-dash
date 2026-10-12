@@ -13,6 +13,7 @@
 
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
 import { NextRequest, NextResponse } from "next/server";
+import { getDb } from "@/lib/db";
 
 let _client: SupabaseClient | null = null;
 
@@ -86,13 +87,30 @@ export function syncToSupabase(fn: () => PromiseLike<unknown>): void {
     warnSyncSkippedOnce();
     return;
   }
-  Promise.resolve(fn()).catch((e) => console.error("[supabase-sync]", e));
+  Promise.resolve().then(fn)
+    .then((result) => {
+      if (result && typeof result === "object" && "error" in result && result.error) {
+        throw result.error;
+      }
+    })
+    .catch((e) => {
+      console.error("[supabase-sync]", e);
+      if (!isSupabaseOnly()) {
+        try {
+          getDb().prepare(`INSERT INTO local_backup_failure (user_id, last_failed_at) VALUES (?, ?)
+            ON CONFLICT(user_id) DO UPDATE SET last_failed_at = excluded.last_failed_at`)
+            .run(resolveLocalSyncUserId(), Date.now());
+        } catch (dbError) {
+          console.error("[supabase-sync] could not record backup failure", dbError);
+        }
+      }
+    });
 }
 
 // ── Auth helpers ──────────────────────────────────────────────────────────────
 
 export type AuthResult =
-  | { ok: true; userId: string | null } // local SQLite mode: SUPABASE_SYNC_USER_ID or null (sync skipped); cloud mode: always non-null
+  | { ok: true; userId: string | null } // null only for explicit development-only local auth bypass
   | { ok: false; response: NextResponse };
 
 export type OwnershipCheck =
@@ -189,6 +207,24 @@ export async function requireAuth(req: NextRequest): Promise<AuthResult> {
       ok: false,
       response: NextResponse.json({ error: "Unauthorized" }, { status: 401 }),
     };
+  }
+
+  // SQLite has one shared database with no per-row owner. Only its configured
+  // owner may use it; accepting any valid Supabase account exposes every wallet.
+  if (!isSupabaseOnly()) {
+    const ownerId = resolveLocalSyncUserId();
+    if (!ownerId) {
+      return {
+        ok: false,
+        response: NextResponse.json({ error: "SQLite owner is not configured" }, { status: 503 }),
+      };
+    }
+    if (user.id !== ownerId) {
+      return {
+        ok: false,
+        response: NextResponse.json({ error: "Not authorized" }, { status: 403 }),
+      };
+    }
   }
 
   return { ok: true, userId: user.id };

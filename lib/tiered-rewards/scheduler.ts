@@ -7,7 +7,7 @@
 import type { ScheduledTask } from "node-cron";
 import type { TieredRewardConfig, RunLogRow } from "./types";
 import { getSupabase, isSupabaseOnly } from "@/lib/supabase-server";
-import { decryptStoredSecret } from "@/lib/secret-storage";
+import { rewardSigningFields } from "./signing";
 
 declare global {
   var _tieredRewardsTasks: Map<string, ScheduledTask> | undefined;
@@ -41,7 +41,7 @@ function getDb() {
  *  client (bypasses RLS) rather than filtering by a specific user_id. */
 async function loadEnabledConfigsFromSupabase(): Promise<ScheduledConfig[]> {
   const sb = getSupabase();
-  if (!sb) return [];
+  if (!sb) throw new Error("[tiered-rewards] Supabase is unavailable");
 
   const { data: configs, error } = await sb
     .from("tiered_reward_configs")
@@ -50,10 +50,7 @@ async function loadEnabledConfigsFromSupabase(): Promise<ScheduledConfig[]> {
     .not("interval_minutes", "is", null)
     .order("created_at", { ascending: true });
 
-  if (error || !configs) {
-    console.error("[tiered-rewards] Failed to load configs from Supabase:", error);
-    return [];
-  }
+  if (error || !configs) throw new Error(`[tiered-rewards] Failed to load configs from Supabase: ${error?.message ?? "incomplete read"}`);
 
   const result: ScheduledConfig[] = [];
   for (const c of configs as Record<string, unknown>[]) {
@@ -92,8 +89,7 @@ async function loadEnabledConfigsFromSupabase(): Promise<ScheduledConfig[]> {
       assetCode: c.asset_code as string,
       assetIssuer: c.asset_issuer as string,
       network: "public",
-      secretKey: decryptStoredSecret(c.secret_key as string | undefined) || null,
-      hasKey: !!((c.secret_key as string) || ""),
+      ...rewardSigningFields(c.secret_key, true),
       intervalMinutes: (c.interval_minutes as number | null) ?? null,
       enabled: c.enabled === true || c.enabled === 1,
       minReserve: (c.min_reserve as number) ?? 10.0,
@@ -128,8 +124,7 @@ async function loadEnabledConfigs(): Promise<ScheduledConfig[]> {
     const { loadEnabledConfigs: _load } = require("./db") as typeof import("./db");
     return _load(getDb());
   } catch (err) {
-    console.error("[tiered-rewards] Failed to load configs from DB:", err);
-    return [];
+    throw new Error("[tiered-rewards] Failed to load configs from DB", { cause: err });
   }
 }
 
@@ -176,11 +171,11 @@ export function startTieredRewardsScheduler(): void {
 async function scheduleAll(): Promise<void> {
   const cron = require("node-cron") as typeof import("node-cron");
   const tasks = global._tieredRewardsTasks!;
+  const configs = await loadEnabledConfigs();
 
+  // Keep existing schedules if the database cannot provide a complete refresh.
   for (const task of tasks.values()) task.stop();
   tasks.clear();
-
-  const configs = await loadEnabledConfigs();
   for (const config of configs) {
     if (!config.intervalMinutes) continue;
     const expr = minutesToCronExpression(config.intervalMinutes);
@@ -203,7 +198,7 @@ async function scheduleAll(): Promise<void> {
         const fresh = freshConfigs.find((c) => c.id === config.id);
         if (!fresh) return;
 
-        const preview = await calculatePreview(fresh);
+        const preview = await calculatePreview(fresh, undefined, fresh.userId);
         if ("error" in preview) {
           console.error(`[tiered-rewards] Preview failed for "${fresh.name}":`, preview.error);
           await setConfigLastFailure(fresh.id, fresh.userId, Date.now());
@@ -240,7 +235,7 @@ async function scheduleAll(): Promise<void> {
           return;
         }
 
-        const result = await runConfig(fresh, preview.assignments, fresh.userId);
+        const result = await runConfig(fresh, preview.assignments, fresh.userId, preview.senderAddress);
         if ("error" in result) {
           console.error(`[tiered-rewards] Run failed for "${fresh.name}":`, result.error);
           await setConfigLastFailure(fresh.id, fresh.userId, Date.now());

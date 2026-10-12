@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { TransactionBuilder, type Horizon, type Keypair } from "stellar-sdk";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -11,6 +11,8 @@ import { getErrorMessage } from "@/lib/stellar-helpers";
 import { scanSponsoredEntries, type RevokableItem } from "@/lib/sponsorship/fetchers";
 import { buildRevokeOp, chunkItems } from "@/lib/sponsorship/builder";
 import { ShortAddress } from "@/components/shared/ShortAddress";
+import { signPaymentTransaction } from "@/lib/payments-signing";
+import { submitMainnetTransaction } from "@/lib/mainnet-submit-client";
 
 interface AddressResult {
   address: string;
@@ -21,6 +23,8 @@ interface AddressResult {
 interface RevokeSponsorshipPanelProps {
   sponsorPublicKey: string;
   signerKeypair: Keypair | null;
+  walletId?: string | null;
+  assertSignerCurrent?: () => void;
   horizonServer: Horizon.Server;
   horizonUrl: string;
   network: Network | string;
@@ -35,6 +39,8 @@ interface RevokeSponsorshipPanelProps {
 export function RevokeSponsorshipPanel({
   sponsorPublicKey,
   signerKeypair,
+  walletId,
+  assertSignerCurrent,
   horizonServer,
   horizonUrl,
   network,
@@ -46,6 +52,11 @@ export function RevokeSponsorshipPanel({
   const [submitting, setSubmitting] = useState(false);
   const [submitStatus, setSubmitStatus] = useState<string | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const signerVersionRef = useRef(0);
+  useEffect(() => {
+    signerVersionRef.current += 1;
+    return () => { signerVersionRef.current += 1; };
+  }, [walletId, sponsorPublicKey, signerKeypair]);
 
   const handleScan = async () => {
     const addresses = parseAddresses(addressesText);
@@ -79,7 +90,13 @@ export function RevokeSponsorshipPanel({
   };
 
   const handleRevoke = async () => {
-    if (!signerKeypair) return;
+    if (!signerKeypair && !walletId) return;
+    const signingVersion = signerVersionRef.current;
+    const assertCurrent = () => {
+      if (signerVersionRef.current !== signingVersion) throw new Error("Signing wallet changed; retry the transaction");
+      assertSignerCurrent?.();
+    };
+    assertCurrent();
     const selectedItems = allItems.filter((i) => selected.has(i.key));
     if (selectedItems.length === 0) return;
 
@@ -98,8 +115,10 @@ export function RevokeSponsorshipPanel({
           builder.addOperation(buildRevokeOp(item));
         }
         const tx = builder.setTimeout(30).build();
-        tx.sign(signerKeypair);
-        await horizonServer.submitTransaction(tx);
+        assertCurrent();
+        const signed = await signPaymentTransaction(tx, walletId ?? null, signerKeypair?.secret() ?? "");
+        assertCurrent();
+        await submitMainnetTransaction(signed);
         chunks[i].forEach((item) => revokedKeys.add(item.key));
       }
       setSubmitStatus(`Revoked ${revokedKeys.size} sponsorship${revokedKeys.size === 1 ? "" : "s"}.`);
@@ -174,14 +193,14 @@ export function RevokeSponsorshipPanel({
               )}
               <Button
                 onClick={handleRevoke}
-                disabled={submitting || !signerKeypair || selected.size === 0}
+                disabled={submitting || (!signerKeypair && !walletId) || selected.size === 0}
                 size="sm"
                 variant="destructive"
               >
                 {submitting ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : <ShieldOff className="h-3.5 w-3.5 mr-1.5" />}
                 Revoke {selected.size} Selected
               </Button>
-              {!signerKeypair && (
+              {!signerKeypair && !walletId && (
                 <p className="text-xs text-amber-500 flex items-center gap-1">
                   <AlertTriangle className="h-3 w-3 shrink-0" />
                   No signing key available — connect a full wallet or enter a secret key.

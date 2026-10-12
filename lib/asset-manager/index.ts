@@ -12,7 +12,9 @@ import {
 } from "stellar-sdk";
 import { resolveNetworkPassphrase, type Network } from "@/lib/settings";
 import { withAccountLock } from "@/lib/stellar-submit";
+import { signAssetManagerTransaction, type SavedAssetSigner } from "./signing";
 import { shortAddr } from "@/lib/format";
+import { submitMainnetTransaction } from "@/lib/mainnet-submit-client";
 
 // ---------------------------------------------------------------------------
 // Auth flag bitmask values (as per Stellar protocol)
@@ -107,12 +109,13 @@ export async function setIssuerFlag(
   enable: boolean,
   network: Network,
   signal?: AbortSignal,
+  savedSigner?: SavedAssetSigner,
 ): Promise<string> {
-  const keypair = Keypair.fromSecret(issuerSecretKey);
+  const publicKey = savedSigner?.publicKey ?? Keypair.fromSecret(issuerSecretKey).publicKey();
   const server = new Horizon.Server(horizonUrl);
 
-  return withAccountLock(keypair.publicKey(), async () => {
-    const account = await server.loadAccount(keypair.publicKey());
+  return withAccountLock(publicKey, async () => {
+    const account = await server.loadAccount(publicKey);
     if (signal?.aborted) throw new Error("Aborted");
 
     const op = Operation.setOptions(
@@ -127,8 +130,8 @@ export async function setIssuerFlag(
       .setTimeout(30)
       .build();
 
-    tx.sign(keypair);
-    const result = await server.submitTransaction(tx);
+    const signed = await signAssetManagerTransaction(tx, issuerSecretKey, savedSigner);
+    const result = await submitMainnetTransaction(signed);
     if (signal?.aborted) throw new Error("Aborted");
     return (result as { hash?: string }).hash ?? "";
   });
@@ -232,13 +235,15 @@ export async function setTrustlineAuthorization(
   action: TrustlineAction,
   network: Network,
   signal?: AbortSignal,
+  savedSigner?: SavedAssetSigner,
 ): Promise<string> {
-  const keypair = Keypair.fromSecret(issuerSecretKey);
+  const publicKey = savedSigner?.publicKey ?? Keypair.fromSecret(issuerSecretKey).publicKey();
+  if (publicKey !== issuerAddress) throw new Error("Signing wallet must match the issuer");
   const server = new Horizon.Server(horizonUrl);
   const asset = new Asset(assetCode, issuerAddress);
 
-  return withAccountLock(keypair.publicKey(), async () => {
-    const account = await server.loadAccount(keypair.publicKey());
+  return withAccountLock(publicKey, async () => {
+    const account = await server.loadAccount(publicKey);
     if (signal?.aborted) throw new Error("Aborted");
 
     const flags = {
@@ -260,8 +265,8 @@ export async function setTrustlineAuthorization(
       .setTimeout(30)
       .build();
 
-    tx.sign(keypair);
-    const result = await server.submitTransaction(tx);
+    const signed = await signAssetManagerTransaction(tx, issuerSecretKey, savedSigner);
+    const result = await submitMainnetTransaction(signed);
     if (signal?.aborted) throw new Error("Aborted");
     return (result as { hash?: string }).hash ?? "";
   });
@@ -437,13 +442,14 @@ export async function createSellOffer(
   amount: string,
   price: string,
   network: Network,
+  savedSigner?: SavedAssetSigner,
 ): Promise<string> {
-  const keypair = Keypair.fromSecret(secretKey);
+  const publicKey = savedSigner?.publicKey ?? Keypair.fromSecret(secretKey).publicKey();
   const server = new Horizon.Server(horizonUrl);
   const selling = new Asset(assetCode, issuerAddress);
 
-  return withAccountLock(keypair.publicKey(), async () => {
-    const account = await server.loadAccount(keypair.publicKey());
+  return withAccountLock(publicKey, async () => {
+    const account = await server.loadAccount(publicKey);
 
     const op = Operation.manageSellOffer({
       selling,
@@ -461,8 +467,8 @@ export async function createSellOffer(
       .setTimeout(30)
       .build();
 
-    tx.sign(keypair);
-    const result = await server.submitTransaction(tx);
+    const signed = await signAssetManagerTransaction(tx, secretKey, savedSigner);
+    const result = await submitMainnetTransaction(signed);
     return (result as { hash?: string }).hash ?? "";
   });
 }
@@ -489,6 +495,7 @@ export interface BatchOfferResult {
 export async function createBatchOffers(options: {
   horizonUrl: string;
   secretKey: string;
+  savedSigner?: SavedAssetSigner;
   assetCode: string;
   issuerAddress: string;
   side: OfferSide;
@@ -502,11 +509,11 @@ export async function createBatchOffers(options: {
   onProgress?: (done: number, total: number, last: BatchOfferResult) => void;
 }): Promise<BatchOfferResult[]> {
   const {
-    horizonUrl, secretKey, assetCode, issuerAddress, side, mode,
+    horizonUrl, secretKey, savedSigner, assetCode, issuerAddress, side, mode,
     count, amount, priceFrom, priceTo, network, signal, onProgress,
   } = options;
 
-  const keypair = Keypair.fromSecret(secretKey);
+  const publicKey = savedSigner?.publicKey ?? Keypair.fromSecret(secretKey).publicKey();
   const server = new Horizon.Server(horizonUrl);
   const asset = new Asset(assetCode, issuerAddress);
   const results: BatchOfferResult[] = [];
@@ -514,7 +521,7 @@ export async function createBatchOffers(options: {
   const from = parseFloat(priceFrom);
   const to = mode === "ladder" && priceTo ? parseFloat(priceTo) : from;
 
-  return withAccountLock(keypair.publicKey(), async () => {
+  return withAccountLock(publicKey, async () => {
     for (let i = 0; i < count; i++) {
       if (signal?.aborted) break;
 
@@ -526,7 +533,7 @@ export async function createBatchOffers(options: {
       const priceStr = price.toFixed(7);
 
       try {
-        const account = await server.loadAccount(keypair.publicKey());
+        const account = await server.loadAccount(publicKey);
         if (signal?.aborted) break;
 
         const op =
@@ -554,8 +561,9 @@ export async function createBatchOffers(options: {
           .setTimeout(30)
           .build();
 
-        tx.sign(keypair);
-        const result = await server.submitTransaction(tx);
+        const signed = await signAssetManagerTransaction(tx, secretKey, savedSigner);
+        if (signal?.aborted) break;
+        const result = await submitMainnetTransaction(signed);
         const hash = (result as { hash?: string }).hash ?? "";
         const entry: BatchOfferResult = { price: priceStr, amount, hash };
         results.push(entry);
@@ -597,13 +605,14 @@ export async function deleteOffer(
   price: string,
   side: "sell" | "buy",
   network: Network,
+  savedSigner?: SavedAssetSigner,
 ): Promise<string> {
-  const keypair = Keypair.fromSecret(secretKey);
+  const publicKey = savedSigner?.publicKey ?? Keypair.fromSecret(secretKey).publicKey();
   const server = new Horizon.Server(horizonUrl);
   const asset = new Asset(assetCode, issuerAddress);
 
-  return withAccountLock(keypair.publicKey(), async () => {
-    const account = await server.loadAccount(keypair.publicKey());
+  return withAccountLock(publicKey, async () => {
+    const account = await server.loadAccount(publicKey);
 
     const op = side === "sell"
       ? Operation.manageSellOffer({
@@ -611,14 +620,14 @@ export async function deleteOffer(
           buying: Asset.native(),
           amount: "0",
           price,
-          offerId: parseInt(offerId, 10),
+          offerId,
         })
       : Operation.manageBuyOffer({
           selling: Asset.native(),
           buying: asset,
           buyAmount: "0",
           price,
-          offerId: parseInt(offerId, 10),
+          offerId,
         });
 
     const tx = new TransactionBuilder(account, {
@@ -629,8 +638,8 @@ export async function deleteOffer(
       .setTimeout(30)
       .build();
 
-    tx.sign(keypair);
-    const result = await server.submitTransaction(tx);
+    const signed = await signAssetManagerTransaction(tx, secretKey, savedSigner);
+    const result = await submitMainnetTransaction(signed);
     return (result as { hash?: string }).hash ?? "";
   });
 }

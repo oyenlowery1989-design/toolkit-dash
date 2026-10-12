@@ -13,6 +13,10 @@ import {
   BASE_FEE,
 } from "stellar-sdk";
 import { resolveNetworkPassphrase, type Network } from "@/lib/settings";
+import { signPaymentTransaction } from "@/lib/payments-signing";
+import { submitMainnetTransaction } from "@/lib/mainnet-submit-client";
+
+type SavedSigner = { id: string; publicKey: string; assertCurrent: () => void };
 
 export const MAX_TRUST_LIMIT = "922337203685.4775807";
 
@@ -27,6 +31,7 @@ export interface AddTrustlineOptions {
   limit?: string;
   remove?: boolean;
   signingSecret: string;
+  savedSigner?: SavedSigner;
   horizonUrl: string;
   network: Network;
   onLog?: (msg: string) => void;
@@ -70,15 +75,15 @@ export interface AddTrustlineBulkOptions {
 export async function addTrustline(
   opts: AddTrustlineOptions
 ): Promise<AddTrustlineResult> {
-  const { assetCode, issuer, remove = false, signingSecret, horizonUrl, network, onLog } = opts;
+  const { assetCode, issuer, remove = false, signingSecret, savedSigner, horizonUrl, network, onLog } = opts;
   const limit = remove ? "0" : (opts.limit ?? MAX_TRUST_LIMIT);
 
-  const keypair = Keypair.fromSecret(signingSecret);
+  const publicKey = savedSigner?.publicKey ?? Keypair.fromSecret(signingSecret).publicKey();
   const server = new Horizon.Server(horizonUrl);
   const networkPassphrase = resolveNetworkPassphrase(network);
 
-  onLog?.(`Loading account ${keypair.publicKey().slice(0, 8)}…`);
-  const account = await server.loadAccount(keypair.publicKey());
+  onLog?.(`Loading account ${publicKey.slice(0, 8)}…`);
+  const account = await server.loadAccount(publicKey);
 
   const asset = new Asset(assetCode, issuer);
   const action = remove ? "remove" : "add";
@@ -92,10 +97,12 @@ export async function addTrustline(
     .setTimeout(30)
     .build();
 
-  tx.sign(keypair);
+  savedSigner?.assertCurrent();
+  const signed = await signPaymentTransaction(tx, savedSigner?.id ?? null, signingSecret);
+  savedSigner?.assertCurrent();
 
   onLog?.(`Submitting transaction…`);
-  const result = await server.submitTransaction(tx);
+  const result = await submitMainnetTransaction(signed);
   onLog?.(`Done — tx hash: ${result.hash}`);
 
   return { txHash: result.hash };
@@ -185,7 +192,7 @@ export async function addTrustlineBulk(opts: AddTrustlineBulkOptions): Promise<v
         const tx = builder.build();
         tx.sign(keypair);
 
-        const result = await server.submitTransaction(tx);
+        const result = await submitMainnetTransaction(tx);
 
         for (const a of batch) {
           onResult?.({
@@ -232,6 +239,7 @@ export interface DrainAndRemoveOptions {
   issuer?: string;         // not needed for XLM
   destination: string;
   signingSecret: string;
+  savedSigner?: SavedSigner;
   horizonUrl: string;
   network: Network;
   onLog?: (msg: string) => void;
@@ -240,15 +248,16 @@ export interface DrainAndRemoveOptions {
 export async function drainAndRemoveTrustline(
   opts: DrainAndRemoveOptions
 ): Promise<AddTrustlineResult> {
-  const { assetCode, issuer, destination, signingSecret, horizonUrl, network, onLog } = opts;
+  const { assetCode, issuer, destination, signingSecret, savedSigner, horizonUrl, network, onLog } = opts;
   const isNative = assetCode.toUpperCase() === "XLM" || assetCode === "native";
+  if (isNative && savedSigner) throw new Error("Account merge requires a separate confirmation in My Wallet");
 
-  const keypair = Keypair.fromSecret(signingSecret);
+  const publicKey = savedSigner?.publicKey ?? Keypair.fromSecret(signingSecret).publicKey();
   const server = new Horizon.Server(horizonUrl);
   const networkPassphrase = resolveNetworkPassphrase(network);
 
-  onLog?.(`Loading account ${keypair.publicKey().slice(0, 8)}…`);
-  const account = await server.loadAccount(keypair.publicKey());
+  onLog?.(`Loading account ${publicKey.slice(0, 8)}…`);
+  const account = await server.loadAccount(publicKey);
 
   const builder = new TransactionBuilder(account, {
     fee: BASE_FEE,
@@ -286,10 +295,12 @@ export async function drainAndRemoveTrustline(
   }
 
   const tx = builder.build();
-  tx.sign(keypair);
+  savedSigner?.assertCurrent();
+  const signed = await signPaymentTransaction(tx, savedSigner?.id ?? null, signingSecret);
+  savedSigner?.assertCurrent();
 
   onLog?.(`Submitting transaction…`);
-  const result = await server.submitTransaction(tx);
+  const result = await submitMainnetTransaction(signed);
   onLog?.(`Done — tx hash: ${result.hash}`);
 
   return { txHash: result.hash };
@@ -355,7 +366,7 @@ export async function drainAndRemoveBulk(opts: DrainAndRemoveBulkOptions): Promi
           .addOperation(Operation.accountMerge({ destination }))
           .build();
         tx.sign(keypair);
-        const result = await server.submitTransaction(tx);
+        const result = await submitMainnetTransaction(tx);
         for (const a of nativeAssets) {
           onResult?.({ accountPubkey: pubkey, assetCode: a.code, issuer: a.issuer, status: "success", txHash: result.hash });
         }
@@ -403,7 +414,7 @@ export async function drainAndRemoveBulk(opts: DrainAndRemoveBulkOptions): Promi
 
         const tx = builder.build();
         tx.sign(keypair);
-        const result = await server.submitTransaction(tx);
+        const result = await submitMainnetTransaction(tx);
 
         for (const a of batch) {
           onResult?.({ accountPubkey: pubkey, assetCode: a.code, issuer: a.issuer, status: "success", txHash: result.hash });
@@ -564,15 +575,16 @@ export async function cancelOffersBatch(
   horizonUrl: string,
   network: Network,
   onLog?: (msg: string) => void,
+  savedSigner?: SavedSigner,
 ): Promise<{ txHash: string }[]> {
   if (offers.length === 0) return [];
 
-  const keypair = Keypair.fromSecret(signingSecret);
+  const publicKey = savedSigner?.publicKey ?? Keypair.fromSecret(signingSecret).publicKey();
   const server = new Horizon.Server(horizonUrl);
   const networkPassphrase = resolveNetworkPassphrase(network);
 
   onLog?.(`Cancelling ${offers.length} offer(s)…`);
-  const account = await server.loadAccount(keypair.publicKey());
+  const account = await server.loadAccount(publicKey);
 
   const results: { txHash: string }[] = [];
   const BATCH = 100;
@@ -597,8 +609,10 @@ export async function cancelOffersBatch(
     }
 
     const tx = builder.build();
-    tx.sign(keypair);
-    const result = await server.submitTransaction(tx);
+    savedSigner?.assertCurrent();
+    const signed = await signPaymentTransaction(tx, savedSigner?.id ?? null, signingSecret);
+    savedSigner?.assertCurrent();
+    const result = await submitMainnetTransaction(signed);
     onLog?.(`Cancelled — tx: ${result.hash}`);
     results.push({ txHash: result.hash });
   }

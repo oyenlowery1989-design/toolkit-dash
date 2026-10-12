@@ -14,7 +14,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useSettings, resolveHorizonUrl } from "@/lib/settings";
-import { useActiveWallet } from "@/hooks/use-active-wallet";
+import { setActiveWalletId, useActiveWallet } from "@/hooks/use-active-wallet";
 import { useAutoSaveSigningKey } from "@/hooks/use-auto-save-signing-key";
 import { WalletSelect } from "@/components/ui/wallet-select";
 import { useAssetGroups } from "@/hooks/use-asset-groups";
@@ -58,19 +58,37 @@ export function SingleTrustlineTab() {
   const drainDestManuallyEdited = useRef(false);
 
   // Derived
-  const effectiveSecret = activeWallet?.secretKey ?? secretKey.trim();
+  const effectiveSecret = activeWallet ? "" : secretKey.trim();
+  const activeWalletIdRef = useRef(activeWallet?.id);
+  const activeWalletVersionRef = useRef(0);
+  useEffect(() => {
+    activeWalletIdRef.current = activeWallet?.id;
+    activeWalletVersionRef.current += 1;
+  }, [activeWallet?.id]);
+  let signingVersion: number | null = null;
+  const savedSigner = activeWallet?.hasKey || activeWallet?.secretKey
+    ? {
+        id: activeWallet.id,
+        publicKey: activeWallet.publicKey,
+        assertCurrent: () => {
+          if (signingVersion === null) signingVersion = activeWalletVersionRef.current;
+          if (activeWalletIdRef.current !== activeWallet.id || activeWalletVersionRef.current !== signingVersion) {
+            throw new Error("Connected wallet changed; retry the transaction");
+          }
+        },
+      }
+    : undefined;
   let signingPubkey: string | null = null;
   try {
-    if (effectiveSecret) signingPubkey = Keypair.fromSecret(effectiveSecret).publicKey();
+    signingPubkey = savedSigner?.publicKey ?? (effectiveSecret ? Keypair.fromSecret(effectiveSecret).publicKey() : null);
   } catch {
     signingPubkey = null;
   }
 
-  // Auto-populate drain destination from active wallet — re-fires whenever the
-  // active wallet changes, unless the user has manually edited the field.
+  // A connected wallet is the sender, so it cannot also be the drain destination.
   useEffect(() => {
-    if (activeWallet?.publicKey && !drainDestManuallyEdited.current) {
-      setDrainDestination(activeWallet.publicKey);
+    if (!drainDestManuallyEdited.current) {
+      setDrainDestination("");
     }
   }, [activeWallet?.publicKey]);
 
@@ -100,8 +118,9 @@ export function SingleTrustlineTab() {
   const canSubmit =
     assetCode.trim().length > 0 &&
     issuerValid &&
-    effectiveSecret.length > 0 &&
+    (Boolean(savedSigner) || effectiveSecret.length > 0) &&
     !(mode === "remove" && drainFirst && !drainDestValid) &&
+    !(mode === "remove" && drainFirst && drainDestination.trim() === signingPubkey) &&
     !submitting &&
     !cancellingOffers;
 
@@ -177,7 +196,8 @@ export function SingleTrustlineTab() {
   }, [mode, signingPubkey, assetCode, issuer, issuerValid, settings]);
 
   async function handleCancelOffers() {
-    if (!effectiveSecret || offers.length === 0) return;
+    if ((!savedSigner && !effectiveSecret) || offers.length === 0) return;
+    savedSigner?.assertCurrent();
     setCancellingOffers(true);
     setLogs([]);
     try {
@@ -187,6 +207,7 @@ export function SingleTrustlineTab() {
         resolveHorizonUrl(settings),
         settings.network,
         (msg) => setLogs((prev) => [...prev, msg]),
+        savedSigner,
       );
       setOfferCancelHashes(results.map((r) => r.txHash));
       setOffers([]);
@@ -206,6 +227,7 @@ export function SingleTrustlineTab() {
 
   async function handleSubmit() {
     if (!canSubmit) return;
+    savedSigner?.assertCurrent();
     setSubmitting(true);
     setTxHash(null);
     setDeleteTxHash(null);
@@ -226,6 +248,7 @@ export function SingleTrustlineTab() {
           horizonUrl,
           settings.network,
           (msg) => setLogs((prev) => [...prev, msg]),
+          savedSigner,
         );
         setOfferCancelHashes(cancelResults.map((r) => r.txHash));
         setOffers([]);
@@ -239,6 +262,7 @@ export function SingleTrustlineTab() {
           issuer: iss,
           destination: drainDestination.trim(),
           signingSecret: effectiveSecret,
+          savedSigner,
           horizonUrl,
           network: settings.network,
           onLog: (msg) => setLogs((prev) => [...prev, msg]),
@@ -250,6 +274,7 @@ export function SingleTrustlineTab() {
           limit: mode === "remove" ? "0" : (limit.trim() || MAX_TRUST_LIMIT),
           remove: mode === "remove",
           signingSecret: effectiveSecret,
+          savedSigner,
           horizonUrl,
           network: settings.network,
           onLog: (msg) => setLogs((prev) => [...prev, msg]),
@@ -267,6 +292,7 @@ export function SingleTrustlineTab() {
           issuer: iss,
           remove: true,
           signingSecret: effectiveSecret,
+          savedSigner,
           horizonUrl,
           network: settings.network,
           onLog: (msg) => setLogs((prev) => [...prev, msg]),
@@ -350,6 +376,9 @@ export function SingleTrustlineTab() {
               />
               {drainDestination && !StrKey.isValidEd25519PublicKey(drainDestination) && (
                 <p className="text-xs text-destructive mt-1">Invalid public key</p>
+              )}
+              {drainDestValid && drainDestination.trim() === signingPubkey && (
+                <p className="text-xs text-destructive mt-1">Choose a different destination from the signing wallet.</p>
               )}
               {drainDestValid && (
                 <div className="mt-1">
@@ -472,7 +501,7 @@ export function SingleTrustlineTab() {
             />
             <WalletSelect
               currentValue={secretKey}
-              onPick={(w) => setSecretKey(w.secretKey)}
+              onPick={(w) => { setSecretKey(""); setActiveWalletId(w.id); }}
               triggerClassName="w-36 shrink-0 border shadow-sm"
             />
           </div>
@@ -565,7 +594,7 @@ export function SingleTrustlineTab() {
                 variant="outline"
                 size="sm"
                 onClick={handleCancelOffers}
-                disabled={cancellingOffers || submitting || !effectiveSecret}
+                disabled={cancellingOffers || submitting || (!savedSigner && !effectiveSecret)}
                 className="border-amber-500/50 text-amber-700 dark:text-amber-400 hover:bg-amber-500/10"
               >
                 {cancellingOffers ? (

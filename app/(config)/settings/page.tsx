@@ -33,6 +33,8 @@ import {
 interface DbStatus {
   supabaseConfigured: boolean;
   supabaseOnly: boolean;
+  localBackupEnabled: boolean;
+  backupFailed: boolean;
   provider: string;
 }
 
@@ -85,7 +87,7 @@ export default function SettingsPage() {
       if (data.ok) {
         toast.success("Local data pushed to Supabase");
       } else {
-        toast.error("Push failed: " + (data.errors?.join(", ") ?? "unknown error"));
+        toast.error("Push failed: " + (data.errors?.join(", ") ?? data.error ?? "unknown error"));
       }
     } catch {
       toast.error("Push failed — network error");
@@ -119,7 +121,11 @@ export default function SettingsPage() {
     setExporting(true);
     try {
       const r = await fetch("/api/db/export", { headers: authHeaders() });
+      if (!r.ok) throw new Error("Backup request failed");
       const data = await r.json();
+      if (data.source !== "sqlite" && data.source !== "supabase") {
+        throw new Error("Invalid backup response");
+      }
       const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
@@ -260,14 +266,22 @@ export default function SettingsPage() {
               <div className="space-y-0.5">
                 <Label>Supabase backup</Label>
                 <p className="text-xs text-muted-foreground">
-                  {dbStatus?.supabaseConfigured
-                    ? "Connected — writes are synced automatically"
+                  {dbStatus?.supabaseOnly
+                    ? "Supabase is the primary database"
+                    : dbStatus?.backupFailed
+                    ? "Some local changes were not backed up. Keep your local database file and download a backup."
+                    : dbStatus?.localBackupEnabled
+                    ? "Automatic backup of local writes is enabled"
+                    : dbStatus?.supabaseConfigured
+                    ? "Automatic backup is off — set SUPABASE_SYNC_USER_ID"
                     : "Not configured — add SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY to .env.local"}
                 </p>
               </div>
               {dbStatus === null ? (
                 <span className="text-xs text-muted-foreground">…</span>
-              ) : dbStatus.supabaseConfigured ? (
+              ) : dbStatus.backupFailed ? (
+                <XCircle className="h-5 w-5 text-red-500" />
+              ) : dbStatus.supabaseOnly || dbStatus.localBackupEnabled ? (
                 <CheckCircle2 className="h-5 w-5 text-green-500" />
               ) : (
                 <XCircle className="h-5 w-5 text-muted-foreground" />
@@ -335,7 +349,7 @@ export default function SettingsPage() {
               <strong>Push to Supabase</strong> — one-time migration of local data to cloud.<br />
               <strong>Restore from Supabase</strong> — recover local DB if you lost your{" "}
               <code className="font-mono">stellar-toolkit.db</code> file.<br />
-              <strong>Download Backup</strong> — save a JSON copy of all your data anywhere.
+              <strong>Download Backup</strong> — save a JSON copy of your app data. It may contain wallet signing keys; store it privately. Signing limits and issuance locks require a database backup for safe recovery.
             </p>
           </CardContent>
         </Card>

@@ -44,14 +44,16 @@ export function AssetCreatorPanel() {
   const [groupId, setGroupId] = useState<string | undefined>();
   const [completedSteps, setCompletedSteps] = useState<Set<string>>(new Set());
 
-  // Keep resolvedFundingSecretKey + network in sync with live global state
+  // Keep the funding wallet reference + network in sync with live global state
   // (handles cross-tab wallet disconnect, and a network change elsewhere in
   // the app while sitting on a later wizard step)
   useEffect(() => {
     setForm((prev) => ({
       ...prev,
       network,
-      resolvedFundingSecretKey: activeWallet?.secretKey ?? (prev.resolvedFundingSecretKey || ""),
+      resolvedFundingSecretKey: activeWallet ? "" : prev.fundingWalletId ? "" : prev.resolvedFundingSecretKey,
+      fundingWalletId: activeWallet?.id,
+      fundingPublicKey: activeWallet?.publicKey,
     }));
   }, [activeWallet, network]);
 
@@ -60,7 +62,9 @@ export function AssetCreatorPanel() {
       ...prev,
       ...patch,
       network, // network always from global settings
-      resolvedFundingSecretKey: activeWallet?.secretKey ?? patch.resolvedFundingSecretKey ?? prev.resolvedFundingSecretKey,
+      resolvedFundingSecretKey: activeWallet ? "" : patch.resolvedFundingSecretKey ?? prev.resolvedFundingSecretKey,
+      fundingWalletId: activeWallet?.id ?? patch.fundingWalletId ?? prev.fundingWalletId,
+      fundingPublicKey: activeWallet?.publicKey ?? patch.fundingPublicKey ?? prev.fundingPublicKey,
     }));
 
     // Changing the identity fields invalidates any previously-completed
@@ -125,7 +129,7 @@ export function AssetCreatorPanel() {
   };
 
   const handleStartOver = () => {
-    setForm({ ...EMPTY_FORM, network });
+    setForm({ ...EMPTY_FORM, network, fundingWalletId: activeWallet?.id, fundingPublicKey: activeWallet?.publicKey });
     setResults([]);
     setGroupId(undefined);
     setCompletedSteps(new Set());

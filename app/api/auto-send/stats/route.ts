@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
 import { getSupabase, isSupabaseOnly, requireAuth } from "@/lib/supabase-server";
+import { readPages } from "@/lib/supabase-read-all";
 
 export interface AutoSendStats {
   totalRuns: number;
@@ -20,29 +21,34 @@ export async function GET(req: NextRequest) {
     if (isSupabaseOnly()) {
       const sb = getSupabase()!;
 
-      const { data: ownedGroups, error: oge } = await sb
+      const { data: ownedGroups, error: oge } = await readPages((from, to) => sb
         .from("auto_send_groups")
-        .select("id")
-        .eq("user_id", auth.userId!);
+        .select("id", { count: "exact" })
+        .eq("user_id", auth.userId!)
+        .order("id")
+        .range(from, to));
       if (oge) return NextResponse.json({ error: oge.message }, { status: 500 });
       const ownedGroupIds = (ownedGroups ?? []).map((group) => group.id as string);
 
-      const { data: logRows, error: le } = ownedGroupIds.length > 0
-        ? await sb
-          .from("auto_send_run_log")
-          .select("ran_at, group_id, status, amount_sent")
-          .in("group_id", ownedGroupIds)
-        : { data: [], error: null };
-      if (le) return NextResponse.json({ error: le.message }, { status: 500 });
-
-      const rows = logRows ?? [];
+      const rows: Record<string, unknown>[] = [];
+      for (let i = 0; i < ownedGroupIds.length; i += 100) {
+        const ids = ownedGroupIds.slice(i, i + 100);
+        const { data, error } = await readPages((from, to) => sb.from("auto_send_run_log")
+          .select("ran_at, group_id, status, amount_sent", { count: "exact" })
+          .in("group_id", ids)
+          .neq("status", "guard")
+          .order("id")
+          .range(from, to));
+        if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+        rows.push(...(data ?? []));
+      }
       const runKeys = new Set(rows.map((r) => `${r.ran_at}|${r.group_id}`));
       const totalRuns = runKeys.size;
       const totalSent = rows.filter((r) => r.status === "sent").length;
       const totalSkipped = rows.filter((r) => r.status === "skipped").length;
       const totalFailed = rows.filter((r) => r.status === "failed").length;
-      const totalXlm = rows.reduce((s, r) => s + ((r.amount_sent as number) ?? 0), 0);
-      const lastRunAt = rows.length ? Math.max(...rows.map((r) => r.ran_at as number)) : null;
+      const totalXlm = rows.reduce((s, r) => s + (r.status === "sent" ? Number(r.amount_sent ?? 0) : 0), 0);
+      const lastRunAt = rows.reduce<number | null>((latest, row) => Math.max(latest ?? 0, Number(row.ran_at)), null);
 
       const { count: activeGroups, error: ge } = await sb
         .from("auto_send_groups")
@@ -72,9 +78,10 @@ export async function GET(req: NextRequest) {
         SUM(CASE WHEN status = 'sent'    THEN 1 ELSE 0 END) AS total_sent,
         SUM(CASE WHEN status = 'skipped' THEN 1 ELSE 0 END) AS total_skipped,
         SUM(CASE WHEN status = 'failed'  THEN 1 ELSE 0 END) AS total_failed,
-        SUM(COALESCE(amount_sent, 0))                        AS total_xlm,
+        SUM(CASE WHEN status = 'sent' THEN COALESCE(amount_sent, 0) ELSE 0 END) AS total_xlm,
         MAX(ran_at)                                          AS last_run_at
       FROM auto_send_run_log
+      WHERE status != 'guard'
     `).get() as Record<string, unknown>;
 
     const activeGroups = (db.prepare(

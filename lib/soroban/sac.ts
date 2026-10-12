@@ -105,6 +105,7 @@ export interface DeploySacOptions {
   network: Network;
   signal: AbortSignal;
   onLog: (msg: string) => void;
+  validateFee?: (feeXlm: number, txHash: string, maxTime: number) => Promise<void> | void;
 }
 
 export async function deploySac(
@@ -159,6 +160,11 @@ export async function deploySac(
   }
 
   const assembled = rpc.assembleTransaction(tx, simResult).build();
+  await options.validateFee?.(
+    Number(assembled.fee) / 1e7,
+    assembled.hash().toString("hex"),
+    Number(assembled.timeBounds?.maxTime),
+  );
   assembled.sign(keypair);
 
   onLog(`Submitting transaction…`);

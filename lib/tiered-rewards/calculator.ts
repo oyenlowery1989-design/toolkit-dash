@@ -1,6 +1,7 @@
 import { Horizon, Keypair } from "stellar-sdk";
 import type { TieredRewardConfig, TierAssignment, TierCostItem, RewardsPreview } from "./types";
 import { fetchHolders, assignHoldersToTiers } from "./fetcher";
+import { resolveRewardSigningConfig } from "./signing";
 import { BASE_FEE } from "@/lib/bulk-payments/builder";
 
 const { Server } = Horizon;
@@ -58,8 +59,11 @@ async function loadSenderAssetBalances(
 
 export async function calculatePreview(
   config: TieredRewardConfig,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  userId?: string
 ): Promise<RewardsPreview | { error: string }> {
+  try { config = await resolveRewardSigningConfig(config, userId); }
+  catch (error) { return { error: error instanceof Error ? error.message : "Could not load sender wallet" }; }
   const horizonUrl = HORIZON_URLS[config.network];
   if (!horizonUrl) return { error: `Unsupported payment network: ${config.network}` };
   const server = new Server(horizonUrl);

@@ -142,7 +142,7 @@ export async function POST(req: NextRequest) {
         issued_assets: c.issuedAssets ? JSON.stringify(c.issuedAssets) : null,
         distributed_assets: c.distributedAssets ? JSON.stringify(c.distributedAssets) : null,
         discovered_at: c.discoveredAt,
-      });
+      }).throwOnError();
     }
   });
 
@@ -191,12 +191,12 @@ export async function DELETE(req: NextRequest) {
   syncToSupabase(async () => {
     const sb = getSupabase()!;
     if (body.id) {
-      await sb.from("creator_children").delete().eq("user_id", userId!).eq("id", body.id);
+      await sb.from("creator_children").delete().eq("user_id", userId!).eq("id", body.id).throwOnError();
     } else if (body.creatorAddress) {
       await sb.from("creator_children").delete()
         .eq("user_id", userId!)
         .eq("creator_address", body.creatorAddress)
-        .eq("network", body.network ?? "public");
+        .eq("network", body.network ?? "public").throwOnError();
     }
   });
 

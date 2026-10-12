@@ -8,3 +8,7 @@
 - **Network**: from `useSettings()` — `resolveNetworkPassphrase(settings.network)` (NOT the whole `settings` object)
 - Save parent + all children to one Asset Group on completion; confirm in place rather than opening the Groups page
 - Keys generated client-side in browser
+- Saved parent/sponsor selections retain wallet ID + public address only; `/api/account-funder/sign` resolves the owned key on the server.
+- Saved signing is purpose-limited: direct createAccount batches, complete child-signed sponsorship triplets, and child-signed accountMerge fee bumps only; mainnet limits include funding amounts, locked sponsorship reserves, fees, and live merge balances.
+- Manual/generated parents and child keys still sign in the browser; sponsorship and fee-bump signing preserve all child signatures. Stop is checked again before submission.
+- Completion toasts count actual confirmed successes/failures and unprocessed accounts on Stop. Atomic failures verify ambiguous `op_success` accounts before counting them; verification runs outside React state updaters.

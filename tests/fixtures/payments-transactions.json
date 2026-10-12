@@ -1,0 +1,293 @@
+[
+  {
+    "name": "native-send",
+    "input": {
+      "publicKey": "GCFIRY65OQE7DFP5KLNS2PF2LVZMUZYJX4OZIEQ36N2IQANUB5XVYOJR",
+      "memoValue": "fixture memo",
+      "offers": [],
+      "legs": [
+        {
+          "id": "l1",
+          "assetKey": "native",
+          "amount": "1",
+          "destination": "GCATS5YOVB6ROX2WUNKGNQ2MP3GMXDMKSG2O4N5CLX3A6W4PZGZZI55U"
+        }
+      ],
+      "paths": [],
+      "selectedPathIndex": 0,
+      "pathMode": "strict-receive",
+      "srcIsNative": true,
+      "srcAssetCode": "",
+      "srcAssetIssuer": "",
+      "destIsNative": false,
+      "destAssetCode": "wUSDC",
+      "destAssetIssuer": "GDWUSKGGFDI4FRXK5EBTRECZSVQSSWJHHJOGH6JWG3AUMFFMQ435DIAG",
+      "maxSendAmount": "3",
+      "pathDest": " GCATS5YOVB6ROX2WUNKGNQ2MP3GMXDMKSG2O4N5CLX3A6W4PZGZZI55U ",
+      "destAmount": "2",
+      "exactSendAmount": "3",
+      "minReceiveAmount": "1.5",
+      "claimAssetKey": "native",
+      "claimAmount": "2",
+      "claimants": [
+        {
+          "id": "c1",
+          "destination": "GCATS5YOVB6ROX2WUNKGNQ2MP3GMXDMKSG2O4N5CLX3A6W4PZGZZI55U"
+        },
+        {
+          "id": "c2",
+          "destination": " GDFJHLAXAUMHA4OWPOB4P7YO72AQR2HMIUYFOXLXE2DZGM633K7HZDQP "
+        }
+      ],
+      "activeTab": "send"
+    },
+    "expected": {
+      "xdr": "AAAAAgAAAACKiOPddAnxlf1S2y08ul1yymcJvx2UEhvzdIgBtA9vXAAAAMgAAAAAAAAAAgAAAAEAAAAAAAAAAAAAAAB3NZQAAAAAAQAAAAxmaXh0dXJlIG1lbW8AAAABAAAAAAAAAAEAAAAAgTl3Dqh9F19Wo1Rmw0x+zMuNipG07jeiXfYPW4/Js5QAAAAAAAAAAACYloAAAAAAAAAAAA==",
+      "cancelCounts": [
+        0
+      ]
+    }
+  },
+  {
+    "name": "cancel-offers-and-remove-trustline",
+    "input": {
+      "publicKey": "GCFIRY65OQE7DFP5KLNS2PF2LVZMUZYJX4OZIEQ36N2IQANUB5XVYOJR",
+      "memoValue": "fixture memo",
+      "offers": [
+        {
+          "id": "7",
+          "selling": {
+            "asset_type": "credit_alphanum12",
+            "asset_code": "wUSDC",
+            "asset_issuer": "GDWUSKGGFDI4FRXK5EBTRECZSVQSSWJHHJOGH6JWG3AUMFFMQ435DIAG"
+          },
+          "buying": {
+            "asset_type": "native"
+          },
+          "price": "2.5"
+        },
+        {
+          "id": "8",
+          "selling": {
+            "asset_type": "native"
+          },
+          "buying": {
+            "asset_type": "credit_alphanum12",
+            "asset_code": "wUSDC",
+            "asset_issuer": "GDWUSKGGFDI4FRXK5EBTRECZSVQSSWJHHJOGH6JWG3AUMFFMQ435DIAG"
+          },
+          "price": "0.5"
+        }
+      ],
+      "legs": [
+        {
+          "id": "l1",
+          "assetKey": "wUSDC:GDWUSKGGFDI4FRXK5EBTRECZSVQSSWJHHJOGH6JWG3AUMFFMQ435DIAG",
+          "amount": "5",
+          "destination": " GCATS5YOVB6ROX2WUNKGNQ2MP3GMXDMKSG2O4N5CLX3A6W4PZGZZI55U ",
+          "removeTrustline": true
+        },
+        {
+          "id": "l2",
+          "assetKey": "native",
+          "amount": "1",
+          "destination": "GDFJHLAXAUMHA4OWPOB4P7YO72AQR2HMIUYFOXLXE2DZGM633K7HZDQP"
+        }
+      ],
+      "paths": [],
+      "selectedPathIndex": 0,
+      "pathMode": "strict-receive",
+      "srcIsNative": true,
+      "srcAssetCode": "",
+      "srcAssetIssuer": "",
+      "destIsNative": false,
+      "destAssetCode": "wUSDC",
+      "destAssetIssuer": "GDWUSKGGFDI4FRXK5EBTRECZSVQSSWJHHJOGH6JWG3AUMFFMQ435DIAG",
+      "maxSendAmount": "3",
+      "pathDest": " GCATS5YOVB6ROX2WUNKGNQ2MP3GMXDMKSG2O4N5CLX3A6W4PZGZZI55U ",
+      "destAmount": "2",
+      "exactSendAmount": "3",
+      "minReceiveAmount": "1.5",
+      "claimAssetKey": "native",
+      "claimAmount": "2",
+      "claimants": [
+        {
+          "id": "c1",
+          "destination": "GCATS5YOVB6ROX2WUNKGNQ2MP3GMXDMKSG2O4N5CLX3A6W4PZGZZI55U"
+        },
+        {
+          "id": "c2",
+          "destination": " GDFJHLAXAUMHA4OWPOB4P7YO72AQR2HMIUYFOXLXE2DZGM633K7HZDQP "
+        }
+      ],
+      "activeTab": "send"
+    },
+    "expected": {
+      "xdr": "AAAAAgAAAACKiOPddAnxlf1S2y08ul1yymcJvx2UEhvzdIgBtA9vXAAAA+gAAAAAAAAAAgAAAAEAAAAAAAAAAAAAAAB3NZQAAAAAAQAAAAxmaXh0dXJlIG1lbW8AAAAFAAAAAAAAAAMAAAACd1VTREMAAAAAAAAAAAAAAO1JKMYo0cLG6ukDOJBZlWEpWSc6XGP5NjbBRhSshzfRAAAAAAAAAAAAAAAAAAAABQAAAAIAAAAAAAAABwAAAAAAAAAMAAAAAAAAAAJ3VVNEQwAAAAAAAAAAAAAA7UkoxijRwsbq6QM4kFmVYSlZJzpcY/k2NsFGFKyHN9EAAAAAAAAAAAAAAAEAAAACAAAAAAAAAAgAAAAAAAAAAQAAAACBOXcOqH0XX1ajVGbDTH7My42KkbTuN6Jd9g9bj8mzlAAAAAJ3VVNEQwAAAAAAAAAAAAAA7UkoxijRwsbq6QM4kFmVYSlZJzpcY/k2NsFGFKyHN9EAAAAAAvrwgAAAAAAAAAAGAAAAAndVU0RDAAAAAAAAAAAAAADtSSjGKNHCxurpAziQWZVhKVknOlxj+TY2wUYUrIc30QAAAAAAAAAAAAAAAAAAAAEAAAAAypOsFwUYcHHWe4PH/w7+gQjo7EUwV113JoeTM9vavnwAAAAAAAAAAACYloAAAAAAAAAAAA==",
+      "cancelCounts": [
+        2,
+        0
+      ]
+    }
+  },
+  {
+    "name": "path-strict-receive",
+    "input": {
+      "publicKey": "GCFIRY65OQE7DFP5KLNS2PF2LVZMUZYJX4OZIEQ36N2IQANUB5XVYOJR",
+      "memoValue": "fixture memo",
+      "offers": [],
+      "legs": [],
+      "paths": [
+        {
+          "id": "p1",
+          "sourceAssetType": "native",
+          "sourceAmount": "3",
+          "destinationAssetType": "credit_alphanum12",
+          "destinationAssetCode": "wUSDC",
+          "destinationAssetIssuer": "GDWUSKGGFDI4FRXK5EBTRECZSVQSSWJHHJOGH6JWG3AUMFFMQ435DIAG",
+          "destinationAmount": "2",
+          "path": [
+            {
+              "asset_type": "native"
+            },
+            {
+              "asset_type": "credit_alphanum4",
+              "asset_code": "wEUR",
+              "asset_issuer": "GDFJHLAXAUMHA4OWPOB4P7YO72AQR2HMIUYFOXLXE2DZGM633K7HZDQP"
+            }
+          ]
+        }
+      ],
+      "selectedPathIndex": 0,
+      "pathMode": "strict-receive",
+      "srcIsNative": true,
+      "srcAssetCode": "",
+      "srcAssetIssuer": "",
+      "destIsNative": false,
+      "destAssetCode": "wUSDC",
+      "destAssetIssuer": "GDWUSKGGFDI4FRXK5EBTRECZSVQSSWJHHJOGH6JWG3AUMFFMQ435DIAG",
+      "maxSendAmount": "3",
+      "pathDest": " GCATS5YOVB6ROX2WUNKGNQ2MP3GMXDMKSG2O4N5CLX3A6W4PZGZZI55U ",
+      "destAmount": "2",
+      "exactSendAmount": "3",
+      "minReceiveAmount": "1.5",
+      "claimAssetKey": "native",
+      "claimAmount": "2",
+      "claimants": [
+        {
+          "id": "c1",
+          "destination": "GCATS5YOVB6ROX2WUNKGNQ2MP3GMXDMKSG2O4N5CLX3A6W4PZGZZI55U"
+        },
+        {
+          "id": "c2",
+          "destination": " GDFJHLAXAUMHA4OWPOB4P7YO72AQR2HMIUYFOXLXE2DZGM633K7HZDQP "
+        }
+      ],
+      "activeTab": "path"
+    },
+    "expected": {
+      "xdr": "AAAAAgAAAACKiOPddAnxlf1S2y08ul1yymcJvx2UEhvzdIgBtA9vXAAAAMgAAAAAAAAAAgAAAAEAAAAAAAAAAAAAAAB3NZQAAAAAAQAAAAxmaXh0dXJlIG1lbW8AAAABAAAAAAAAAAIAAAAAAAAAAAHJw4AAAAAAgTl3Dqh9F19Wo1Rmw0x+zMuNipG07jeiXfYPW4/Js5QAAAACd1VTREMAAAAAAAAAAAAAAO1JKMYo0cLG6ukDOJBZlWEpWSc6XGP5NjbBRhSshzfRAAAAAAExLQAAAAACAAAAAAAAAAF3RVVSAAAAAMqTrBcFGHBx1nuDx/8O/oEI6OxFMFdddyaHkzPb2r58AAAAAAAAAAA=",
+      "cancelCounts": []
+    }
+  },
+  {
+    "name": "path-strict-send",
+    "input": {
+      "publicKey": "GCFIRY65OQE7DFP5KLNS2PF2LVZMUZYJX4OZIEQ36N2IQANUB5XVYOJR",
+      "memoValue": "fixture memo",
+      "offers": [],
+      "legs": [],
+      "paths": [
+        {
+          "id": "p1",
+          "sourceAssetType": "native",
+          "sourceAmount": "3",
+          "destinationAssetType": "credit_alphanum12",
+          "destinationAssetCode": "wUSDC",
+          "destinationAssetIssuer": "GDWUSKGGFDI4FRXK5EBTRECZSVQSSWJHHJOGH6JWG3AUMFFMQ435DIAG",
+          "destinationAmount": "2",
+          "path": [
+            {
+              "asset_type": "native"
+            },
+            {
+              "asset_type": "credit_alphanum4",
+              "asset_code": "wEUR",
+              "asset_issuer": "GDFJHLAXAUMHA4OWPOB4P7YO72AQR2HMIUYFOXLXE2DZGM633K7HZDQP"
+            }
+          ]
+        }
+      ],
+      "selectedPathIndex": 0,
+      "pathMode": "strict-send",
+      "srcIsNative": true,
+      "srcAssetCode": "",
+      "srcAssetIssuer": "",
+      "destIsNative": false,
+      "destAssetCode": "wUSDC",
+      "destAssetIssuer": "GDWUSKGGFDI4FRXK5EBTRECZSVQSSWJHHJOGH6JWG3AUMFFMQ435DIAG",
+      "maxSendAmount": "3",
+      "pathDest": " GCATS5YOVB6ROX2WUNKGNQ2MP3GMXDMKSG2O4N5CLX3A6W4PZGZZI55U ",
+      "destAmount": "2",
+      "exactSendAmount": "3",
+      "minReceiveAmount": "1.5",
+      "claimAssetKey": "native",
+      "claimAmount": "2",
+      "claimants": [
+        {
+          "id": "c1",
+          "destination": "GCATS5YOVB6ROX2WUNKGNQ2MP3GMXDMKSG2O4N5CLX3A6W4PZGZZI55U"
+        },
+        {
+          "id": "c2",
+          "destination": " GDFJHLAXAUMHA4OWPOB4P7YO72AQR2HMIUYFOXLXE2DZGM633K7HZDQP "
+        }
+      ],
+      "activeTab": "path"
+    },
+    "expected": {
+      "xdr": "AAAAAgAAAACKiOPddAnxlf1S2y08ul1yymcJvx2UEhvzdIgBtA9vXAAAAMgAAAAAAAAAAgAAAAEAAAAAAAAAAAAAAAB3NZQAAAAAAQAAAAxmaXh0dXJlIG1lbW8AAAABAAAAAAAAAA0AAAAAAAAAAAHJw4AAAAAAgTl3Dqh9F19Wo1Rmw0x+zMuNipG07jeiXfYPW4/Js5QAAAACd1VTREMAAAAAAAAAAAAAAO1JKMYo0cLG6ukDOJBZlWEpWSc6XGP5NjbBRhSshzfRAAAAAADk4cAAAAACAAAAAAAAAAF3RVVSAAAAAMqTrBcFGHBx1nuDx/8O/oEI6OxFMFdddyaHkzPb2r58AAAAAAAAAAA=",
+      "cancelCounts": []
+    }
+  },
+  {
+    "name": "claimable-balance",
+    "input": {
+      "publicKey": "GCFIRY65OQE7DFP5KLNS2PF2LVZMUZYJX4OZIEQ36N2IQANUB5XVYOJR",
+      "memoValue": "fixture memo",
+      "offers": [],
+      "legs": [],
+      "paths": [],
+      "selectedPathIndex": 0,
+      "pathMode": "strict-receive",
+      "srcIsNative": true,
+      "srcAssetCode": "",
+      "srcAssetIssuer": "",
+      "destIsNative": false,
+      "destAssetCode": "wUSDC",
+      "destAssetIssuer": "GDWUSKGGFDI4FRXK5EBTRECZSVQSSWJHHJOGH6JWG3AUMFFMQ435DIAG",
+      "maxSendAmount": "3",
+      "pathDest": " GCATS5YOVB6ROX2WUNKGNQ2MP3GMXDMKSG2O4N5CLX3A6W4PZGZZI55U ",
+      "destAmount": "2",
+      "exactSendAmount": "3",
+      "minReceiveAmount": "1.5",
+      "claimAssetKey": "native",
+      "claimAmount": "2",
+      "claimants": [
+        {
+          "id": "c1",
+          "destination": "GCATS5YOVB6ROX2WUNKGNQ2MP3GMXDMKSG2O4N5CLX3A6W4PZGZZI55U"
+        },
+        {
+          "id": "c2",
+          "destination": " GDFJHLAXAUMHA4OWPOB4P7YO72AQR2HMIUYFOXLXE2DZGM633K7HZDQP "
+        }
+      ],
+      "activeTab": "claimable"
+    },
+    "expected": {
+      "xdr": "AAAAAgAAAACKiOPddAnxlf1S2y08ul1yymcJvx2UEhvzdIgBtA9vXAAAAMgAAAAAAAAAAgAAAAEAAAAAAAAAAAAAAAB3NZQAAAAAAQAAAAxmaXh0dXJlIG1lbW8AAAABAAAAAAAAAA4AAAAAAAAAAAExLQAAAAACAAAAAAAAAACBOXcOqH0XX1ajVGbDTH7My42KkbTuN6Jd9g9bj8mzlAAAAAAAAAAAAAAAAMqTrBcFGHBx1nuDx/8O/oEI6OxFMFdddyaHkzPb2r58AAAAAAAAAAAAAAAA",
+      "cancelCounts": []
+    }
+  }
+]

@@ -26,7 +26,7 @@ import { TradesTab } from "./TradesTab";
 
 export function AssetManagerPanel() {
   const { groups } = useAssetGroups();
-  const { activeWallet } = useActiveWallet();
+  const { activeWallet, connect } = useActiveWallet();
 
 
   const [assetCode, setAssetCode] = useState("");
@@ -40,7 +40,7 @@ export function AssetManagerPanel() {
     assetCode.trim().length > 0 &&
     StrKey.isValidEd25519PublicKey(issuerAddress);
 
-  const effectiveSecretKey = activeWallet?.secretKey ?? secretKey.trim();
+  const effectiveSecretKey = activeWallet ? "" : secretKey.trim();
 
   function handleLoadFromGroup(groupId: string) {
     const group = groups.find((g) => g.id === groupId);
@@ -144,7 +144,7 @@ export function AssetManagerPanel() {
                 </Label>
                 <WalletSelect
                   currentValue={secretKey}
-                  onPick={(w) => setSecretKey(w.secretKey)}
+                  onPick={(w) => connect(w.id)}
                 />
               </div>
               <Input
@@ -170,9 +170,10 @@ export function AssetManagerPanel() {
           </TabsList>
           <TabsContent value="flags">
             <FlagsTab
+              key={`${issuerAddress}:${activeWallet?.id ?? "manual"}`}
               issuer={issuerAddress}
               secretKey={effectiveSecretKey}
-              isWalletConnected={!!activeWallet}
+              savedSigner={activeWallet ?? undefined}
             />
           </TabsContent>
           <TabsContent value="holders">
@@ -180,6 +181,7 @@ export function AssetManagerPanel() {
               assetCode={assetCode.trim()}
               issuer={issuerAddress}
               secretKey={effectiveSecretKey}
+              savedSigner={activeWallet ?? undefined}
             />
           </TabsContent>
           <TabsContent value="trades">

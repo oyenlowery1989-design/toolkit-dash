@@ -28,7 +28,7 @@ export function buildBatchTransaction(
   account: Account,
   recipients: string[],
   memo: string,
-  keypair: Keypair,
+  keypair: Keypair | null,
   networkPassphrase: string,
   feeMultiplier: number = 1,
   amount: string = MIN_PAYMENT_AMOUNT,
@@ -58,7 +58,7 @@ export function buildBatchTransaction(
   // Always use valid timebounds so the tx reaches the ledger.
   // Ghost mode op-level failures (op_no_trust etc.) are handled by the caller.
   const tx = builder.setTimeout(30).build();
-  tx.sign(keypair);
+  if (keypair) tx.sign(keypair);
   return tx;
 }
 

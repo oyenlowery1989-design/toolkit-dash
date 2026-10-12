@@ -4,6 +4,8 @@ import { getErrorMessage } from "@/lib/stellar-helpers";
 import { buildBatchTransaction, BATCH_SIZE } from "./builder";
 export { BATCH_SIZE };
 import type { BatchResult } from "./types";
+import { signPaymentTransaction } from "@/lib/payments-signing";
+import { submitMainnetTransaction } from "@/lib/mainnet-submit-client";
 
 function chunkArray<T>(arr: T[], size: number): T[][] {
   const chunks: T[][] = [];
@@ -39,6 +41,8 @@ export interface RunBulkOptions {
   horizonUrl: string;
   network: Network;
   secretKey: string;
+  walletId?: string;
+  walletAddress?: string;
   recipients: string[];
   memo: string;
   /** Number of payment operations per transaction (1–100). Defaults to 100. */
@@ -69,6 +73,8 @@ export async function runBulkPayments({
   horizonUrl,
   network,
   secretKey,
+  walletId,
+  walletAddress,
   recipients,
   memo,
   batchSize = BATCH_SIZE,
@@ -89,11 +95,18 @@ export async function runBulkPayments({
   // batch as failed via the normal onBatchUpdate channel so the caller's
   // success/failure counting, history logging, and Retry Failed affordance
   // all work exactly as they would for a per-batch failure.
-  let keypair: Keypair;
+  let keypair: Keypair | null = null;
+  let publicKey: string;
   let account: Horizon.AccountResponse;
   try {
-    keypair = Keypair.fromSecret(secretKey);
-    account = await server.loadAccount(keypair.publicKey());
+    if (walletId) {
+      if (!walletAddress) throw new Error("Connected wallet address is missing");
+      publicKey = walletAddress;
+    } else {
+      keypair = Keypair.fromSecret(secretKey);
+      publicKey = keypair.publicKey();
+    }
+    account = await server.loadAccount(publicKey);
   } catch (err) {
     const { error } = extractHorizonResult(err);
     for (let i = 0; i < batches.length; i++) {
@@ -123,7 +136,7 @@ export async function runBulkPayments({
     let precomputedHash: string | undefined;
     let submitting = false;
     try {
-      const tx = buildBatchTransaction(
+      let tx = buildBatchTransaction(
         account,
         batch,
         memo,
@@ -133,6 +146,8 @@ export async function runBulkPayments({
         amount,
         asset,
       );
+
+      if (walletId) tx = await signPaymentTransaction(tx, walletId, "");
 
       // Pre-compute hash before submission — Horizon's error response for op-level
       // failures does not always include the hash, so we capture it here.
@@ -144,7 +159,7 @@ export async function runBulkPayments({
       }
 
       submitting = true;
-      const response = await server.submitTransaction(tx);
+      const response = await submitMainnetTransaction(tx);
 
       onBatchUpdate({
         batchIndex: i,
@@ -189,7 +204,7 @@ export async function runBulkPayments({
 
       // Reload account so sequence number is correct for next batch
       try {
-        account = await server.loadAccount(keypair.publicKey());
+        account = await server.loadAccount(publicKey);
       } catch {
         break;
       }

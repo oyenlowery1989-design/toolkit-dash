@@ -2,7 +2,6 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import Link from "next/link";
-import { Horizon } from "stellar-sdk";
 import {
   Card,
   CardContent,
@@ -45,12 +44,12 @@ import {
   Search,
   Contact,
 } from "lucide-react";
-import { useSettings, NETWORK_LABELS } from "@/lib/settings";
+import { useSettings, resolveHorizonUrl, NETWORK_LABELS } from "@/lib/settings";
 import { timeAgo, getErrorMessage } from "@/lib/stellar-helpers";
+import { fetchJson } from "@/lib/horizon-fetch";
 import { useAssetHistory } from "@/components/asset-lookup/useAssetHistory";
 import { useBulkRunHistory } from "@/hooks/use-bulk-run-history";
 import { useWalletsV2 as useWallets } from "@/hooks/use-wallets-v2";
-import { useHorizonServer } from "@/hooks/use-horizon-server";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -358,9 +357,7 @@ async function fetchDashboardData(
   horizonUrl: string,
   signal: AbortSignal,
 ): Promise<DashboardData> {
-  const server = new Horizon.Server(horizonUrl);
-
-  const feeResponse = await server.feeStats();
+  const feeResponse = await fetchJson(`${horizonUrl.replace(/\/$/, "")}/fee_stats`, signal);
 
   if (signal.aborted) throw new DOMException("Aborted", "AbortError");
 
@@ -452,7 +449,7 @@ export default function DashboardPage() {
   const { history: assetHistory } = useAssetHistory();
   const { runs: bulkRuns } = useBulkRunHistory();
   const { wallets } = useWallets();
-  const { url: horizonUrl } = useHorizonServer();
+  const horizonUrl = resolveHorizonUrl(settings);
 
   // Start in loading state so skeletons render immediately on first paint.
   const [status, setStatus] = useState<FetchStatus>("loading");

@@ -33,6 +33,8 @@ export interface AutoSendGroup {
   previewOnly: boolean;
   /** Timestamp of the last scheduled run that had failures. Null if none or cleared. */
   lastFailureAt?: number | null;
+  /** Server-side guard left by an interrupted or uncertain real-money run. */
+  pendingRun?: import("./run-guard").AutoSendRunGuard | null;
   /** Runtime-only flag (not stored in DB) — when true, runner sends 0.0000001 XLM to each dest. */
   testMode?: boolean;
   createdAt: number;

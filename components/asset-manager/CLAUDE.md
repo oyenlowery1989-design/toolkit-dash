@@ -6,7 +6,9 @@
 - **Shared state**: `assetCode`, `issuer`, `secretKey` are owned by `AssetManagerPanel` and passed as props to all tabs — entered once, persisted while switching tabs, cleared by the X button (shown when `isReady`)
 - **`isReady`** = `assetCode.trim().length > 0 && StrKey.isValidEd25519PublicKey(issuer.trim())` — tabs only render when ready
 - **Group picker**: loads `assetCode + issuer` from any saved asset group; shown when `groups.length > 0`
-- **Wallet**: shows green wallet indicator when `activeWallet` is set; `secretKey = activeWallet?.secretKey ?? manualSecretKey.trim()`
+- **Wallet**: connected wallets pass only `id`/`publicKey` to signing; masked keys are never parsed. The saved-wallet picker connects the selected wallet. Manual secret entry remains available while disconnected.
+- **Saved signing**: `lib/asset-manager/signing.ts` calls authenticated `/api/asset-manager/sign`; `signing-policy.ts` permits one issuer-flag, issuer-owned authorization, or XLM/custom-asset create/cancel offer operation, with source/expiry checks and mainnet policy. Creating DEX offers is blocked when a destination allowlist is configured because counterparties cannot be verified. Signature-request limits do not provide aggregate batch/daily accounting.
+- **Confirmations**: irreversible flags and trade place/batch/cancel prompts remain; issuer mismatch fails before signing. Wallet/asset changes stop pending batch iterations; cancellation IDs remain strings to preserve int64 precision.
 - **FlagsTab** — `{ issuer, secretKey }` props; Load/Reload flags, toggle AUTH_REQUIRED / AUTH_REVOCABLE / AUTH_CLAWBACK_ENABLED / AUTH_IMMUTABLE with single TX each
 - **HoldersTab** — `{ assetCode, issuer, secretKey }` props; runs `fetchTrustlineHolders` + `fetchSellOffers` concurrently via `Promise.allSettled`; merges into unified `HolderRow`; filter pills (All / Sellers / Frozen); action buttons (🔓 Unfreeze / – Restrict / 🔒 Freeze); amber highlight on rows with sell offers; Export CSV
 - `TrustlineAction`: `"authorize" | "freeze" | "maintain_only"` — maps to `set_trust_line_flags` flags

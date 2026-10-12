@@ -96,16 +96,16 @@ export async function POST(req: NextRequest) {
       success_count: b.successCount,
       failed_count: b.failedCount,
       ran_at: now,
-    });
+    }).throwOnError();
     const { data: oldest } = await sb
       .from("bulk_run_history")
       .select("id")
       .eq("user_id", userId!)
       .order("ran_at", { ascending: true })
-      .limit(100);
+      .limit(100).throwOnError();
     if (oldest && oldest.length > MAX) {
       const toDelete = oldest.slice(0, oldest.length - MAX).map((r) => r.id);
-      await sb.from("bulk_run_history").delete().eq("user_id", userId!).in("id", toDelete);
+      await sb.from("bulk_run_history").delete().eq("user_id", userId!).in("id", toDelete).throwOnError();
     }
   });
 

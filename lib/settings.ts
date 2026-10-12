@@ -1,5 +1,4 @@
 import { useCallback, useSyncExternalStore } from "react";
-import { Networks } from "stellar-sdk";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -34,10 +33,10 @@ export const NETWORK_LABELS: Record<Network, string> = {
 };
 
 export const NETWORK_PASSPHRASES: Record<Network, string> = {
-  public: Networks.PUBLIC,
-  testnet: Networks.TESTNET,
-  futurenet: Networks.FUTURENET,
-  local: Networks.TESTNET,
+  public: "Public Global Stellar Network ; September 2015",
+  testnet: "Test SDF Network ; September 2015",
+  futurenet: "Test SDF Future Network ; October 2022",
+  local: "Test SDF Network ; September 2015",
 };
 
 export function resolveNetworkPassphrase(network: Network): string {

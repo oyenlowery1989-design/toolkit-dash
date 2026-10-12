@@ -132,17 +132,17 @@ export async function POST(req: NextRequest) {
         created_at: now,
       },
       { onConflict: "user_id,type,value" },
-    );
+    ).throwOnError();
     // Trim to MAX
     const { data: oldest } = await sb
       .from("saved_searches")
       .select("id")
       .eq("user_id", userId!)
       .order("created_at", { ascending: true })
-      .limit(1000);
+      .limit(1000).throwOnError();
     if (oldest && oldest.length > MAX) {
       const toDelete = oldest.slice(0, oldest.length - MAX).map((r) => r.id);
-      await sb.from("saved_searches").delete().in("id", toDelete).eq("user_id", userId!);
+      await sb.from("saved_searches").delete().in("id", toDelete).eq("user_id", userId!).throwOnError();
     }
   });
 

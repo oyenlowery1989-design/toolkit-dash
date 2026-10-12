@@ -6,7 +6,8 @@ import { getSupabase, isSupabaseOnly } from "@/lib/supabase-server";
 import { getErrorMessage } from "@/lib/stellar-helpers";
 import { acquireRunLease, releaseRunLease } from "@/lib/run-lease";
 import { validateMainnetRun } from "@/lib/mainnet-safety";
-import { tieredRewardXlmLast24Hours } from "@/lib/mainnet-usage";
+import { reserveMainnetSignature } from "@/lib/mainnet-signing-budget";
+import { resolveRewardSigningConfig } from "./signing";
 
 const { Server } = Horizon;
 
@@ -54,7 +55,8 @@ async function sendSingleOp(
   networkPassphrase: string,
   op: SendOp,
   fee = "100",
-  memo: string | null = null
+  memo: string | null = null,
+  userId?: string,
 ): Promise<{ txHash?: string; error?: string; skipped?: boolean }> {
   try {
     const account = await server.loadAccount(keypair.publicKey());
@@ -68,6 +70,11 @@ async function sendSingleOp(
       })
     );
     const tx = builder.setTimeout(30).build();
+    const budgetErrors = await reserveMainnetSignature(userId ?? null, tx.hash().toString("hex"), Number(tx.timeBounds?.maxTime), {
+      destinations: [op.holder], operationCount: 1,
+      xlmAmount: (op.assetCode.toUpperCase() === "XLM" ? op.amount : 0) + Number(tx.fee) / 1e7,
+    });
+    if (budgetErrors.length) throw new Error(budgetErrors.join("; "));
     tx.sign(keypair);
     const response = await server.submitTransaction(tx);
     return { txHash: (response as { hash?: string }).hash };
@@ -200,7 +207,7 @@ async function runTier(
         await record([{ configId, tierNumber: tier.tierNumber, holderAddress: op.holder, assetCode: op.assetCode, assetIssuer: op.assetIssuer, amountSent: 0, status: "aborted" as const, error: "Aborted — earlier payment failed", ranAt }]);
         continue;
       }
-      const result = await sendSingleOp(server, keypair, networkPassphrase, op, baseFee, memo);
+      const result = await sendSingleOp(server, keypair, networkPassphrase, op, baseFee, memo, userId);
       if (result.skipped) {
         await record([{ configId, tierNumber: tier.tierNumber, holderAddress: op.holder, assetCode: op.assetCode, assetIssuer: op.assetIssuer, amountSent: 0, status: "skipped" as const, error: "No trustline for reward asset", ranAt }]);
       } else if (result.error) {
@@ -237,6 +244,11 @@ async function runTier(
       }
 
       const tx = builder.setTimeout(30).build();
+      const budgetErrors = await reserveMainnetSignature(userId ?? null, tx.hash().toString("hex"), Number(tx.timeBounds?.maxTime), {
+        destinations: batch.map((op) => op.holder), operationCount: batch.length,
+        xlmAmount: batch.reduce((sum, op) => sum + (op.assetCode.toUpperCase() === "XLM" ? op.amount : 0), 0) + Number(tx.fee) / 1e7,
+      });
+      if (budgetErrors.length) throw new Error(budgetErrors.join("; "));
       tx.sign(keypair);
       const response = await server.submitTransaction(tx);
       const txHash = (response as { hash?: string }).hash;
@@ -265,6 +277,11 @@ async function runTier(
             );
           }
           const retryTx = retryBuilder.setTimeout(30).build();
+          const budgetErrors = await reserveMainnetSignature(userId ?? null, retryTx.hash().toString("hex"), Number(retryTx.timeBounds?.maxTime), {
+            destinations: batch.map((op) => op.holder), operationCount: batch.length,
+            xlmAmount: batch.reduce((sum, op) => sum + (op.assetCode.toUpperCase() === "XLM" ? op.amount : 0), 0) + Number(retryTx.fee) / 1e7,
+          });
+          if (budgetErrors.length) throw new Error(budgetErrors.join("; "));
           retryTx.sign(keypair);
           const retryResponse = await server.submitTransaction(retryTx);
           const retryTxHash = (retryResponse as { hash?: string }).hash;
@@ -290,7 +307,7 @@ async function runTier(
         // Retry each op individually — skip no_trust recipients, continue the rest
         for (let oi = 0; oi < batch.length; oi++) {
           const op = batch[oi];
-          const result = await sendSingleOp(server, keypair, networkPassphrase, op, baseFee, memo);
+          const result = await sendSingleOp(server, keypair, networkPassphrase, op, baseFee, memo, userId);
           if (result.skipped) {
             await record([{ configId, tierNumber: tier.tierNumber, holderAddress: op.holder, assetCode: op.assetCode, assetIssuer: op.assetIssuer, amountSent: 0, status: "skipped" as const, error: "No trustline for reward asset", ranAt }]);
           } else if (result.error) {
@@ -365,7 +382,8 @@ export interface RunResult {
 export async function runConfig(
   config: TieredRewardConfig,
   assignments: TierAssignment[],
-  userId?: string
+  userId?: string,
+  expectedSenderAddress?: string
 ): Promise<RunResult | { error: string }> {
   if (_runningConfigs.has(config.id)) {
     return { error: "This config is already running — try again shortly." };
@@ -375,6 +393,8 @@ export async function runConfig(
   try {
     leaseToken = await acquireRunLease("tiered_reward_run_leases", config.id);
     if (!leaseToken) return { error: "This config is already running — try again shortly." };
+    try { config = await resolveRewardSigningConfig(config, userId); }
+    catch (error) { return { error: error instanceof Error ? error.message : "Could not load sender wallet" }; }
     if (!config.secretKey) return await runConfigInner(config, assignments, userId);
     let keypair: Keypair;
     try {
@@ -383,6 +403,7 @@ export async function runConfig(
       // Invalid secret key — let runConfigInner produce the same error result; no account to lock.
       return await runConfigInner(config, assignments, userId);
     }
+    if (expectedSenderAddress && keypair.publicKey() !== expectedSenderAddress) return { error: "Sender wallet changed since preview; preview again" };
     return await withAccountLock(keypair.publicKey(), () => runConfigInner(config, assignments, userId));
   } finally {
     if (leaseToken) await releaseRunLease("tiered_reward_run_leases", config.id, leaseToken);
@@ -416,13 +437,6 @@ async function runConfigInner(
       .filter((holder) => !excludeSet.has(holder.address))
       .flatMap((holder) => assignment.tier.assets.map((asset) => ({ holder: holder.address, asset }))),
   );
-  let sentLast24Hours: number;
-  try {
-    sentLast24Hours = await tieredRewardXlmLast24Hours(userId);
-  } catch (error) {
-    sentLast24Hours = Number.POSITIVE_INFINITY;
-    console.error("[tiered-rewards] unable to verify daily mainnet usage:", error);
-  }
   const safetyErrors = validateMainnetRun({
     destinations: intendedOps.map((op) => op.holder),
     operationCount: intendedOps.length,
@@ -430,7 +444,6 @@ async function runConfigInner(
       (sum, op) => sum + (op.asset.assetCode.toUpperCase() === "XLM" ? op.asset.amount : 0),
       0,
     ),
-    xlmSentLast24Hours: sentLast24Hours,
   });
   if (safetyErrors.length > 0) return { error: safetyErrors.join("; ") };
   const statusRows: { status: string }[] = [];

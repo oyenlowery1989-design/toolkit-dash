@@ -222,8 +222,8 @@ export function WalletBalancesPanel() {
       const group = groups.find((g) => g.id === groupId);
       if (!group || !group.members.some((m) => m.address === w.publicKey)) return false;
     }
-    if (keyFilter === "signing" && !w.secretKey) return false;
-    if (keyFilter === "watch" && !!w.secretKey) return false;
+    if (keyFilter === "signing" && !w.hasKey && !w.secretKey) return false;
+    if (keyFilter === "watch" && (w.hasKey || !!w.secretKey)) return false;
     if (search.trim()) {
       const q = search.toLowerCase();
       if (!w.name.toLowerCase().includes(q) && !w.publicKey.toLowerCase().includes(q))
@@ -239,8 +239,8 @@ export function WalletBalancesPanel() {
     }
     if (sortField === "key") {
       // signing wallets first (desc) or last (asc)
-      const ka = a.secretKey ? 1 : 0;
-      const kb = b.secretKey ? 1 : 0;
+      const ka = a.hasKey || a.secretKey ? 1 : 0;
+      const kb = b.hasKey || b.secretKey ? 1 : 0;
       return sortDir === "desc" ? kb - ka : ka - kb;
     }
     const ba = typeof balances[a.publicKey] === "number" ? (balances[a.publicKey] as number) : -1;
@@ -258,7 +258,7 @@ export function WalletBalancesPanel() {
   ).length;
 
   // Stats counts — always over all wallets (not filtered) so cards are informational
-  const signingCount = wallets.filter((w) => !!w.secretKey).length;
+  const signingCount = wallets.filter((w) => w.hasKey || !!w.secretKey).length;
   const watchCount = wallets.length - signingCount;
 
   // ---------------------------------------------------------------------------
@@ -579,7 +579,7 @@ export function WalletBalancesPanel() {
               const bal = balances[wallet.publicKey];
               const isActive = activeWallet?.id === wallet.id;
               const isLow = typeof bal === "number" && bal < LOW_BALANCE_THRESHOLD;
-              const hasSecretKey = !!wallet.secretKey;
+              const hasSecretKey = !!wallet.hasKey || !!wallet.secretKey;
               const isCopied = copiedId === wallet.id;
               const groupInfo = walletGroupMap.get(wallet.publicKey);
               const folder = folders.find((f) => f.id === wallet.folderId);

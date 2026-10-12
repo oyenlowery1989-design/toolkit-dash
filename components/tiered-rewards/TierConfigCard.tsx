@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useCallback, useEffect, useRef } from "react";
-import { ChevronDown, ChevronRight, AlertTriangle, Loader2, Upload, Wallet, Eye, EyeOff, History, Settings2 } from "lucide-react";
+import { ChevronDown, ChevronRight, AlertTriangle, Loader2, Upload, Eye, EyeOff, History, Settings2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -17,6 +17,7 @@ import type { TieredRewardConfig, Tier, RewardAsset, RewardsPreview, RunLogRow }
 
 interface Props {
   config: TieredRewardConfig;
+  isServerless: boolean;
   onUpdate: (id: string, updates: Partial<TieredRewardConfig>) => void;
   onDelete: (id: string) => void;
   onUpsertTier: (configId: string, tier: Omit<Tier, "id" | "configId" | "assets"> & { id?: string }) => Promise<void>;
@@ -100,7 +101,7 @@ function parseImportedTiers(raw: string): { tiers: ImportTier[]; error?: string 
   return { tiers };
 }
 
-export function TierConfigCard({ config, onUpdate, onDelete, onUpsertTier, onDeleteTier, onUpsertAsset, onDeleteAsset }: Props) {
+export function TierConfigCard({ config, isServerless, onUpdate, onDelete, onUpsertTier, onDeleteTier, onUpsertAsset, onDeleteAsset }: Props) {
   const [expanded, setExpanded] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [preview, setPreview] = useState<RewardsPreview | null>(null);
@@ -162,9 +163,7 @@ export function TierConfigCard({ config, onUpdate, onDelete, onUpsertTier, onDel
     ? (INTERVAL_LABELS[config.intervalMinutes] ?? `every ${config.intervalMinutes}m`)
     : "manual";
 
-  const effectiveKey = activeWallet?.secretKey ?? "";
-  // hasKey is true if active wallet is connected OR a key is saved server-side
-  const hasKey = !!effectiveKey || config.hasKey === true;
+  const hasKey = config.hasKey === true || !!config.walletId;
 
   const handlePreview = useCallback(async () => {
     setPreview(null); setPreviewError(null); setPreviewLoading(true); setPreviewOpen(true);
@@ -219,7 +218,7 @@ export function TierConfigCard({ config, onUpdate, onDelete, onUpsertTier, onDel
 
   function handleSaveKey() {
     const key = keyDraft.trim();
-    onUpdate(config.id, { secretKey: key || null });
+    onUpdate(config.id, { walletId: null, secretKey: key || null });
     setEditingKey(false);
     setKeyDraft("");
   }
@@ -275,8 +274,8 @@ export function TierConfigCard({ config, onUpdate, onDelete, onUpsertTier, onDel
           {!hasKey && (
             <span className="text-xs px-2 py-0.5 rounded-full border border-amber-700 bg-amber-950/40 text-amber-400">no key</span>
           )}
-          <span className={`text-xs px-2 py-0.5 rounded-full border ${config.enabled ? "bg-green-950 text-green-400 border-green-800" : "bg-muted text-muted-foreground border-border"}`}>
-            {config.enabled ? "\u25CF active" : "\u25CB paused"}
+          <span className={`text-xs px-2 py-0.5 rounded-full border ${config.enabled && !isServerless ? "bg-green-950 text-green-400 border-green-800" : "bg-muted text-muted-foreground border-border"}`}>
+            {config.enabled && isServerless ? "unavailable" : config.enabled ? "\u25CF active" : "\u25CB paused"}
           </span>
           <span className="text-xs px-2 py-0.5 rounded-full border border-border text-muted-foreground bg-muted">
             {intervalLabel}
@@ -343,8 +342,8 @@ export function TierConfigCard({ config, onUpdate, onDelete, onUpsertTier, onDel
                 <div className="space-y-5">
                   {/* Schedule + enable */}
                   <div className="flex items-center gap-3">
-                    <Switch checked={config.enabled} onCheckedChange={(v) => onUpdate(config.id, { enabled: v })} />
-                    <span className="text-sm">{config.enabled ? "Scheduled" : "Manual only"}</span>
+                    <Switch checked={config.enabled} disabled={isServerless && !config.enabled} onCheckedChange={(v) => onUpdate(config.id, { enabled: v })} />
+                    <span className="text-sm">{isServerless ? "Scheduled runs unavailable" : config.enabled ? "Scheduled" : "Manual only"}</span>
                   </div>
 
                   <div>
@@ -358,26 +357,27 @@ export function TierConfigCard({ config, onUpdate, onDelete, onUpsertTier, onDel
                   <div className="space-y-2">
                     <div className="flex items-center justify-between">
                       <Label className="text-xs text-muted-foreground uppercase tracking-wide">Sender Key</Label>
-                      {!activeWallet && (
+                      <div className="flex items-center gap-2">
+                        {activeWallet && <Button size="sm" variant="outline" onClick={() => onUpdate(config.id, { walletId: activeWallet.id, secretKey: null })}>Use connected wallet</Button>}
                         <WalletSelect
                           currentValue={""}
-                          onPick={(w) => onUpdate(config.id, { secretKey: w.secretKey })}
-                          onClear={() => onUpdate(config.id, { secretKey: null })}
+                          onPick={(w) => onUpdate(config.id, { walletId: w.id, secretKey: null })}
+                          onClear={() => onUpdate(config.id, { walletId: null, secretKey: null })}
                         />
-                      )}
+                      </div>
                     </div>
                     {editingKey ? (
                       <div className="flex gap-2">
                         <div className="relative flex-1">
                           <Input type={showKey ? "text" : "password"} placeholder="S… (leave blank to clear)" value={keyDraft} onChange={(e) => setKeyDraft(e.target.value)} autoFocus />
-                          <button type="button" onClick={() => setShowKey((v) => !v)} className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
+                          <Button type="button" variant="ghost" size="icon" aria-label={showKey ? "Hide key" : "Show key"} onClick={() => setShowKey((v) => !v)} className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
                             {showKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                          </button>
+                          </Button>
                         </div>
                         <Button size="sm" onClick={handleSaveKey}>Save</Button>
                         <Button size="sm" variant="outline" onClick={() => { setEditingKey(false); setKeyDraft(""); setShowKey(false); }}>Cancel</Button>
                       </div>
-                    ) : config.hasKey ? (
+                    ) : hasKey ? (
                       // A key is already saved server-side for THIS config — always show that (never
                       // the generic "connected" wallet indicator), since runs always use this saved
                       // key, not whatever wallet happens to be globally connected.
@@ -385,18 +385,12 @@ export function TierConfigCard({ config, onUpdate, onDelete, onUpsertTier, onDel
                         <div className="flex items-center gap-2">
                           <Input type="password" value="••••••••••••••••" readOnly className="flex-1 text-muted-foreground" />
                           <Button size="sm" variant="outline" onClick={() => { setEditingKey(true); setKeyDraft(""); }}>Change</Button>
-                          <Button size="sm" variant="ghost" className="text-destructive hover:text-destructive" onClick={() => onUpdate(config.id, { secretKey: null })}>Clear</Button>
+                          <Button size="sm" variant="ghost" className="text-destructive hover:text-destructive" onClick={() => onUpdate(config.id, { walletId: null, secretKey: null })}>Clear</Button>
                         </div>
                         <p className="text-xs text-muted-foreground">
-                          Runs use this config&rsquo;s saved key{preview?.senderAddress ? <> &mdash; <span className="font-mono">{shortAddr(preview.senderAddress)}</span></> : ""}.
-                          {activeWallet ? " Your connected wallet is not used to execute this config." : ""}
+                          Runs use this config&rsquo;s saved {config.walletId ? "wallet" : "key"}{preview?.senderAddress ? <> &mdash; <span className="font-mono">{shortAddr(preview.senderAddress)}</span></> : ""}.
+                          {activeWallet ? " Changing the connected wallet does not replace this sender." : ""}
                         </p>
-                      </div>
-                    ) : activeWallet ? (
-                      <div className="flex items-center gap-2 rounded-md border border-green-500/40 bg-green-500/5 px-3 py-2 text-sm">
-                        <Wallet className="h-4 w-4 shrink-0 text-green-500" />
-                        <span className="flex-1 truncate font-medium">{activeWallet.name}</span>
-                        <span className="font-mono text-xs text-muted-foreground">{shortAddr(activeWallet.publicKey)}</span>
                       </div>
                     ) : (
                       <div className="flex items-center gap-2">

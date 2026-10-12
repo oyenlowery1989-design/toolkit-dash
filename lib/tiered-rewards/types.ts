@@ -25,6 +25,7 @@ export interface TieredRewardConfig {
   secretKey: string | null;  // null on GET responses — key stays server-side
   /** True when a secret key is saved server-side; secretKey will be null on GET responses. */
   hasKey?: boolean;
+  walletId?: string | null; // saved wallet reference; keys are resolved only on the server
   intervalMinutes: number | null;  // null = manual only
   enabled: boolean;
   minReserve: number;              // default 10.0 XLM

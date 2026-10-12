@@ -57,6 +57,20 @@ CREATE INDEX IF NOT EXISTS idx_auto_send_run_log_group ON auto_send_run_log(grou
 CREATE TABLE IF NOT EXISTS auto_send_run_leases (resource_id TEXT PRIMARY KEY, lease_token TEXT NOT NULL, expires_at BIGINT NOT NULL);
 CREATE TABLE IF NOT EXISTS tiered_reward_run_leases (resource_id TEXT PRIMARY KEY, lease_token TEXT NOT NULL, expires_at BIGINT NOT NULL);
 
+-- Server-only mainnet signing safety state. No user-facing RLS policies are
+-- granted; all access goes through authenticated server routes.
+CREATE TABLE IF NOT EXISTS mainnet_signing_budget (bucket_key TEXT PRIMARY KEY, entries_json TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS asset_creator_issuance_claims (
+  network TEXT NOT NULL,
+  issuer TEXT NOT NULL,
+  asset_code TEXT NOT NULL,
+  unsigned_xdr TEXT NOT NULL,
+  unsigned_hash TEXT NOT NULL,
+  signed_xdr TEXT NOT NULL,
+  created_at BIGINT NOT NULL,
+  PRIMARY KEY (network, issuer, asset_code)
+);
+
 -- Row-Level Security — run supabase-rls-migration.sql to enable RLS + owner-scoped
 -- policies on every table above. Kept as a separate file (not inlined here) so it
 -- can be re-run idempotently against an already-provisioned database.
@@ -110,3 +124,5 @@ ALTER TABLE wallet_folders ENABLE ROW LEVEL SECURITY;
 ALTER TABLE wallets ENABLE ROW LEVEL SECURITY;
 ALTER TABLE auto_send_run_leases ENABLE ROW LEVEL SECURITY;
 ALTER TABLE tiered_reward_run_leases ENABLE ROW LEVEL SECURITY;
+ALTER TABLE mainnet_signing_budget ENABLE ROW LEVEL SECURITY;
+ALTER TABLE asset_creator_issuance_claims ENABLE ROW LEVEL SECURITY;

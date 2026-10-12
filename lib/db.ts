@@ -205,6 +205,29 @@ function initDb(): Database.Database {
       value       TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS local_backup_failure (
+      user_id        TEXT PRIMARY KEY,
+      last_failed_at INTEGER NOT NULL
+    );
+
+    -- Server-only signing safety state. A single budget row serializes all
+    -- saved-wallet signature reservations for the rolling daily XLM cap.
+    CREATE TABLE IF NOT EXISTS mainnet_signing_budget (
+      bucket_key TEXT PRIMARY KEY,
+      entries_json TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS asset_creator_issuance_claims (
+      network TEXT NOT NULL,
+      issuer TEXT NOT NULL,
+      asset_code TEXT NOT NULL,
+      unsigned_xdr TEXT NOT NULL,
+      unsigned_hash TEXT NOT NULL,
+      signed_xdr TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      PRIMARY KEY (network, issuer, asset_code)
+    );
+
     -- ── Bulk Asset Sales in-progress scan state (resume-after-refresh) ───────
     -- Single row per user (id = 'local' in SQLite single-user mode, = user_id in Supabase mode).
 

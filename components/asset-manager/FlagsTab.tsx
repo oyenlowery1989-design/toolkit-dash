@@ -26,6 +26,8 @@ import {
   type IssuerFlags,
 } from "@/lib/asset-manager";
 
+import type { SavedAssetSigner } from "@/lib/asset-manager/signing";
+
 interface FlagDef {
   key: keyof IssuerFlags;
   label: string;
@@ -71,10 +73,10 @@ const FLAG_DEFS: FlagDef[] = [
 interface Props {
   issuer: string;
   secretKey: string;
-  isWalletConnected?: boolean;
+  savedSigner?: SavedAssetSigner;
 }
 
-export function FlagsTab({ issuer, secretKey, isWalletConnected }: Props) {
+export function FlagsTab({ issuer, secretKey, savedSigner }: Props) {
   const { settings } = useSettings();
   const horizonUrl = resolveHorizonUrl(settings);
 
@@ -109,7 +111,7 @@ export function FlagsTab({ issuer, secretKey, isWalletConnected }: Props) {
   }
 
   async function handleToggleFlag(flagDef: FlagDef, enable: boolean) {
-    if (!secretKey || !flags) return;
+    if ((!secretKey && !savedSigner) || !flags) return;
 
     if (enable && flagDef.irreversible) {
       const confirmed = window.confirm(
@@ -120,7 +122,7 @@ export function FlagsTab({ issuer, secretKey, isWalletConnected }: Props) {
       if (!confirmed) return;
     }
 
-    if (isWalletConnected && !verifySignerIsIssuer(secretKey, issuer)) {
+    if (savedSigner ? savedSigner.publicKey !== issuer : !verifySignerIsIssuer(secretKey, issuer)) {
       toast.error(
         "Connected wallet does not match the issuer address being edited — aborted to avoid changing the wrong account.",
       );
@@ -137,6 +139,8 @@ export function FlagsTab({ issuer, secretKey, isWalletConnected }: Props) {
         flagDef.value,
         enable,
         settings.network,
+        undefined,
+        savedSigner,
       );
       setLastTxHash(hash);
       const updated = await fetchIssuerFlags(horizonUrl, issuer);
@@ -174,9 +178,9 @@ export function FlagsTab({ issuer, secretKey, isWalletConnected }: Props) {
           {loadError && (
             <p className="mt-2 text-xs text-destructive">{loadError}</p>
           )}
-          {!secretKey && (
+          {!secretKey && !savedSigner && (
             <p className="mt-2 text-xs text-muted-foreground">
-              Enter the issuer secret key above to enable flag changes.
+              Connect the issuer wallet or enter its secret key above to enable flag changes.
             </p>
           )}
         </CardContent>
@@ -194,7 +198,7 @@ export function FlagsTab({ issuer, secretKey, isWalletConnected }: Props) {
               const anyPending = pendingFlag !== null;
               const requiresMet = !def.requires || flags[def.requires];
               const canToggle =
-                !!secretKey && !flags.authImmutable && !anyPending;
+                (!!secretKey || !!savedSigner) && !flags.authImmutable && !anyPending;
 
               return (
                 <div

@@ -9,6 +9,7 @@
 - `runConfig()` sends batched (≤100 ops/tx, automatic bad-seq retry + per-op no-trust fallback) or one-at-a-time; every attempt logged to `run_log`, read by both the preview modal and per-config History tab
 - Persistence dual-mode (SQLite locally, Supabase when `isSupabaseOnly()`) — CRUD route, run route, and scheduler each maintain their own load/write split
 - Same-process execution-lock: `runConfig()` checks/adds to a globalized `_tieredRewardsRunningConfigs` Set before running (returns an error if the same config is already in flight) and wraps the actual run in `withAccountLock()` from `lib/stellar-submit.ts`; the scheduler's cron tick reads the same Set for a cheap early skip
+- Saved-wallet senders use an encrypted `saved-wallet:v1:<id>` reference in the existing `secret_key` column; GET exposes only `walletId`/`hasKey`. Legacy encrypted manual keys remain supported. Preview/run resolve the current owned wallet server-side; missing/deleted/watch-only wallets block execution. Sender replacement after preview requires a new preview. Connecting a wallet does not silently change an existing config sender.
 - Partial PATCH to a config never wipes `secret_key`/schedule fields that weren't part of the patch payload — both SQLite and Supabase branches of the config "update" action only touch fields explicitly present in the request body
 
 ### reviewed+fixed 2026-07-13

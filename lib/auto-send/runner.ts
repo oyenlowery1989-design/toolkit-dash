@@ -8,11 +8,12 @@ import {
 } from "stellar-sdk";
 import type { AutoSendGroup, DestinationRunResult, GroupRunResult, GroupPreview } from "./types";
 import { getDb } from "@/lib/db";
-import { withAccountLock } from "@/lib/stellar-submit";
+import { withAccountLock, isBadSeq } from "@/lib/stellar-submit";
 import { getErrorMessage } from "@/lib/stellar-helpers";
 import { acquireRunLease, releaseRunLease } from "@/lib/run-lease";
 import { validateMainnetRun } from "@/lib/mainnet-safety";
-import { autoSendXlmLast24Hours } from "@/lib/mainnet-usage";
+import { reserveMainnetSignature } from "@/lib/mainnet-signing-budget";
+import { blockAutoSendRun, claimAutoSendRun, completeAutoSendRun, markAutoSendTransactionRejected, markAutoSendTransactionSent, recordAutoSendTransaction, type AutoSendRunGuard } from "./run-guard";
 const { Server } = Horizon;
 
 declare global {
@@ -318,18 +319,10 @@ async function runGroupInner(group: AutoSendGroup): Promise<GroupRunResult> {
   const intended = group.destinations
     .map((dest) => ({ dest, amount: amounts.get(dest.id ?? dest.destination) ?? 0 }))
     .filter(({ dest, amount }) => !skipReason(spendable, amount, group.testMode ? 0 : dest.minThreshold, dest.paused));
-  let sentLast24Hours: number;
-  try {
-    sentLast24Hours = await autoSendXlmLast24Hours(walletAddress);
-  } catch (error) {
-    sentLast24Hours = Number.POSITIVE_INFINITY;
-    console.error("[auto-send] unable to verify daily mainnet usage:", error);
-  }
   const safetyErrors = validateMainnetRun({
     destinations: intended.map(({ dest }) => dest.destination),
     operationCount: intended.length,
     xlmAmount: intended.reduce((sum, { amount }) => sum + amount, 0),
-    xlmSentLast24Hours: sentLast24Hours,
   });
   if (safetyErrors.length > 0) {
     const error = safetyErrors.join("; ");
@@ -344,6 +337,12 @@ async function runGroupInner(group: AutoSendGroup): Promise<GroupRunResult> {
       }),
     };
   }
+
+  // Claim a durable guard before building/submitting any payment. An interrupted
+  // or uncertain run stays blocked until the operator reconciles its hashes.
+  let runGuard: AutoSendRunGuard | null = intended.length > 0
+    ? await claimAutoSendRun(group.id, walletAddress)
+    : null;
 
   if (group.batchSend) {
     // ── Batch mode: one transaction, N payment ops ──────────────────────────
@@ -376,9 +375,21 @@ async function runGroupInner(group: AutoSendGroup): Promise<GroupRunResult> {
           builder.addMemo(Memo.text(group.batchMemo.trim().slice(0, 28)));
         }
         const tx = builder.setTimeout(30).build();
+        const budgetErrors = await reserveMainnetSignature(null, tx.hash().toString("hex"), Number(tx.timeBounds?.maxTime), {
+          destinations: toSend.map(({ dest }) => dest.destination),
+          operationCount: toSend.length,
+          xlmAmount: toSend.reduce((sum, item) => sum + item.amount, 0) + Number(tx.fee) / 1e7,
+        });
+        if (budgetErrors.length) throw new Error(budgetErrors.join("; "));
         tx.sign(keypair);
+        const hash = tx.hash().toString("hex");
+        runGuard = await recordAutoSendTransaction(group.id, runGuard!, {
+          hash, destination: toSend.map(({ dest }) => dest.destination).join(", "),
+          amount: toSend.reduce((sum, item) => sum + item.amount, 0), status: "prepared",
+        });
         const batchResponse = await server.submitTransaction(tx);
-        const txHash = (batchResponse as { hash?: string }).hash;
+        const txHash = (batchResponse as { hash?: string }).hash ?? hash;
+        runGuard = await markAutoSendTransactionSent(group.id, runGuard, hash);
 
         for (const { dest, amount } of toSend) {
           const r: DestinationRunResult = { destination: dest.destination, label: dest.label, status: "sent", amountSent: amount, txHash };
@@ -412,11 +423,9 @@ async function runGroupInner(group: AutoSendGroup): Promise<GroupRunResult> {
         result = { destination: dest.destination, label: dest.label, status: "skipped", error: reason };
       } else {
         try {
-          // Retry once on tx_bad_seq — Horizon's short propagation delay can serve a stale
-          // sequence number immediately after the previous submission.
           let txHash: string | undefined;
           for (let attempt = 0; attempt < 2; attempt++) {
-            if (attempt > 0) await new Promise<void>((r) => setTimeout(r, 1500));
+            if (attempt > 0) await new Promise<void>((resolve) => setTimeout(resolve, 1500));
             const account = await server.loadAccount(walletAddress);
             const builder = new TransactionBuilder(account, { fee: "100", networkPassphrase })
               .addOperation(
@@ -426,13 +435,26 @@ async function runGroupInner(group: AutoSendGroup): Promise<GroupRunResult> {
               builder.addMemo(Memo.text(dest.memo.trim().slice(0, 28)));
             }
             const tx = builder.setTimeout(30).build();
+            const hash = tx.hash().toString("hex");
+            const budgetErrors = await reserveMainnetSignature(null, hash, Number(tx.timeBounds?.maxTime), {
+              destinations: [dest.destination], operationCount: 1,
+              xlmAmount: amountSent + Number(tx.fee) / 1e7,
+            });
+            if (budgetErrors.length) throw new Error(budgetErrors.join("; "));
             tx.sign(keypair);
+            runGuard = await recordAutoSendTransaction(group.id, runGuard!, {
+              hash, destination: dest.destination, amount: amountSent, status: "prepared",
+            });
             try {
               const sepResponse = await server.submitTransaction(tx);
-              txHash = (sepResponse as { hash?: string }).hash;
+              txHash = (sepResponse as { hash?: string }).hash ?? hash;
+              runGuard = await markAutoSendTransactionSent(group.id, runGuard, hash);
               break;
             } catch (submitErr) {
-              if (attempt === 0 && extractError(submitErr).includes("tx_bad_seq")) continue;
+              if (isBadSeq(submitErr)) {
+                runGuard = await markAutoSendTransactionRejected(group.id, runGuard, hash);
+                if (attempt === 0) continue;
+              }
               throw submitErr;
             }
           }
@@ -446,6 +468,11 @@ async function runGroupInner(group: AutoSendGroup): Promise<GroupRunResult> {
       results.push(result);
       logResult(group.id, walletAddress, result, ranAt);
     }
+  }
+
+  if (runGuard) {
+    if (runGuard.transactions.some((tx) => tx.status !== "rejected") && results.some((result) => result.status === "failed")) await blockAutoSendRun(group.id, runGuard);
+    else await completeAutoSendRun(group.id, runGuard);
   }
 
   return { groupId: group.id, walletAddress, ranAt, results };

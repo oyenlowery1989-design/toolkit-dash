@@ -193,21 +193,21 @@ export function WalletSelect({
 }
 
 // ---------------------------------------------------------------------------
-// WalletAppendSelect — append a secret key to a list
+// WalletAppendSelect — append a saved signing wallet address to a list
 // ---------------------------------------------------------------------------
 
 export function WalletAppendSelect({
   onAppend,
   align = "start",
 }: {
-  onAppend: (secretKey: string) => void;
+  onAppend: (address: string) => void;
   align?: "start" | "center" | "end";
 }) {
   const { wallets } = useWalletsV2();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
-  if (!wallets.length) return null;
+  if (!wallets.some((w) => w.hasKey || w.secretKey)) return null;
 
   return (
     <div className="relative" ref={ref} onBlur={(e) => { if (!ref.current?.contains(e.relatedTarget as Node)) setOpen(false); }}>
@@ -217,7 +217,7 @@ export function WalletAppendSelect({
         className="flex items-center gap-1 h-7 text-xs px-2 rounded border border-input hover:bg-accent transition-colors"
       >
         <Wallet className="h-3 w-3" />
-        <span>Add wallet key</span>
+        <span>Add saved wallet</span>
         <ChevronDown className="h-3 w-3 opacity-50" />
       </button>
 
@@ -229,8 +229,8 @@ export function WalletAppendSelect({
           )}
         >
           <FolderList
-            wallets={wallets}
-            onPick={(w) => onAppend(w.secretKey)}
+            wallets={wallets.filter((w) => w.hasKey || w.secretKey)}
+            onPick={(w) => onAppend(w.publicKey)}
             close={() => setOpen(false)}
           />
         </div>

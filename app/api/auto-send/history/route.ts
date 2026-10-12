@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
 import { getSupabase, isSupabaseOnly, requireAuth } from "@/lib/supabase-server";
+import { readPages } from "@/lib/supabase-read-all";
 import type { RunLogEntry } from "@/lib/auto-send/types";
 
 type Row = Record<string, unknown>;
@@ -19,7 +20,7 @@ function clusterRuns(rows: Row[]): RunLogEntry[] {
     const skippedCount = runRows.filter((r) => r.status === "skipped").length;
     const failedCount = runRows.filter((r) => r.status === "failed").length;
     const previewCount = runRows.filter((r) => r.status === "preview").length;
-    const totalXlm = runRows.reduce((s, r) => s + ((r.amount_sent as number) ?? 0), 0);
+    const totalXlm = runRows.reduce((s, r) => s + (r.status === "sent" ? Number(r.amount_sent ?? 0) : 0), 0);
     runs.push({
       ranAt,
       walletAddress: (runRows[0].wallet_address as string) ?? "",
@@ -63,11 +64,13 @@ export async function GET(req: NextRequest) {
     if (req.nextUrl.searchParams.get("totals") === "1") {
       if (isSupabaseOnly()) {
         const sb = getSupabase()!;
-        const { data, error } = await sb
+        const { data, error } = await readPages((from, to) => sb
           .from("auto_send_run_log")
-          .select("destination, amount_sent")
+          .select("destination, amount_sent", { count: "exact" })
           .eq("group_id", groupId)
-          .eq("status", "sent");
+          .eq("status", "sent")
+          .order("id")
+          .range(from, to));
         if (error) return NextResponse.json({ error: error.message }, { status: 500 });
         const result: Record<string, { totalXlm: number; sentCount: number }> = {};
         for (const r of data ?? []) {
@@ -103,6 +106,7 @@ export async function GET(req: NextRequest) {
         .from("auto_send_run_log")
         .select("*")
         .eq("group_id", groupId)
+        .neq("status", "guard")
         .order("ran_at", { ascending: false })
         .limit(200);
       if (error) return NextResponse.json({ error: error.message }, { status: 500 });
@@ -111,7 +115,7 @@ export async function GET(req: NextRequest) {
 
     const db = getDb();
     const rows = db
-      .prepare(`SELECT * FROM auto_send_run_log WHERE group_id = ? ORDER BY ran_at DESC LIMIT 200`)
+      .prepare(`SELECT * FROM auto_send_run_log WHERE group_id = ? AND status != 'guard' ORDER BY ran_at DESC LIMIT 200`)
       .all(groupId) as Row[];
     return NextResponse.json(clusterRuns(rows));
   } catch (e) {

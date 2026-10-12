@@ -61,13 +61,16 @@ type FilterMode = "all" | "sellers" | "frozen";
 // Component
 // ---------------------------------------------------------------------------
 
+import type { SavedAssetSigner } from "@/lib/asset-manager/signing";
+
 interface Props {
   assetCode: string;
   issuer: string;
   secretKey: string;
+  savedSigner?: SavedAssetSigner;
 }
 
-export function HoldersTab({ assetCode, issuer, secretKey }: Props) {
+export function HoldersTab({ assetCode, issuer, secretKey, savedSigner }: Props) {
   const { settings } = useSettings();
   const [filterMode, setFilterMode] = useState<FilterMode>("all");
 
@@ -227,7 +230,7 @@ export function HoldersTab({ assetCode, issuer, secretKey }: Props) {
   const frozenCount = allRows.filter((r) => r.status === "frozen").length;
 
   async function handleAction(address: string, action: TrustlineAction) {
-    if (!secretKey) return;
+    if (!secretKey && !savedSigner) return;
     setPendingAddress(address);
     try {
       const hash = await setTrustlineAuthorization(
@@ -238,6 +241,8 @@ export function HoldersTab({ assetCode, issuer, secretKey }: Props) {
         issuer,
         action,
         settings.network,
+        undefined,
+        savedSigner,
       );
       setActionResults((prev) => ({ ...prev, [address]: { hash } }));
       // Update trustline status optimistically
@@ -463,7 +468,7 @@ export function HoldersTab({ assetCode, issuer, secretKey }: Props) {
                                     onClick={() =>
                                       handleAction(row.address, "authorize")
                                     }
-                                    disabled={!secretKey || pendingAddress !== null}
+                                    disabled={(!secretKey && !savedSigner) || pendingAddress !== null}
                                     className="h-auto inline-flex items-center gap-1 rounded border border-green-500/40 bg-green-500/10 px-1.5 py-0.5 text-[10px] font-medium text-green-500 hover:bg-green-500/20 disabled:opacity-40"
                                   >
                                     <LockOpen className="h-3 w-3" />
@@ -476,7 +481,7 @@ export function HoldersTab({ assetCode, issuer, secretKey }: Props) {
                                     onClick={() =>
                                       handleAction(row.address, "maintain_only")
                                     }
-                                    disabled={!secretKey || pendingAddress !== null}
+                                    disabled={(!secretKey && !savedSigner) || pendingAddress !== null}
                                     className="h-auto inline-flex items-center gap-1 rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-500 hover:bg-amber-500/20 disabled:opacity-40"
                                   >
                                     <Minus className="h-3 w-3" />
@@ -489,7 +494,7 @@ export function HoldersTab({ assetCode, issuer, secretKey }: Props) {
                                     onClick={() =>
                                       handleAction(row.address, "freeze")
                                     }
-                                    disabled={!secretKey || pendingAddress !== null}
+                                    disabled={(!secretKey && !savedSigner) || pendingAddress !== null}
                                     className="h-auto inline-flex items-center gap-1 rounded border border-destructive/40 bg-destructive/10 px-1.5 py-0.5 text-[10px] font-medium text-destructive hover:bg-destructive/20 disabled:opacity-40"
                                   >
                                     <Lock className="h-3 w-3" />

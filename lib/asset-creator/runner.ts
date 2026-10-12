@@ -9,8 +9,21 @@ import type {
 } from "./types";
 import { accountExists } from "./builder";
 import { shortAddr } from "@/lib/format";
+import { submitMainnetTransaction } from "@/lib/mainnet-submit-client";
 
 const FRIENDBOT_URL = "https://friendbot.stellar.org";
+
+async function issuanceConfirmed(server: Horizon.Server, hash: string, onLog: (msg: string) => void): Promise<boolean> {
+  onLog(`  GET ${server.serverURL.toString().replace(/\/$/, "")}/transactions/${hash}`);
+  try {
+    return (await server.transactions().transaction(hash).call()).successful === true;
+  } catch (error) {
+    if ((error as { response?: { status?: number } }).response?.status !== 404) {
+      onLog(`  Could not verify issuance transaction ${hash}: ${String(error)}`);
+    }
+    return false;
+  }
+}
 
 export interface RunAssetCreationOptions {
   strategy: CreationStrategy;
@@ -112,6 +125,8 @@ export async function runAssetCreation(
         signal,
       );
 
+      if (signal.aborted) break;
+
       if (txns.length === 0) {
         // strategy returned nothing (e.g. set-home-domain with empty domain — shouldn't happen here)
         const skipped: StepResult = { stepId, status: "skipped" };
@@ -121,11 +136,22 @@ export async function runAssetCreation(
       }
 
       for (const signedTx of txns) {
-        onLog(`  Submitting tx: ${signedTx.label}`);
+        if (signal.aborted) break;
         const tx = TransactionBuilder.fromXDR(signedTx.xdr, networkPassphrase);
-        const submitted = await server.submitTransaction(tx);
-        const hash = (submitted as { hash?: string }).hash ?? "";
-        onLog(`  ✓ ${signedTx.label}: ${hash}`);
+        const originalHash = tx.hash().toString("hex");
+        const confirmed = stepId === "issuance" && await issuanceConfirmed(server, originalHash, onLog);
+        if (signal.aborted) break;
+        let hash = originalHash;
+        if (!confirmed) {
+          onLog(`  Submitting tx: ${signedTx.label}`);
+          try {
+            const submitted = await submitMainnetTransaction(tx);
+            hash = (submitted as { hash?: string }).hash ?? originalHash;
+          } catch (error) {
+            if (signal.aborted || stepId !== "issuance" || !await issuanceConfirmed(server, originalHash, onLog)) throw error;
+          }
+        }
+        onLog(`  ✓ ${signedTx.label}: ${hash}${confirmed ? " (already confirmed)" : ""}`);
 
         const ok: StepResult = { stepId, status: "success", txHash: hash };
         results.push(ok);
