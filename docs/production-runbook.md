@@ -38,6 +38,8 @@ Keep the encryption key stable across deployments. Losing it makes encrypted sig
 
 Poll the authenticated `GET /api/admin/health` endpoint every five minutes with a restricted operator token. Alert on HTTP 5xx, `ok: false`, new warnings, plaintext secrets, or nonzero payment failures in the previous 24 hours.
 
+Run `npm run check:production-health` with `HEALTH_BASE_URL` and `HEALTH_BEARER_TOKEN` set in a private environment. The command exits nonzero for authentication failures, warnings, payment failures, missing encryption, browser signing, or limits other than the approved 10,000 XLM per run and per day. It never prints the bearer token. A Supabase user access token expires, so do not put a one-time browser token into an unattended scheduler; use a restricted, renewable operator credential before scheduling this command.
+
 Create log alerts for:
 
 - `[admin/health] health check failed`

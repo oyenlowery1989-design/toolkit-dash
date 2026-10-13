@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { FeeBumpTransaction, Networks, TransactionBuilder, type Keypair } from "stellar-sdk";
+import { FeeBumpTransaction, Keypair, Networks, TransactionBuilder } from "stellar-sdk";
 import { requireAuth } from "@/lib/supabase-server";
 import { loadSavedWalletSigner } from "@/lib/saved-wallet-server";
 import { reserveMainnetSignature, MainnetSigningBudgetUnavailableError } from "@/lib/mainnet-signing-budget";
 import { claimAssetIssuance, readAssetIssuanceClaim, IssuanceAlreadyClaimedError, IssuanceProtectionUnavailableError } from "@/lib/asset-creator/issuance-guard";
+import { issuanceProofMessage } from "@/lib/asset-creator/issuance-proof";
 
 async function recoverIssuance(signedXdr: string, network: "public" | "testnet", signer: Keypair, assetCode: string, userId: string | null, now: number) {
   let original;
@@ -15,7 +16,7 @@ async function recoverIssuance(signedXdr: string, network: "public" | "testnet",
   if (original instanceof FeeBumpTransaction) throw new IssuanceProtectionUnavailableError();
   const op = original.operations[0];
   if (original.source !== signer.publicKey() || original.operations.length !== 1 ||
-    op?.type !== "payment" || op.asset.isNative() || op.asset.getIssuer() !== signer.publicKey() || op.asset.getCode() !== assetCode ||
+    op?.type !== "payment" || (op.source && op.source !== signer.publicKey()) || op.asset.isNative() || op.asset.getIssuer() !== signer.publicKey() || op.asset.getCode() !== assetCode ||
     original.signatures.length !== 1 || !signer.verify(original.hash(), original.signatures[0].signature())) {
     throw new IssuanceProtectionUnavailableError();
   }
@@ -31,6 +32,48 @@ async function recoverIssuance(signedXdr: string, network: "public" | "testnet",
   return NextResponse.json({ xdr: signedXdr });
 }
 
+async function protectManualIssuance(body: Record<string, unknown>, userId: string | null) {
+  const { unsignedXdr, signedXdr, issuerProof } = body;
+  const network = body.network;
+  if (body.stepId !== "issuance" || (network !== "public" && network !== "testnet") ||
+    typeof unsignedXdr !== "string" || !unsignedXdr || unsignedXdr.length > 100_000 ||
+    typeof signedXdr !== "string" || !signedXdr || signedXdr.length > 100_000 ||
+    typeof issuerProof !== "string" || issuerProof.length > 200 || !issuerProof) {
+    return NextResponse.json({ error: "Valid signed issuance and issuer proof are required" }, { status: 400 });
+  }
+  const tx = TransactionBuilder.fromXDR(signedXdr, network === "public" ? Networks.PUBLIC : Networks.TESTNET);
+  const unsignedTx = TransactionBuilder.fromXDR(unsignedXdr, network === "public" ? Networks.PUBLIC : Networks.TESTNET);
+  if (tx instanceof FeeBumpTransaction || unsignedTx instanceof FeeBumpTransaction || tx.operations.length !== 1 || tx.signatures.length !== 1 ||
+    unsignedTx.signatures.length || unsignedTx.hash().toString("hex") !== tx.hash().toString("hex")) throw new Error("Invalid manual issuance transaction");
+  const op = tx.operations[0];
+  const signer = Keypair.fromPublicKey(tx.source);
+  const expiresAt = Number(tx.timeBounds?.maxTime);
+  const now = Math.floor(Date.now() / 1000);
+  if (op.type !== "payment" || (op.source && op.source !== tx.source) || op.asset.isNative() ||
+    op.asset.getIssuer() !== tx.source || !Number.isFinite(Number(op.amount)) || Number(op.amount) <= 0 ||
+    !Number.isFinite(expiresAt) || expiresAt <= now || expiresAt > now + 300 ||
+    !signer.verify(tx.hash(), tx.signatures[0].signature()) ||
+    !signer.verify(issuanceProofMessage(tx.hash()), Buffer.from(issuerProof, "base64"))) {
+    throw new Error("Invalid manual issuance or issuer proof");
+  }
+  const assetCode = op.asset.getCode();
+  const existing = await readAssetIssuanceClaim(network, tx.source, assetCode);
+  if (existing) return recoverIssuance(existing, network, signer, assetCode, userId, now);
+  if (network === "public") {
+    const errors = await reserveMainnetSignature(userId, tx.hash().toString("hex"), expiresAt, {
+      destinations: [op.destination], operationCount: 1, xlmAmount: Number(tx.fee) / 1e7,
+    });
+    if (errors.length) return NextResponse.json({ error: errors.join("; ") }, { status: 403 });
+  }
+  const claimedXdr = await claimAssetIssuance({
+    network, issuer: tx.source, asset_code: assetCode,
+    unsigned_xdr: unsignedXdr, unsigned_hash: tx.hash().toString("hex"),
+    signed_xdr: signedXdr, created_at: Date.now(),
+  });
+  if (claimedXdr !== signedXdr) return recoverIssuance(claimedXdr, network, signer, assetCode, userId, now);
+  return NextResponse.json({ xdr: claimedXdr });
+}
+
 /** Signs only the Asset Creator's four operations; saved secrets stay server-side. */
 export async function POST(req: NextRequest) {
   const auth = await requireAuth(req);
@@ -38,6 +81,7 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
     const { walletId, xdr, stepId } = body ?? {};
+    if (body?.signedXdr !== undefined) return await protectManualIssuance(body, auth.userId);
     const network: unknown = body?.network ?? "public";
     if (typeof walletId !== "string" || !walletId || typeof xdr !== "string" || !xdr || xdr.length > 100_000 || (network !== "public" && network !== "testnet")) {
       return NextResponse.json({ error: "Wallet and transaction are required" }, { status: 400 });

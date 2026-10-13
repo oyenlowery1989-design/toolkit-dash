@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Account, Asset, Keypair, Networks, Operation, Transaction, TransactionBuilder } from "stellar-sdk";
 import { NextRequest } from "next/server";
+import { issuanceProofMessage } from "@/lib/asset-creator/issuance-proof";
 
 const mocks = vi.hoisted(() => ({ auth: vi.fn(), signer: vi.fn(), reserve: vi.fn(), claim: vi.fn(), readClaim: vi.fn() }));
 vi.mock("@/lib/supabase-server", () => ({ requireAuth: mocks.auth }));
@@ -23,6 +24,16 @@ function request(stepId: string, operations: Parameters<TransactionBuilder["addO
   return new NextRequest("http://localhost/api/asset-creator/sign", { method: "POST", body: JSON.stringify({ walletId: "saved", stepId, network, xdr: builder.setTimeout(timeout).build().toXDR() }) });
 }
 const issuance = () => Operation.payment({ destination, asset: new Asset("myTOKEN", signer.publicKey()), amount: "100" });
+function manualRequest(sequence = "1", proofSigner = signer, operation = issuance()) {
+  const tx = new TransactionBuilder(new Account(signer.publicKey(), sequence), { fee: "100", networkPassphrase: Networks.PUBLIC })
+    .addOperation(operation).setTimeout(180).build();
+  const unsignedXdr = tx.toXDR();
+  tx.sign(signer);
+  const issuerProof = proofSigner.sign(issuanceProofMessage(tx.hash())).toString("base64");
+  return new NextRequest("http://localhost/api/asset-creator/sign", {
+    method: "POST", body: JSON.stringify({ stepId: "issuance", network: "public", unsignedXdr, signedXdr: tx.toXDR(), issuerProof }),
+  });
+}
 beforeEach(() => {
   vi.stubEnv("MAINNET_TRANSACTIONS_ENABLED", "true");
   vi.stubEnv("MAINNET_EMERGENCY_STOP", "false");
@@ -35,6 +46,7 @@ beforeEach(() => {
   mocks.claim.mockClear();
   mocks.readClaim.mockClear();
   mocks.reserve.mockClear();
+  mocks.signer.mockClear();
 });
 afterEach(() => vi.unstubAllEnvs());
 describe("Asset Creator saved-wallet signing", () => {
@@ -146,5 +158,42 @@ describe("Asset Creator saved-wallet signing", () => {
     const { IssuanceProtectionUnavailableError } = await import("@/lib/asset-creator/issuance-guard");
     mocks.claim.mockRejectedValueOnce(new IssuanceProtectionUnavailableError());
     expect((await POST(request("issuance", [issuance()]))).status).toBe(503);
+  });
+});
+
+describe("Asset Creator manual-key issuance protection", () => {
+  it("claims a signed issuance only with a separate current-key proof", async () => {
+    const response = await POST(manualRequest());
+    expect(response.status).toBe(200);
+    expect(mocks.signer).not.toHaveBeenCalled();
+    expect(mocks.claim).toHaveBeenCalledWith(expect.objectContaining({ issuer: signer.publicKey(), asset_code: "myTOKEN" }));
+    expect(mocks.reserve).toHaveBeenCalledWith("owner", expect.any(String), expect.any(Number), expect.objectContaining({ destinations: [destination] }));
+    expect((await POST(manualRequest("2", Keypair.random()))).status).toBe(400);
+    expect(mocks.claim).toHaveBeenCalledTimes(1);
+  });
+
+  it("replays the original signed transaction instead of minting again", async () => {
+    const first = await POST(manualRequest());
+    const originalXdr = (await first.json()).xdr;
+    mocks.readClaim.mockResolvedValue(originalXdr);
+    mocks.claim.mockClear();
+    const replay = await POST(manualRequest("2"));
+    expect(replay.status).toBe(200);
+    expect(await replay.json()).toEqual({ xdr: originalXdr });
+    expect(mocks.claim).not.toHaveBeenCalled();
+  });
+
+  it("fails closed if the issuance claim cannot be stored", async () => {
+    const { IssuanceProtectionUnavailableError } = await import("@/lib/asset-creator/issuance-guard");
+    mocks.claim.mockRejectedValueOnce(new IssuanceProtectionUnavailableError());
+    expect((await POST(manualRequest())).status).toBe(503);
+  });
+
+  it("rejects a mismatched unsigned envelope", async () => {
+    const body = await manualRequest().json();
+    body.unsignedXdr = (await manualRequest("2").json()).unsignedXdr;
+    const request = new NextRequest("http://localhost/api/asset-creator/sign", { method: "POST", body: JSON.stringify(body) });
+    expect((await POST(request)).status).toBe(400);
+    expect(mocks.claim).not.toHaveBeenCalled();
   });
 });

@@ -5,7 +5,7 @@ import type {
 } from "./types";
 import { scoreCandidate } from "./matcher";
 import { shortAddr } from "@/lib/format";
-import { fetchJson } from "@/lib/horizon-fetch";
+import { fetchJson, HorizonFetchError } from "@/lib/horizon-fetch";
 
 type HorizonRecord = Record<string, unknown>;
 type HorizonPage = { _embedded?: { records?: HorizonRecord[] } };
@@ -67,8 +67,9 @@ export async function fetchAccountCreation(
     if (unfilteredOp) return toResult(unfilteredOp);
 
     return null;
-  } catch {
-    return null;
+  } catch (error) {
+    if (error instanceof HorizonFetchError && error.status === 404) return null;
+    throw error;
   }
 }
 

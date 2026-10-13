@@ -81,7 +81,7 @@ export interface RunLogRow {
   assetCode: string;
   assetIssuer?: string;
   amountSent: number;
-  status: "sent" | "failed" | "skipped" | "aborted" | "preview";
+  status: "sent" | "failed" | "skipped" | "aborted" | "preview" | "uncertain";
   txHash?: string;
   error?: string;
   ranAt: number;

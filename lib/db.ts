@@ -239,6 +239,14 @@ function initDb(): Database.Database {
       updated_at  INTEGER NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS bulk_payment_journal (
+      user_id     TEXT    PRIMARY KEY,
+      run_id      TEXT    NOT NULL,
+      version     INTEGER NOT NULL,
+      payload_json TEXT   NOT NULL,
+      updated_at  INTEGER NOT NULL
+    );
+
     -- ── Creator Children (creator tree / ownership graph) ────────────────────
 
     CREATE TABLE IF NOT EXISTS creator_children (

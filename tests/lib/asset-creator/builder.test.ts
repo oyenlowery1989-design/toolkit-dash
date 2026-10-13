@@ -1,5 +1,5 @@
 // tests/lib/asset-creator/builder.test.ts
-import { describe, it, expect, vi } from "vitest";
+import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
 import { Networks, Keypair } from "stellar-sdk";
 import { StandardStrategy } from "../../../lib/asset-creator/builder";
 import type { AssetCreatorForm } from "../../../lib/asset-creator/types";
@@ -55,6 +55,13 @@ function makeServerWithMissing(missingKeys: string[]) {
 }
 
 describe("StandardStrategy.buildTransactions", () => {
+  beforeEach(() => {
+    vi.stubGlobal("fetch", vi.fn(async (_url, init) => {
+      const body = JSON.parse(init.body);
+      return new Response(JSON.stringify({ xdr: body.signedXdr }), { status: 200 });
+    }));
+  });
+  afterEach(() => vi.unstubAllGlobals());
   it("builds fund-accounts tx when both accounts are missing", async () => {
     const server = makeServerWithMissing([issuerKp.publicKey(), distribKp.publicKey()]);
     const signal = new AbortController().signal;
@@ -140,6 +147,7 @@ describe("StandardStrategy.buildTransactions", () => {
     expect(txns).toHaveLength(1);
     expect(txns[0].stepId).toBe("issuance");
     expect(txns[0].sourceAccount).toBe(issuerKp.publicKey());
+    expect(fetch).toHaveBeenCalledWith("/api/asset-creator/sign", expect.objectContaining({ method: "POST" }));
   });
 
   it("applies memo only to issuance tx, not trustline", async () => {

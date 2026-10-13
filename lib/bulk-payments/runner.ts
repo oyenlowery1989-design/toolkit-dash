@@ -37,6 +37,26 @@ function extractHorizonResult(err: unknown): { error: string; txHash?: string } 
   return { error: getErrorMessage(err) };
 }
 
+/** Read-only reconciliation: an absent hash is not proof that submission failed. */
+export async function reconcileBulkBatch(horizonUrl: string, result: BatchResult, ghost = false): Promise<BatchResult> {
+  if (!result.txHash) return result;
+  try {
+    const tx = await new Horizon.Server(horizonUrl).transactions().transaction(result.txHash).call();
+    if (typeof tx.successful !== "boolean") return result;
+    return { ...result, status: ghost || tx.successful ? "success" : "failed", error: tx.successful || ghost ? undefined : "Transaction failed on the ledger" };
+  } catch {
+    return result;
+  }
+}
+
+function definitelyRejected(err: unknown): boolean {
+  const response = (err as { response?: { status?: number; data?: { error?: unknown; extras?: unknown } } })?.response;
+  // The submit route emits this shape for auth/policy rejection before Horizon.
+  // A Horizon 400 (including tx_bad_seq) may be a delayed duplicate response.
+  return (response?.status === 401 || response?.status === 403) &&
+    typeof response.data?.error === "string" && response.data.extras === undefined;
+}
+
 export interface RunBulkOptions {
   horizonUrl: string;
   network: Network;
@@ -54,12 +74,14 @@ export interface RunBulkOptions {
   /** Asset to send. Defaults to native XLM. */
   asset?: Asset;
   /**
-   * When true, treats operation-level failures (e.g. op_no_trust) as "recorded on-chain".
-   * The tx hash is pre-computed before submission so it's always captured even on failure.
+   * When true, ledger-confirmed failed transactions count as recorded on-chain.
+   * Native payments are disabled because a balance snapshot cannot guarantee failure.
    */
   ghost?: boolean;
   signal: AbortSignal;
   onBatchUpdate: (result: BatchResult) => void;
+  /** Durable hash checkpoint. Failure stops this batch before broadcast. */
+  onBeforeSubmit?: (result: BatchResult) => Promise<void>;
 }
 
 /**
@@ -84,10 +106,16 @@ export async function runBulkPayments({
   ghost,
   signal,
   onBatchUpdate,
+  onBeforeSubmit,
 }: RunBulkOptions): Promise<void> {
   const server = new Horizon.Server(horizonUrl);
   const networkPassphrase = resolveNetworkPassphrase(network);
   const batches = chunkArray(recipients, batchSize);
+  // A balance snapshot cannot guarantee a native payment will fail at ledger close.
+  if (ghost && (!asset || asset.isNative())) {
+    batches.forEach((batch, batchIndex) => onBatchUpdate({ batchIndex, count: batch.length, status: "failed", error: "Native underfunded ghost payments are disabled: the balance can increase before execution." }));
+    return;
+  }
 
   // Keypair derivation and the initial account load can both throw (bad
   // secret key, unfunded/nonexistent sender, unreachable Horizon). If either
@@ -135,6 +163,7 @@ export async function runBulkPayments({
 
     let precomputedHash: string | undefined;
     let submitting = false;
+    let signedXdr: string | undefined;
     try {
       let tx = buildBatchTransaction(
         account,
@@ -152,12 +181,25 @@ export async function runBulkPayments({
       // Pre-compute hash before submission — Horizon's error response for op-level
       // failures does not always include the hash, so we capture it here.
       precomputedHash = Buffer.from(tx.hash()).toString("hex");
+      signedXdr = tx.toXDR();
 
       if (signal.aborted) {
         onBatchUpdate({ batchIndex: i, count: batch.length, status: "failed", error: "Aborted — not submitted" });
         continue;
       }
 
+      if (onBeforeSubmit) {
+        try {
+          await onBeforeSubmit({ batchIndex: i, count: batch.length, status: "uncertain", txHash: precomputedHash });
+        } catch (err) {
+          onBatchUpdate({ batchIndex: i, count: batch.length, status: "failed", error: `Recovery checkpoint failed — not submitted: ${getErrorMessage(err)}` });
+          for (let j = i + 1; j < batches.length; j++) {
+            onBatchUpdate({ batchIndex: j, count: batches[j].length, status: "failed", error: "Not submitted — recovery checkpoint unavailable" });
+          }
+          return;
+        }
+      }
+      onBatchUpdate({ batchIndex: i, count: batch.length, status: "sending", txHash: precomputedHash, signedXdr });
       submitting = true;
       const response = await submitMainnetTransaction(tx);
 
@@ -165,41 +207,22 @@ export async function runBulkPayments({
         batchIndex: i,
         count: batch.length,
         status: "success",
-        txHash: response.hash,
+        txHash: response.hash ?? precomputedHash,
+        signedXdr,
       });
     } catch (err) {
-      if (signal.aborted) {
-        // If we were mid-submitTransaction when abort fired, the tx may
-        // have actually reached the ledger — don't claim it failed.
-        onBatchUpdate({
-          batchIndex: i,
-          count: batch.length,
-          status: "failed",
-          error: submitting
-            ? "Aborted during submission — verify on-chain before retrying (tx may have succeeded)"
-            : "Aborted — not submitted",
-        });
-        continue;
-      }
-
       const { error } = extractHorizonResult(err);
-
-      // Ghost mode: op-level failures (op_no_trust, etc.) ARE on-chain — use
-      // the pre-computed hash to mark the batch as recorded.
-      if (ghost && precomputedHash) {
-        onBatchUpdate({
-          batchIndex: i,
-          count: batch.length,
-          status: "success",
-          txHash: precomputedHash,
-        });
-      } else {
-        onBatchUpdate({
-          batchIndex: i,
-          count: batch.length,
-          status: "failed",
-          error,
-        });
+      let result: BatchResult = { batchIndex: i, count: batch.length, status: "failed", error, txHash: precomputedHash, signedXdr };
+      if (submitting) {
+        result = await reconcileBulkBatch(horizonUrl, { ...result, status: "uncertain", error: `Submission unresolved — check this hash before sending again: ${error}` }, ghost);
+        if (result.status === "uncertain" && definitelyRejected(err)) result = { ...result, status: "failed", error };
+      }
+      onBatchUpdate(result);
+      if (result.status === "uncertain") {
+        for (let j = i + 1; j < batches.length; j++) {
+          onBatchUpdate({ batchIndex: j, count: batches[j].length, status: "failed", error: "Not submitted — earlier transaction is unresolved" });
+        }
+        return;
       }
 
       // Reload account so sequence number is correct for next batch

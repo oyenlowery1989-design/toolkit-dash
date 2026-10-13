@@ -139,6 +139,7 @@ export async function POST(req: NextRequest) {
 
     const { runConfig } = await import("@/lib/tiered-rewards/runner");
     const result = await runConfig(config, preview.assignments, auth.userId ?? undefined, preview.senderAddress);
+    if ("error" in result) return NextResponse.json(result, { status: 409 });
 
     // Persist last_run_at after a successful run. This MUST be durable: if it silently fails,
     // the scheduler will see a stale last_run_at and may re-run (and re-pay) this config on its

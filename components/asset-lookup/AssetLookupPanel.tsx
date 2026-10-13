@@ -583,20 +583,25 @@ export function AssetLookupPanel({
     setDomainStatus({});
     setTomlContent(null);
     setTomlError(null);
+    setTomlLoading(false);
     setShowToml(false);
     setPaymentTotals(null);
     setPaymentTotalsError(null);
+    setPaymentTotalsLoading(false);
     setShowPaymentTotals(false);
     setClaimable(null);
     setClaimableError(null);
+    setClaimableLoading(false);
     setShowClaimable(false);
     setShowDistChart(false);
     setAssetTrades(null);
     setAssetTradesError(null);
+    setAssetTradesLoading(false);
     setShowAssetTrades(false);
     setAssetTradesProgress(null);
     setDistribSales(null);
     setDistribSalesError(null);
+    setDistribSalesLoading(false);
     setShowDistribSales(false);
     setDistribSalesProgress(null);
     setDistribCreators({});
@@ -788,6 +793,7 @@ export function AssetLookupPanel({
         { headers: authHeaders(), signal },
       );
       const text = await res.text();
+      if (signal.aborted) return;
       if (!res.ok) {
         const parsed = JSON.parse(text);
         setTomlError(parsed.error ?? "Failed to fetch TOML");
@@ -797,7 +803,7 @@ export function AssetLookupPanel({
     } catch {
       if (!signal.aborted) setTomlError("Network error fetching TOML");
     } finally {
-      setTomlLoading(false);
+      if (!signal.aborted) setTomlLoading(false);
     }
   };
 
@@ -823,11 +829,12 @@ export function AssetLookupPanel({
         tracked,
         signal,
       );
+      if (signal.aborted) return;
       setPaymentTotals(result);
     } catch (err) {
       if (!signal.aborted) setPaymentTotalsError(getErrorMessage(err));
     } finally {
-      setPaymentTotalsLoading(false);
+      if (!signal.aborted) setPaymentTotalsLoading(false);
     }
   };
 
@@ -849,11 +856,12 @@ export function AssetLookupPanel({
         issuer,
         signal,
       );
+      if (signal.aborted) return;
       setClaimable(result);
     } catch (err) {
       if (!signal.aborted) setClaimableError(getErrorMessage(err));
     } finally {
-      setClaimableLoading(false);
+      if (!signal.aborted) setClaimableLoading(false);
     }
   };
 
@@ -881,16 +889,17 @@ export function AssetLookupPanel({
         trackedAddresses,
         signal,
         (count) =>
-          setAssetTradesProgress(
+          !signal.aborted && setAssetTradesProgress(
             `Scanning trades… ${count.toLocaleString()} found`,
           ),
       );
+      if (signal.aborted) return;
       setAssetTrades(result);
     } catch (err) {
       if (!signal.aborted) setAssetTradesError(getErrorMessage(err));
     } finally {
-      setAssetTradesLoading(false);
-      setAssetTradesProgress(null);
+      if (!signal.aborted) setAssetTradesLoading(false);
+      if (!signal.aborted) setAssetTradesProgress(null);
     }
   };
 
@@ -911,10 +920,11 @@ export function AssetLookupPanel({
         [primaryDistrib],
         signal,
         (progress) =>
-          setDistribSalesProgress(
+          !signal.aborted && setDistribSalesProgress(
             `${progress.phase} (${progress.records.toLocaleString()} records)`,
           ),
       );
+      if (signal.aborted) return;
       setDistribSales(result);
       saveAnalysis({
         name: `${assetCode} — ${new Date().toLocaleDateString()}`,
@@ -927,8 +937,8 @@ export function AssetLookupPanel({
     } catch (err) {
       if (!signal.aborted) setDistribSalesError(getErrorMessage(err));
     } finally {
-      setDistribSalesLoading(false);
-      setDistribSalesProgress(null);
+      if (!signal.aborted) setDistribSalesLoading(false);
+      if (!signal.aborted) setDistribSalesProgress(null);
     }
   };
 

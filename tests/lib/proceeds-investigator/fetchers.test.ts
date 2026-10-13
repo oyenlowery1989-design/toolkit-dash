@@ -402,3 +402,11 @@ describe("fetchAddressInvestigation", () => {
     expect(transactionRequests[0].searchParams.get("order")).toBe("desc");
   });
 });
+
+it("rejects proceeds when merge effects cannot be fetched", async () => {
+  vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+    if (String(url).includes("/effects")) return new Response("effects unavailable", { status: 400 });
+    return json(page(String(url).includes("/payments") ? [accountMerge("merge-fail", DEST_A)] : []));
+  }));
+  await expect(fetchAssetXlmProceeds(HORIZON, ASSET_CODE, ISSUER, [ACCOUNT], new AbortController().signal)).rejects.toThrow();
+});

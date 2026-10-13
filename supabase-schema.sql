@@ -11,6 +11,7 @@ CREATE INDEX IF NOT EXISTS idx_proceeds_presets_user ON proceeds_presets(user_id
 CREATE TABLE IF NOT EXISTS saved_searches (id BIGSERIAL PRIMARY KEY, user_id TEXT NOT NULL DEFAULT '', type TEXT NOT NULL, value TEXT NOT NULL, label TEXT, network TEXT, distrib_address TEXT, total_xlm_proceeds DOUBLE PRECISION, total_asset_sold DOUBLE PRECISION, intermediary_name TEXT, accounts_found INTEGER, created_at BIGINT NOT NULL, UNIQUE(user_id, type, value));
 CREATE INDEX IF NOT EXISTS idx_saved_searches_user ON saved_searches(user_id);
 CREATE TABLE IF NOT EXISTS bulk_run_history (id TEXT PRIMARY KEY, user_id TEXT NOT NULL DEFAULT '', network TEXT NOT NULL, memo TEXT NOT NULL, recipient_count INTEGER NOT NULL, success_count INTEGER NOT NULL, failed_count INTEGER NOT NULL, ran_at BIGINT NOT NULL);
+CREATE TABLE IF NOT EXISTS bulk_payment_journal (user_id TEXT PRIMARY KEY, run_id TEXT NOT NULL, version INTEGER NOT NULL, payload_json TEXT NOT NULL, updated_at BIGINT NOT NULL);
 CREATE INDEX IF NOT EXISTS idx_bulk_run_history_user ON bulk_run_history(user_id);
 CREATE TABLE IF NOT EXISTS persons (id TEXT PRIMARY KEY, user_id TEXT NOT NULL DEFAULT '', name TEXT NOT NULL, role TEXT, notes TEXT, telegram_channel TEXT, telegram_link TEXT, telegram_username TEXT, created_at BIGINT NOT NULL, updated_at BIGINT NOT NULL);
 CREATE INDEX IF NOT EXISTS idx_persons_user ON persons(user_id);
@@ -106,6 +107,7 @@ ALTER TABLE auto_send_groups ENABLE ROW LEVEL SECURITY;
 ALTER TABLE auto_send_run_log ENABLE ROW LEVEL SECURITY;
 ALTER TABLE bulk_recipients ENABLE ROW LEVEL SECURITY;
 ALTER TABLE bulk_run_history ENABLE ROW LEVEL SECURITY;
+ALTER TABLE bulk_payment_journal ENABLE ROW LEVEL SECURITY;
 ALTER TABLE bulk_scan_state ENABLE ROW LEVEL SECURITY;
 ALTER TABLE creator_children ENABLE ROW LEVEL SECURITY;
 ALTER TABLE known_creators ENABLE ROW LEVEL SECURITY;

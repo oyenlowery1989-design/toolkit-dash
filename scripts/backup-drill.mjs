@@ -22,10 +22,12 @@ const SHARED_TABLES = [
   "person_relationships",
   "creator_children",
   "bulk_scan_state",
+  "bulk_payment_journal",
   "tiered_reward_configs",
   "tiered_reward_tiers",
   "tiered_reward_assets",
   "tiered_reward_run_log",
+  "tiered_reward_run_leases",
 ];
 
 const SQLITE_ONLY_TABLES = [

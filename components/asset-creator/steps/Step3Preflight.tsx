@@ -20,6 +20,10 @@ import type { AssetCreatorForm, PreflightCheck, StepResult } from "@/lib/asset-c
 interface Props {
   form: AssetCreatorForm;
   completedSteps: Set<string>;
+  backupDownloaded: boolean;
+  backupAcknowledged: boolean;
+  onDownloadBackup: () => void;
+  onBackupAcknowledgedChange: (value: boolean) => void;
   onBack: () => void;
   onComplete: (results: StepResult[]) => void;
 }
@@ -32,7 +36,7 @@ const STEP_LABELS: Record<string, string> = {
   "issuance": "Issuing supply to distributor",
 };
 
-export function Step3Preflight({ form, completedSteps, onBack, onComplete }: Props) {
+export function Step3Preflight({ form, completedSteps, backupDownloaded, backupAcknowledged, onDownloadBackup, onBackupAcknowledgedChange, onBack, onComplete }: Props) {
   const [checks, setChecks] = useState<PreflightCheck[]>([]);
   const [feesXlm, setFeesXlm] = useState<string | null>(null);
   const [checking, setChecking] = useState(false);
@@ -111,7 +115,8 @@ export function Step3Preflight({ form, completedSteps, onBack, onComplete }: Pro
     checks.some((c) => c.id === `exists-${form.issuerPublicKey}` && c.status === "pass") &&
     checks.some((c) => c.id === `exists-${form.distributorPublicKey}` && c.status === "pass");
   const needsFundingKey = form.network !== "testnet" && !form.resolvedFundingSecretKey && !form.fundingWalletId && !bothAccountsExist;
-  const canExecute = !checking && !running && !hasBlockingFail && !needsFundingKey && (!hasWarning || warningAcked);
+  const needsKeyBackup = Boolean(form.issuerSecretKey || form.distributorSecretKey);
+  const canExecute = !checking && !running && !hasBlockingFail && !needsFundingKey && (!hasWarning || warningAcked) && (!needsKeyBackup || backupAcknowledged);
 
   const handleExecute = async () => {
     abortRef.current?.abort();
@@ -186,6 +191,17 @@ export function Step3Preflight({ form, completedSteps, onBack, onComplete }: Pro
 
       {needsFundingKey && (
         <p className="text-sm text-destructive">Funding source required on mainnet — go back and connect a wallet or enter a funding key.</p>
+      )}
+
+      {needsKeyBackup && (
+        <div className="rounded-md border border-amber-500/40 bg-amber-500/5 p-3 space-y-2 text-sm">
+          <p>Issuer/distributor keys entered on this page are not saved in Wallet Manager. Save their backup before funding these accounts.</p>
+          <Button type="button" variant="outline" onClick={onDownloadBackup}>Download key backup</Button>
+          <label className="flex items-center gap-2">
+            <Switch checked={backupAcknowledged} disabled={!backupDownloaded} onCheckedChange={onBackupAcknowledgedChange} />
+            I saved and checked the key backup file
+          </label>
+        </div>
       )}
 
       {/* Warning acknowledgement */}

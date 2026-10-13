@@ -5,7 +5,7 @@ import type { TierAssignment, TieredRewardConfig } from "@/lib/tiered-rewards/ty
 
 const mocks = vi.hoisted(() => ({
   db: null as Database.Database | null,
-  submit: vi.fn(), loadAccount: vi.fn(), reserve: vi.fn(),
+  submit: vi.fn(), loadAccount: vi.fn(), reserve: vi.fn(), lookup: vi.fn(),
 }));
 vi.mock("@/lib/db", () => ({ getDb: () => mocks.db }));
 vi.mock("@/lib/supabase-server", () => ({ isSupabaseOnly: () => false, getSupabase: () => null }));
@@ -16,6 +16,7 @@ vi.mock("stellar-sdk", async (original) => {
   return { ...sdk, Horizon: { ...sdk.Horizon, Server: class {
     loadAccount = mocks.loadAccount;
     submitTransaction = mocks.submit;
+    transactions = () => ({ transaction: () => ({ call: mocks.lookup }) });
   } } };
 });
 
@@ -38,11 +39,12 @@ const config: TieredRewardConfig = {
 beforeEach(() => {
   vi.stubEnv("MAINNET_TRANSACTIONS_ENABLED", "true");
   mocks.db = new Database(":memory:");
-  mocks.db.exec(`CREATE TABLE tiered_reward_run_log (
+  mocks.db.exec(`CREATE TABLE tiered_reward_run_leases (resource_id TEXT PRIMARY KEY, lease_token TEXT, expires_at INTEGER); CREATE TABLE tiered_reward_run_log (
     id TEXT PRIMARY KEY, config_id TEXT, tier_number INTEGER, holder_address TEXT,
     asset_code TEXT, asset_issuer TEXT, amount_sent REAL, status TEXT, tx_hash TEXT,
     error TEXT, ran_at INTEGER
   )`);
+  mocks.lookup.mockReset().mockRejectedValue(new Error("Not found"));
   mocks.submit.mockReset().mockResolvedValue({ hash: "submitted" });
   mocks.reserve.mockReset().mockResolvedValue([]);
   mocks.loadAccount.mockReset().mockResolvedValue(new Account(signer.publicKey(), "1"));
@@ -69,13 +71,13 @@ describe("Tiered Rewards daily signing budget", () => {
     expect(mocks.submit).toHaveBeenCalledTimes(1);
   });
 
-  it("reserves the rebuilt transaction on a bad-sequence retry", async () => {
+  it("does not rebuild after an ambiguous bad-sequence response", async () => {
     mocks.submit.mockRejectedValueOnce({ response: { data: { extras: { result_codes: { transaction: "tx_bad_seq" } } } } })
       .mockResolvedValueOnce({ hash: "retried" });
     const result = await runConfig(config, [assignment], "owner");
-    expect(result).toMatchObject({ totalSent: 2, totalFailed: 0 });
-    expect(mocks.reserve).toHaveBeenCalledTimes(2);
-    expect(mocks.submit).toHaveBeenCalledTimes(2);
+    expect(result).toMatchObject({ totalSent: 0, totalFailed: 2, reconciliationRequired: true });
+    expect(mocks.reserve).toHaveBeenCalledTimes(1);
+    expect(mocks.submit).toHaveBeenCalledTimes(1);
   });
 
   it("does not submit a batch rejected by the daily budget", async () => {
@@ -94,4 +96,49 @@ describe("Tiered Rewards daily signing budget", () => {
     expect(mocks.reserve.mock.calls.slice(1).map((call) => call[3].operationCount)).toEqual([1, 1]);
     expect(mocks.submit).toHaveBeenCalledTimes(3);
   });
+});
+
+it.each([true, false])("reconciles a response-lost reward in batch mode %s", async (batchSend) => {
+  mocks.submit.mockRejectedValueOnce(new Error("response lost"));
+  mocks.lookup.mockResolvedValue({ successful: true });
+  const result = await runConfig({ ...config, batchSend }, [assignment], "owner");
+  expect(result).toMatchObject({ totalSent: 2, totalFailed: 0 });
+});
+
+it.each([true, false])("blocks a second run after an unresolved submission in batch mode %s", async (batchSend) => {
+  mocks.submit.mockRejectedValue(new Error("response lost"));
+  const result = await runConfig({ ...config, batchSend }, [assignment], "owner");
+  expect(result).toMatchObject({ reconciliationRequired: true });
+  const rows = mocks.db!.prepare("SELECT * FROM tiered_reward_run_log WHERE status = 'uncertain'").all();
+  expect(rows.length).toBeGreaterThan(0);
+  expect(rows[0]).toMatchObject({ tx_hash: expect.any(String) });
+  mocks.submit.mockClear();
+  const second = await runConfig({ ...config, batchSend }, [assignment]);
+  expect(second).toMatchObject({ error: expect.stringContaining("reconcil") });
+  expect(mocks.submit).not.toHaveBeenCalled();
+});
+
+it("persists the signed envelope before broadcasting and retains it after response loss", async () => {
+  mocks.submit.mockImplementation(async (tx) => {
+    const row = mocks.db!.prepare("SELECT lease_token FROM tiered_reward_run_leases").get() as { lease_token: string };
+    expect(JSON.parse(row.lease_token).transactions).toEqual([{ hash: tx.hash().toString("hex"), xdr: tx.toXDR(), status: "prepared" }]);
+    throw new Error("response lost");
+  });
+  await runConfig(config, [assignment], "owner");
+  expect(mocks.db!.prepare("SELECT COUNT(*) AS n FROM tiered_reward_run_leases").get()).toEqual({ n: 1 });
+});
+
+it("does not broadcast when durable run protection cannot be written", async () => {
+  mocks.db!.exec("DROP TABLE tiered_reward_run_leases");
+  expect(await runConfig(config, [assignment], "owner")).toHaveProperty("error");
+  expect(mocks.submit).not.toHaveBeenCalled();
+});
+
+it("blocks partial reward runs even when the later failure happened before broadcast", async () => {
+  mocks.reserve.mockResolvedValueOnce([]).mockResolvedValueOnce(["Daily limit exceeded"]);
+  const result = await runConfig({ ...config, batchSend: false }, [assignment], "owner");
+  expect(result).toMatchObject({ totalSent: 1, reconciliationRequired: true });
+  mocks.submit.mockClear();
+  expect(await runConfig(config, [assignment], "owner")).toHaveProperty("error");
+  expect(mocks.submit).not.toHaveBeenCalled();
 });

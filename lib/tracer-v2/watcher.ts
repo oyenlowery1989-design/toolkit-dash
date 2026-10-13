@@ -25,7 +25,7 @@ function buildOperationsUrl(
  * Polls a single watched address for new create_account operations it funded.
  *
  * Seed (cursor === null): fetches the single latest create_account op (desc) purely to
- * establish a starting paging_token — emits NO events (no backfill of history).
+ * establish a starting paging_token ("0" when empty) — emits NO events (no backfill of history).
  * Poll (cursor set): fetches ops ascending from the cursor, emits an event for every
  * record where `record.funder === address` is verified explicitly, and advances the
  * cursor to the last record's paging_token regardless of match (Horizon paging tokens
@@ -46,7 +46,7 @@ export async function pollWatch(
     const page = await fetchPage(url);
     const records: any[] = page?._embedded?.records ?? [];
     const latest = records[0];
-    return { events: [], nextCursor: latest?.paging_token ?? null };
+    return { events: [], nextCursor: latest?.paging_token ?? "0" };
   }
 
   const url = buildOperationsUrl(horizonBase, address, {

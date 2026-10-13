@@ -720,12 +720,12 @@ export function AccountFunderPanel() {
     // Any account already funded holds real, unrecoverable XLM tied to a
     // secret key that only exists in this component's state — never silently
     // discard it.
-    const hasFundedAccounts = accounts.some((a) => a.status === "funded");
-    if (hasFundedAccounts) {
+    const hasPossiblyFundedAccounts = accounts.some((a) => a.status !== "pending");
+    if (hasPossiblyFundedAccounts) {
       const confirmed = window.confirm(
-        "One or more generated children have already been funded with real " +
-          "XLM. Regenerating will PERMANENTLY DISCARD their secret keys — that " +
-          "XLM may become unrecoverable unless you have already saved/exported " +
+        "One or more generated children have been funded or have an uncertain funding outcome. " +
+          "Regenerating will PERMANENTLY DISCARD their secret keys — any XLM " +
+          "may become unrecoverable unless you have already saved/exported " +
           "them. Continue?"
       );
       if (!confirmed) return;
@@ -745,13 +745,13 @@ export function AccountFunderPanel() {
   // never persisted, so navigating away without copying/exporting them first
   // can permanently strand real funds.
   useEffect(() => {
-    const hasFundedAccounts = accounts.some((a) => a.status === "funded");
-    if (!hasFundedAccounts) return;
+    const hasPossiblyFundedAccounts = accounts.some((a) => a.status !== "pending");
+    if (!hasPossiblyFundedAccounts) return;
 
     function handleBeforeUnload(e: BeforeUnloadEvent) {
       e.preventDefault();
       e.returnValue =
-        "Funded accounts have secret keys that only exist on this page — leaving now may permanently strand real XLM.";
+        "Funded or unresolved accounts have secret keys that only exist on this page — leaving now may permanently strand real XLM.";
       return e.returnValue;
     }
 
@@ -765,9 +765,6 @@ export function AccountFunderPanel() {
 
   function handleStop() {
     abortRef.current?.abort();
-    setIsDirectFunding(false);
-    setIsSponsoring(false);
-    setIsClosing(false);
   }
 
   // ---------------------------------------------------------------------------
@@ -800,9 +797,6 @@ export function AccountFunderPanel() {
 
     // Max ops per tx on Stellar is 100; we use 50 to stay safe
     const BATCH_SIZE = 50;
-
-    // Reset all statuses before starting
-    setAccounts((prev) => prev.map((a) => ({ ...a, status: "pending", error: undefined })));
 
     const snapshot = [...accounts]; // stable copy so indices don't shift mid-run
     const outcomes: RunOutcome[] = snapshot.map(() => "pending");
@@ -871,7 +865,7 @@ export function AccountFunderPanel() {
       }
     }
 
-    if (signal.aborted) setAccounts((prev) => prev.map((account) => account.status === "funding" ? { ...account, status: "pending" } : account));
+    if (signal.aborted) setAccounts((prev) => prev.map((account) => account.status === "funding" ? { ...account, status: "failed", error: "Submission outcome uncertain; verify this address on the ledger before regenerating." } : account));
     setIsDirectFunding(false);
     const summary = summarizeFunderRun("Direct funding", outcomes, signal.aborted);
     toast[summary.tone](summary.message);
@@ -909,8 +903,6 @@ export function AccountFunderPanel() {
 
     // 10 children per tx = 30 ops per tx (3 ops x 10 children)
     const BATCH_SIZE = 10;
-
-    setAccounts((prev) => prev.map((a) => ({ ...a, status: "pending", error: undefined })));
 
     const snapshot = [...accounts];
     const outcomes: RunOutcome[] = snapshot.map(() => "pending");
@@ -1007,7 +999,7 @@ export function AccountFunderPanel() {
       }
     }
 
-    if (signal.aborted) setAccounts((prev) => prev.map((account) => account.status === "funding" ? { ...account, status: "pending" } : account));
+    if (signal.aborted) setAccounts((prev) => prev.map((account) => account.status === "funding" ? { ...account, status: "failed", error: "Submission outcome uncertain; verify this address on the ledger before regenerating." } : account));
     setIsSponsoring(false);
     const summary = summarizeFunderRun("Sponsored creation", outcomes, signal.aborted);
     toast[summary.tone](summary.message);

@@ -20,11 +20,13 @@ interface Props {
   network: string;
   issuerPublicKey?: string;
   distributorPublicKey?: string;
+  hasUnsavedKeys: boolean;
+  onDownloadBackup: () => void;
   onRetry: (failedStepIds: string[]) => void;
   onStartOver: () => void;
 }
 
-export function Step4Result({ results, groupId, network, issuerPublicKey, distributorPublicKey, onRetry, onStartOver }: Props) {
+export function Step4Result({ results, groupId, network, issuerPublicKey, distributorPublicKey, hasUnsavedKeys, onDownloadBackup, onRetry, onStartOver }: Props) {
   const expertBase = network === "public"
     ? "https://stellar.expert/explorer/public/tx"
     : network === "testnet"
@@ -130,6 +132,7 @@ export function Step4Result({ results, groupId, network, issuerPublicKey, distri
 
       {/* Actions */}
       <div className="flex gap-2">
+        {hasUnsavedKeys && <Button variant="outline" onClick={onDownloadBackup}>Download key backup again</Button>}
         {failed.length > 0 && (
           <Button onClick={() => onRetry(failed.map((r) => r.stepId))}>
             Retry failed steps

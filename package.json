@@ -15,7 +15,8 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "test:e2e": "playwright test",
-    "drill:backup": "node scripts/backup-drill.mjs"
+    "drill:backup": "node scripts/backup-drill.mjs",
+    "check:production-health": "node scripts/check-production-health.mjs"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.15",

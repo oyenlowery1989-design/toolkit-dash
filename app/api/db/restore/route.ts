@@ -46,7 +46,7 @@ export async function POST(req: NextRequest) {
       "address_book", "known_intermediaries", "known_creators", "saved_analyses",
       "bulk_recipients", "proceeds_presets", "saved_searches", "bulk_run_history",
       "asset_groups", "wallet_folders", "wallets", "app_state", "auto_send_groups",
-      "persons", "creator_children", "bulk_scan_state", "tiered_reward_configs",
+      "persons", "creator_children", "bulk_scan_state", "tiered_reward_configs", "bulk_payment_journal",
     ];
     const parentReads = await Promise.all([
       readAllUserRows(sb, "address_book", userId),
@@ -66,12 +66,13 @@ export async function POST(req: NextRequest) {
       readAllUserRows(sb, "creator_children", userId),
       readAllUserRows(sb, "bulk_scan_state", userId),
       readAllUserRows(sb, "tiered_reward_configs", userId),
+      readAllUserRows(sb, "bulk_payment_journal", userId),
     ]);
     const [
       addressBook, knownIntermediaries, knownCreators, savedAnalyses, bulkRecipients,
       proceedsPresets, savedSearches, bulkRunHistory, assetGroups, walletFolders,
       wallets, appState, autoSendGroups, persons, creatorChildren, bulkScanState,
-      tieredRewardConfigs,
+      tieredRewardConfigs, bulkPaymentJournal,
     ] = unwrapReads(parentReads as SupabaseRead[], parentTables);
     // Members and destinations are scoped through their parent tables (no user_id column)
     const assetGroupIds = (assetGroups ?? []).map((g) => g.id as string);
@@ -116,6 +117,17 @@ export async function POST(req: NextRequest) {
     const [tieredRewardAssets] = unwrapReads(
       [tieredRewardAssetsRead as SupabaseRead], ["tiered_reward_assets"],
     );
+    const rewardGuardIds = tieredConfigIds.map((id) => `reward-guard:${id}`);
+    const rewardGuardRead = rewardGuardIds.length > 0
+      ? await readAllChildRows(sb, "tiered_reward_run_leases", "resource_id", rewardGuardIds)
+      : { data: [], error: null };
+    const [tieredRewardRunLeases] = unwrapReads([rewardGuardRead as SupabaseRead], ["tiered_reward_run_leases"]);
+    for (const row of tieredRewardRunLeases) {
+      const existing = db.prepare("SELECT lease_token FROM tiered_reward_run_leases WHERE resource_id = ?").get(row.resource_id) as { lease_token: string } | undefined;
+      if (existing && existing.lease_token !== row.lease_token) {
+        return NextResponse.json({ error: "A local reward run guard differs; reconcile it before restoring" }, { status: 409 });
+      }
+    }
 
     db.transaction(() => {
       for (const r of addressBook ?? []) {
@@ -220,6 +232,10 @@ export async function POST(req: NextRequest) {
         db.prepare(`INSERT OR REPLACE INTO bulk_scan_state (id, scan_key, rows_json, interrupted, updated_at) VALUES (?, ?, ?, ?, ?)`)
           .run(`local:${r.scan_key}`, r.scan_key, r.rows_json, r.interrupted, r.updated_at);
       }
+      for (const r of bulkPaymentJournal ?? []) {
+        db.prepare(`INSERT OR IGNORE INTO bulk_payment_journal (user_id, run_id, version, payload_json, updated_at) VALUES (?, ?, ?, ?, ?)`)
+          .run("local", r.run_id, r.version, r.payload_json, r.updated_at);
+      }
       for (const r of tieredRewardConfigs ?? []) {
         const excludeAddresses = typeof r.exclude_addresses === "string"
           ? r.exclude_addresses : JSON.stringify(r.exclude_addresses ?? []);
@@ -240,6 +256,10 @@ export async function POST(req: NextRequest) {
         db.prepare(`INSERT OR REPLACE INTO tiered_reward_run_log (id, config_id, tier_number, holder_address, asset_code, asset_issuer, amount_sent, status, tx_hash, error, ran_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
           .run(r.id, r.config_id, r.tier_number, r.holder_address, r.asset_code, r.asset_issuer, r.amount_sent, r.status, r.tx_hash, r.error, r.ran_at);
       }
+      for (const r of tieredRewardRunLeases) {
+        db.prepare("INSERT OR IGNORE INTO tiered_reward_run_leases (resource_id, lease_token, expires_at) VALUES (?, ?, ?)")
+          .run(r.resource_id, r.lease_token, r.expires_at);
+      }
     })();
 
     const counts = Object.fromEntries([
@@ -247,13 +267,14 @@ export async function POST(req: NextRequest) {
         addressBook, knownIntermediaries, knownCreators, savedAnalyses, bulkRecipients,
         proceedsPresets, savedSearches, bulkRunHistory, assetGroups, walletFolders,
         wallets, appState, autoSendGroups, persons, creatorChildren, bulkScanState,
-        tieredRewardConfigs,
+        tieredRewardConfigs, bulkPaymentJournal,
       ][index].length]),
       ...childTables.map((table, index) => [table, [
         assetGroupMembers, autoSendDestinations, autoSendRunLog, personAddresses,
         personRelationships, tieredRewardTiers, tieredRewardRunLog,
       ][index].length]),
       ["tiered_reward_assets", tieredRewardAssets.length],
+      ["tiered_reward_run_leases", tieredRewardRunLeases.length],
     ]);
     return NextResponse.json({ ok: true, message: "Restored from Supabase to local SQLite", counts });
     } catch (error) {
@@ -299,6 +320,7 @@ export async function POST(req: NextRequest) {
       { name: "auto_send_run_log", rows: db.prepare("SELECT * FROM auto_send_run_log").all() },
       { name: "creator_children", rows: db.prepare("SELECT * FROM creator_children").all() },
       { name: "bulk_scan_state", rows: db.prepare("SELECT * FROM bulk_scan_state").all() },
+      { name: "bulk_payment_journal", rows: db.prepare("SELECT * FROM bulk_payment_journal").all() },
       { name: "tiered_reward_configs", rows: db.prepare("SELECT * FROM tiered_reward_configs").all() },
       { name: "tiered_reward_tiers", rows: db.prepare("SELECT * FROM tiered_reward_tiers").all() },
       { name: "tiered_reward_assets", rows: db.prepare("SELECT * FROM tiered_reward_assets").all() },
@@ -323,6 +345,44 @@ export async function POST(req: NextRequest) {
       distributed_assets: r.distributed_assets ? JSON.parse(r.distributed_assets as string) : null,
     }));
     const bulkScanStateRows = (db.prepare("SELECT * FROM bulk_scan_state").all() as Record<string, unknown>[]).map(({ id: _id, ...r }) => r);
+    const journalRows = db.prepare("SELECT * FROM bulk_payment_journal").all() as Record<string, unknown>[];
+    if (journalRows.length) {
+      const { data: remoteJournal, error: journalReadError } = await sb.from("bulk_payment_journal")
+        .select("run_id,version,payload_json").eq("user_id", userId).maybeSingle();
+      if (journalReadError) return NextResponse.json({ error: "Could not inspect the remote payment journal" }, { status: 502 });
+      const localJournal = journalRows[0];
+      if (remoteJournal && (remoteJournal.run_id !== localJournal.run_id ||
+          remoteJournal.version > Number(localJournal.version) ||
+          remoteJournal.version === Number(localJournal.version) && remoteJournal.payload_json !== localJournal.payload_json)) {
+        return NextResponse.json({ error: "Remote payment journal differs; reconcile it before restoring" }, { status: 409 });
+      }
+    }
+    const rewardGuardRows = db.prepare("SELECT * FROM tiered_reward_run_leases WHERE resource_id LIKE 'reward-guard:%'").all() as Record<string, unknown>[];
+    const localConfigIds = new Set((db.prepare("SELECT id FROM tiered_reward_configs").all() as { id: string }[]).map((row) => row.id));
+    if (rewardGuardRows.some((row) => !localConfigIds.has(String(row.resource_id).slice("reward-guard:".length)))) {
+      return NextResponse.json({ error: "A reward run guard has no local config; reconcile it before restoring" }, { status: 409 });
+    }
+    const guardedConfigIds = rewardGuardRows.map((row) => String(row.resource_id).slice("reward-guard:".length));
+    const remoteConfigsRead = guardedConfigIds.length > 0
+      ? await readAllChildRows(sb, "tiered_reward_configs", "id", guardedConfigIds)
+      : { data: [], error: null };
+    if (remoteConfigsRead.error) return NextResponse.json({ error: "Could not verify remote reward config ownership" }, { status: 502 });
+    if ((remoteConfigsRead.data ?? []).some((row) => row.user_id !== userId)) {
+      return NextResponse.json({ error: "A remote reward config belongs to another user" }, { status: 409 });
+    }
+    const remoteRewardGuardRead = rewardGuardRows.length > 0
+      ? await readAllChildRows(sb, "tiered_reward_run_leases", "resource_id", rewardGuardRows.map((row) => row.resource_id as string))
+      : { data: [], error: null };
+    if (remoteRewardGuardRead.error) return NextResponse.json({ error: "Could not inspect remote reward run guards" }, { status: 502 });
+    const remoteRewardGuards = new Map((remoteRewardGuardRead.data ?? []).map((row) => [row.resource_id, row.lease_token]));
+    if (rewardGuardRows.some((row) => remoteRewardGuards.has(row.resource_id) && remoteRewardGuards.get(row.resource_id) !== row.lease_token)) {
+      return NextResponse.json({ error: "A remote reward run guard differs; reconcile it before restoring" }, { status: 409 });
+    }
+    const missingRewardGuards = rewardGuardRows.filter((row) => !remoteRewardGuards.has(row.resource_id));
+    for (let i = 0; i < missingRewardGuards.length; i += 500) {
+      const { error } = await sb.from("tiered_reward_run_leases").insert(missingRewardGuards.slice(i, i + 500));
+      if (error) return NextResponse.json({ error: "Could not preserve reward run guards in Supabase" }, { status: 409 });
+    }
     const tieredRewardConfigRows = (db.prepare("SELECT * FROM tiered_reward_configs").all() as Record<string, unknown>[]).map((r) => ({
       ...r,
       network: "public",

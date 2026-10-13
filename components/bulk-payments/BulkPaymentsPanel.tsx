@@ -53,8 +53,10 @@ import { ShortAddress } from "@/components/shared/ShortAddress";
 import { downloadCSV } from "@/lib/csv-export";
 import { fetchAllHolders } from "@/lib/asset-lookup/fetchers";
 import { estimateCost } from "@/lib/bulk-payments/builder";
-import { runBulkPayments, BATCH_SIZE } from "@/lib/bulk-payments/runner";
-import type { BatchResult, AssetSource } from "@/lib/bulk-payments/types";
+import { runBulkPayments, reconcileBulkBatch, BATCH_SIZE } from "@/lib/bulk-payments/runner";
+import type { BatchResult, AssetSource, BulkPaymentJournal } from "@/lib/bulk-payments/types";
+import { loadBulkJournal, saveBulkJournal, clearBulkJournal } from "@/lib/bulk-payments/journal-client";
+import { useAuth } from "@/hooks/use-auth";
 import { useBulkRecipients } from "@/hooks/use-bulk-recipients";
 import { useBulkRunHistory } from "@/hooks/use-bulk-run-history";
 import { useHorizonServer } from "@/hooks/use-horizon-server";
@@ -145,6 +147,7 @@ function BatchRow({
             <CheckCircle2 className="h-3 w-3" /> Sent
           </span>
         )}
+        {result.status === "uncertain" && <span className="text-orange-500" title={result.error}>Unresolved — check hash</span>}
         {result.status === "failed" && (
           <span className="flex items-center gap-1 text-destructive">
             <XCircle className="h-3 w-3" /> Failed
@@ -240,6 +243,99 @@ export function BulkPaymentsPanel() {
   const [batchResults, setBatchResults] = useState<BatchResult[]>([]);
   const [batches, setBatches] = useState<string[][]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [journalLoading, setJournalLoading] = useState(true);
+  const [journalError, setJournalError] = useState<string | null>(null);
+  const journalRef = useRef<BulkPaymentJournal | null>(null);
+  const journalQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const { session } = useAuth();
+
+  const restoreJournal = useCallback((journal: BulkPaymentJournal | null) => {
+    journalRef.current = journal;
+    if (!journal) {
+      setBatches([]);
+      setBatchResults([]);
+      setPhase("configure");
+      return;
+    }
+    setMemo(journal.memo);
+    setAmount(journal.amount);
+    setFeeMultiplier(journal.feeMultiplier);
+    setAssetType(journal.assetCode ? "custom" : "xlm");
+    setCustomAssetCode(journal.assetCode ?? "");
+    setCustomAssetIssuer(journal.assetIssuer ?? "");
+    setBatches(journal.batches);
+    setRecipients(journal.batches.flat());
+    setBatchResults(journal.results.map((result) => result.status === "sending" || result.status === "pending"
+      ? { ...result, status: result.txHash ? "uncertain" : "failed", error: result.txHash ? "Submission interrupted — check the ledger" : "Not submitted" }
+      : result));
+    setPhase("done");
+  }, []);
+
+  useEffect(() => {
+    let mounted = true;
+    abortRef.current?.abort();
+    journalRef.current = null;
+    journalQueueRef.current = Promise.resolve();
+    setBatchResults([]);
+    setBatches([]);
+    setRecipients([]);
+    setPhase("configure");
+    setSecretKey("");
+    setError(null);
+    setJournalLoading(true);
+    setJournalError(null);
+    loadBulkJournal().then((journal) => {
+      if (!mounted) return;
+      restoreJournal(journal);
+    }).catch((err) => { if (mounted) setJournalError(getErrorMessage(err)); })
+      .finally(() => { if (mounted) setJournalLoading(false); });
+    return () => { mounted = false; };
+  }, [session?.user.id, restoreJournal]);
+
+  async function handleRefreshJournal() {
+    if (submittingRef.current) return;
+    setJournalLoading(true);
+    try {
+      const journal = await loadBulkJournal();
+      journalQueueRef.current = Promise.resolve();
+      restoreJournal(journal);
+      setJournalError(null);
+    } catch (err) { setJournalError(getErrorMessage(err)); }
+    finally { setJournalLoading(false); }
+  }
+
+  function queueJournalResult(result: BatchResult) {
+    // Keep submitted hashes uncertain until finalization; Horizon indexing can lag the submit response.
+    if (result.status === "pending" || result.status === "sending" || result.txHash) return;
+    journalQueueRef.current = journalQueueRef.current.then(async () => {
+      const current = journalRef.current;
+      if (!current) throw new Error("Bulk journal missing");
+      const next = { ...current, version: current.version + 1,
+        results: current.results.map((row, i) => i === result.batchIndex
+          ? { ...result, signedXdr: undefined, error: result.error?.slice(0, 500) }
+          : row) };
+      journalRef.current = await saveBulkJournal(next, current.version);
+    });
+    void journalQueueRef.current.catch(() => {}); // observed by the next checkpoint or finishJournal
+  }
+
+  async function checkpointJournal(result: BatchResult) {
+    await journalQueueRef.current;
+    const current = journalRef.current;
+    if (!current) throw new Error("Bulk journal missing");
+    const next = { ...current, version: current.version + 1,
+      results: current.results.map((row, i) => i === result.batchIndex ? result : row) };
+    journalRef.current = await saveBulkJournal(next, current.version);
+  }
+
+  async function finishJournal(results: BatchResult[]) {
+    await journalQueueRef.current;
+    const current = journalRef.current;
+    if (!current) throw new Error("Bulk journal missing");
+    const next: BulkPaymentJournal = { ...current, version: current.version + 1, status: "done",
+      results: results.map(({ signedXdr, ...row }) => ({ ...row, error: row.error?.slice(0, 500) })) };
+    journalRef.current = await saveBulkJournal(next, current.version);
+  }
 
   // Balance preflight
   const [balanceXlm, setBalanceXlm] = useState<number | null>(null);
@@ -248,6 +344,7 @@ export function BulkPaymentsPanel() {
   const [assetBalance, setAssetBalance] = useState<number | null>(null);
 
   const abortRef = useRef<AbortController | null>(null);
+  const submittingRef = useRef(false);
 
   useEffect(() => {
     if (phase === "preview") {
@@ -489,6 +586,10 @@ export function BulkPaymentsPanel() {
   // ---------------------------------------------------------------------------
 
   async function handlePreview() {
+    if (journalLoading || journalError || journalRef.current) {
+      setError(journalError ?? "Finish or clear the previous bulk send before starting a new one.");
+      return;
+    }
     const formErr = validateForm();
     if (formErr) {
       setError(formErr);
@@ -564,6 +665,17 @@ export function BulkPaymentsPanel() {
   // ---------------------------------------------------------------------------
 
   async function handleSend() {
+    if (submittingRef.current) return;
+    submittingRef.current = true;
+    try { await sendPayments(); }
+    finally { submittingRef.current = false; }
+  }
+
+  async function sendPayments() {
+    if (journalLoading || journalError || journalRef.current) {
+      setError(journalError ?? "Previous bulk send has not been cleared.");
+      return;
+    }
     abortRef.current?.abort();
     abortRef.current = new AbortController();
 
@@ -572,13 +684,23 @@ export function BulkPaymentsPanel() {
     for (let i = 0; i < recipients.length; i += batchSize) {
       newBatches.push(recipients.slice(i, i + batchSize));
     }
-    setBatches(newBatches);
-
     const initial: BatchResult[] = newBatches.map((b, i) => ({
       batchIndex: i,
       count: b.length,
       status: "pending",
     }));
+    const sender = getSenderPublicKey();
+    if (!sender) { setError("Signing address is missing."); return; }
+    const journal: BulkPaymentJournal = {
+      runId: crypto.randomUUID(), version: 0, network, sender,
+      memo: memo.trim(), amount: amount.trim(),
+      assetCode: isNative ? null : customAssetCode.trim(),
+      assetIssuer: isNative ? null : customAssetIssuer.trim(),
+      feeMultiplier, batches: newBatches, results: initial, status: "sending",
+    };
+    try { journalRef.current = await saveBulkJournal(journal, null); }
+    catch (err) { setJournalError(getErrorMessage(err)); setError(`Cannot save recovery checkpoint: ${getErrorMessage(err)}`); return; }
+    setBatches(newBatches);
     setBatchResults(initial);
     setPhase("sending");
     setError(null);
@@ -599,13 +721,11 @@ export function BulkPaymentsPanel() {
         amount: amount.trim(),
         asset: getPaymentAsset(),
         signal: abortRef.current.signal,
+        onBeforeSubmit: checkpointJournal,
         onBatchUpdate: (result) => {
-          setBatchResults((prev) => {
-            const next = [...prev];
-            next[result.batchIndex] = result;
-            finalResults = next;
-            return next;
-          });
+          finalResults = finalResults.map((row, index) => index === result.batchIndex ? result : row);
+          setBatchResults(finalResults);
+          queueJournalResult(result);
         },
       });
     } catch (err) {
@@ -616,17 +736,17 @@ export function BulkPaymentsPanel() {
         // unexpected still throws here, don't leave results stuck at
         // "pending" — mark whatever never got a final status as failed so
         // counts/history/Retry Failed all reflect reality.
-        setBatchResults((prev) => {
-          const next = prev.map((r) =>
-            r.status === "pending" || r.status === "sending"
-              ? { ...r, status: "failed" as const, error: getErrorMessage(err) }
-              : r,
-          );
-          finalResults = next;
-          return next;
-        });
+        finalResults = finalResults.map((r) =>
+          r.status === "pending" || r.status === "sending"
+            ? { ...r, status: r.txHash ? "uncertain" as const : "failed" as const, error: getErrorMessage(err) }
+            : r,
+        );
+        setBatchResults(finalResults);
       }
     }
+
+    try { await finishJournal(finalResults); }
+    catch (err) { setJournalError(`Recovery checkpoint failed: ${getErrorMessage(err)}. Reload and reconcile before another send.`); }
 
     // Auto-save manual signing key if not already in a group
     if (!activeWallet) {
@@ -643,14 +763,18 @@ export function BulkPaymentsPanel() {
     const failedCount = finalResults.filter((r) => r.status === "failed").reduce((s, r) => s + r.count, 0);
     addRun({ network, memo: memo.trim(), recipientCount: recipients.length, successCount, failedCount });
 
-    if (failedCount > 0) {
+    if (finalResults.some((r) => r.status === "uncertain")) {
+      toast.error("Submission unresolved — check the transaction hash before sending again");
+    } else if (failedCount > 0) {
       toast.error(`Batch failed \u2014 ${failedCount} payments failed`);
     } else {
       toast.success("Batch sent successfully");
     }
     notifyIfHidden(
       "Bulk Payments Complete",
-      failedCount > 0
+      finalResults.some((r) => r.status === "uncertain")
+        ? `${successCount} confirmed; unresolved transactions need checking`
+        : failedCount > 0
         ? `${successCount} sent, ${failedCount} failed`
         : `${successCount} payments sent`,
     );
@@ -660,8 +784,31 @@ export function BulkPaymentsPanel() {
     abortRef.current?.abort();
   }
 
+  async function handleCheckUnresolved() {
+    if (submittingRef.current || journalLoading || journalError || journalRef.current?.network !== network) return;
+    try {
+      const next = await Promise.all(batchResults.map((result) => result.status === "uncertain" ? reconcileBulkBatch(horizonUrl, result) : result));
+      await finishJournal(next);
+      setBatchResults(next);
+      if (next.some((result) => result.status === "uncertain")) toast.error("Some transactions remain unresolved. Do not send them again.");
+    } catch (err) { setJournalError(getErrorMessage(err)); }
+  }
+
   async function handleRetryFailed() {
-    const failedIndices = batchResults
+    if (submittingRef.current || journalLoading || journalError || batchResults.some((result) => result.status === "uncertain")) return;
+    if (journalRef.current?.network !== network || journalRef.current?.sender !== getSenderPublicKey()) {
+      setError("Reconnect the original signing wallet and network before retrying.");
+      return;
+    }
+    submittingRef.current = true;
+    try { await retryFailedPayments(); }
+    finally { submittingRef.current = false; }
+  }
+
+  async function retryFailedPayments() {
+    const reconciled = await Promise.all(batchResults.map((result) => result.status === "failed" ? reconcileBulkBatch(horizonUrl, result) : result));
+    setBatchResults(reconciled);
+    const failedIndices = reconciled
       .filter((r) => r.status === "failed")
       .map((r) => r.batchIndex);
     if (failedIndices.length === 0) return;
@@ -681,7 +828,7 @@ export function BulkPaymentsPanel() {
     const pendingRowIndices: number[] = [];
     const failedRecipients: string[] = [];
 
-    for (const r of batchResults) {
+    for (const r of reconciled) {
       if (!failedSet.has(r.batchIndex)) {
         newBatches.push(batches[r.batchIndex] ?? []);
         resetResults.push({ ...r, batchIndex: newBatches.length - 1 });
@@ -695,6 +842,12 @@ export function BulkPaymentsPanel() {
       }
     }
 
+    // Record the expanded recipient mapping before any retry transaction can be broadcast.
+    try {
+      const current = journalRef.current!;
+      journalRef.current = await saveBulkJournal({ ...current, version: current.version + 1,
+        batches: newBatches, results: resetResults, status: "sending" }, current.version);
+    } catch (err) { setJournalError(getErrorMessage(err)); return; }
     setBatches(newBatches);
     setBatchResults(resetResults);
     setPhase("sending");
@@ -718,32 +871,31 @@ export function BulkPaymentsPanel() {
         amount: amount.trim(),
         asset: getPaymentAsset(),
         signal: abortRef.current.signal,
+        onBeforeSubmit: async (result) => {
+          await checkpointJournal({ ...result, batchIndex: pendingRowIndices[result.batchIndex] });
+        },
         onBatchUpdate: (result) => {
           // Map the single-recipient sub-batch back to its expanded row
           const originalIndex = pendingRowIndices[result.batchIndex];
           const mapped = { ...result, batchIndex: originalIndex };
-          setBatchResults((prev) => {
-            const next = [...prev];
-            next[originalIndex] = mapped;
-            finalResults = next;
-            return next;
-          });
+          finalResults = finalResults.map((row, index) => index === originalIndex ? mapped : row);
+          setBatchResults(finalResults);
+          queueJournalResult(mapped);
         },
       });
     } catch (err) {
       if (!abortRef.current.signal.aborted) {
         setError(getErrorMessage(err));
-        setBatchResults((prev) => {
-          const next = prev.map((r) =>
-            r.status === "pending" || r.status === "sending"
-              ? { ...r, status: "failed" as const, error: getErrorMessage(err) }
-              : r,
-          );
-          finalResults = next;
-          return next;
-        });
+        finalResults = finalResults.map((r) =>
+          r.status === "pending" || r.status === "sending"
+            ? { ...r, status: r.txHash ? "uncertain" as const : "failed" as const, error: getErrorMessage(err) }
+            : r,
+        );
+        setBatchResults(finalResults);
       }
     }
+    try { await finishJournal(finalResults); }
+    catch (err) { setJournalError(`Recovery checkpoint failed: ${getErrorMessage(err)}. Reload and reconcile before another send.`); }
     setPhase("done");
 
     // Scope the history entry + toast to only the rows that were actually
@@ -753,14 +905,19 @@ export function BulkPaymentsPanel() {
     const failedCount = retryResults.filter((r) => r.status === "failed").reduce((s, r) => s + r.count, 0);
     addRun({ network, memo: memo.trim(), recipientCount: failedRecipients.length, successCount, failedCount });
 
-    if (failedCount > 0) {
+    if (finalResults.some((r) => r.status === "uncertain")) {
+      toast.error("Submission unresolved — check the transaction hash before sending again");
+    } else if (failedCount > 0) {
       toast.error(`Retry failed — ${failedCount} payments failed`);
     } else {
       toast.success("Retry completed successfully");
     }
   }
 
-  function handleReset() {
+  async function handleReset() {
+    if (submittingRef.current || journalLoading || journalError || batchResults.some((result) => result.status === "uncertain")) return;
+    try { await clearBulkJournal(); journalRef.current = null; }
+    catch (err) { setJournalError(getErrorMessage(err)); return; }
     abortRef.current?.abort();
     setPhase("configure");
     setBatchResults([]);
@@ -787,6 +944,7 @@ export function BulkPaymentsPanel() {
         result.status,
         result.txHash ?? "",
         result.error ?? "",
+        result.signedXdr ?? "",
       ]);
     }
     downloadCSV("bulk-payments-results.csv", [
@@ -795,6 +953,7 @@ export function BulkPaymentsPanel() {
       "Status",
       "Tx Hash",
       "Error",
+      "Signed XDR",
     ], rows);
   }
 
@@ -941,7 +1100,7 @@ export function BulkPaymentsPanel() {
             </div>
           </CardContent>
           <CardFooter className="flex gap-2 px-4 pb-3">
-            <Button onClick={handleSend}>
+            <Button onClick={handleSend} disabled={journalLoading || !!journalError || !!journalRef.current}>
               <Send className="mr-2 h-4 w-4" />
               Send Now
             </Button>
@@ -1011,6 +1170,13 @@ export function BulkPaymentsPanel() {
                 {error}
               </p>
             )}
+            {journalError && <p className="mt-3 text-sm text-destructive">{journalError}</p>}
+            {journalRef.current?.network !== network && journalRef.current && (
+              <p className="mt-3 text-sm text-amber-600">Switch to {journalRef.current.network} in Settings to reconcile or retry this run.</p>
+            )}
+            {journalRef.current?.sender !== getSenderPublicKey() && journalRef.current && (
+              <p className="mt-3 text-sm text-amber-600">Reconnect the original sender ({shortAddr(journalRef.current.sender)}) before retrying.</p>
+            )}
           </CardContent>
           <CardFooter className="flex gap-2 px-4 pb-3">
             {phase === "sending" && (
@@ -1021,17 +1187,19 @@ export function BulkPaymentsPanel() {
             )}
             {phase === "done" && (
               <>
+                {journalError && <Button variant="outline" onClick={handleRefreshJournal} disabled={journalLoading}>Reload recovery</Button>}
                 {batchResults.some((r) => r.status === "failed") && (
-                  <Button variant="outline" onClick={handleRetryFailed}>
+                  <Button variant="outline" onClick={handleRetryFailed} disabled={journalLoading || !!journalError || journalRef.current?.network !== network || journalRef.current?.sender !== getSenderPublicKey() || batchResults.some((r) => r.status === "uncertain")}>
                     <RefreshCw className="mr-2 h-4 w-4" />
                     Retry Failed
                   </Button>
                 )}
+                {batchResults.some((r) => r.status === "uncertain") && <Button variant="outline" onClick={handleCheckUnresolved} disabled={journalLoading || !!journalError || journalRef.current?.network !== network}>Check unresolved</Button>}
                 <Button variant="outline" onClick={handleExport}>
                   <Download className="mr-2 h-4 w-4" />
                   Export CSV
                 </Button>
-                <Button variant="outline" onClick={handleReset}>
+                <Button variant="outline" onClick={handleReset} disabled={journalLoading || !!journalError || batchResults.some((r) => r.status === "uncertain")}>
                   New Send
                 </Button>
               </>
@@ -1045,6 +1213,8 @@ export function BulkPaymentsPanel() {
   // Configure phase
   return (
     <div className="space-y-6">
+      {(journalLoading || journalError) && <p className="text-sm text-amber-600">{journalLoading ? "Checking previous bulk payment run…" : `Bulk recovery unavailable: ${journalError}`}</p>}
+      {journalError && <Button variant="outline" onClick={handleRefreshJournal} disabled={journalLoading}>Reload recovery</Button>}
       {/* Memo + key */}
       <Card>
         <CardHeader className="pb-2 pt-3 px-4">
@@ -1517,7 +1687,7 @@ export function BulkPaymentsPanel() {
       )}
 
       <div className="flex justify-end">
-        <Button onClick={handlePreview} size="lg">
+        <Button onClick={handlePreview} size="lg" disabled={journalLoading || !!journalError || !!journalRef.current}>
           Preview &amp; Confirm
         </Button>
       </div>

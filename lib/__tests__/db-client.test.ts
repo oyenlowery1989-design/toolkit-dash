@@ -93,6 +93,41 @@ describe("createDbCache load failure path", () => {
     // deferred, and no zombie unauthenticated retry loop should exist.
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
+
+  it("ignores a previous user's response after invalidation and a new load", async () => {
+    let resolveOld!: (response: Response) => void;
+    const oldResponse = new Promise<Response>((resolve) => { resolveOld = resolve; });
+    const fetchMock = vi.fn()
+      .mockImplementationOnce(() => oldResponse)
+      .mockResolvedValueOnce(new Response(JSON.stringify([{ id: "new-user" }]), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const cache = createDbCache<{ id: string }>();
+    const oldLoad = cache.load("/api/db/test-invalidate");
+    await Promise.resolve();
+    cache.invalidate();
+    await cache.load("/api/db/test-invalidate");
+    resolveOld(new Response(JSON.stringify([{ id: "old-user" }]), { status: 200 }));
+    await oldLoad;
+
+    expect(cache.get()).toEqual([{ id: "new-user" }]);
+    expect(cache.isLoaded()).toBe(true);
+  });
+
+  it("does not retry a failed request from an invalidated session", async () => {
+    vi.useFakeTimers();
+    let rejectOld!: (error: Error) => void;
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(() => new Promise<Response>((_, reject) => { rejectOld = reject; })));
+    const cache = createDbCache<{ id: string }>();
+    const oldLoad = cache.load("/api/db/test-invalidate");
+    await Promise.resolve();
+    cache.invalidate();
+    rejectOld(new Error("old session failed"));
+    await oldLoad;
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(cache.error()).toBeNull();
+  });
 });
 
 describe("createDbCache reload while load in-flight", () => {

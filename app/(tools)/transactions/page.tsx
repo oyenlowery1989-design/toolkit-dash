@@ -438,6 +438,7 @@ export default function TransactionsPage() {
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [searched, setSearched] = useState(false);
+  const [searchedAccount, setSearchedAccount] = useState("");
 
   const [categoryFilter, setCategoryFilter] = useState<OpCategory | "all">(
     "all",
@@ -474,12 +475,12 @@ export default function TransactionsPage() {
     return null;
   }
 
-  async function fetchPage(cursor: string | null): Promise<OpDisplay[]> {
+  async function fetchPage(address: string, cursor: string | null): Promise<OpDisplay[]> {
     const server = new Horizon.Server(resolveHorizonUrl(settings));
 
     let builder: any = server
       .operations()
-      .forAccount(accountId.trim())
+      .forAccount(address)
       .order("desc")
       .limit(PAGE_SIZE)
       .includeFailed(true);
@@ -501,16 +502,19 @@ export default function TransactionsPage() {
     abortRef.current = controller;
 
     setIsSearching(true);
+    setIsLoadingMore(false);
     setError(null);
     setOperations([]);
     setLastPagingToken(null);
     setHasMore(false);
     setSearched(true);
+    const address = accountId.trim();
+    setSearchedAccount(address);
     setCategoryFilter("all");
     setExpandedId(null);
 
     try {
-      const records = await fetchPage(null);
+      const records = await fetchPage(address, null);
       if (controller.signal.aborted) return;
       setOperations(records);
       upsertSearch({
@@ -526,7 +530,7 @@ export default function TransactionsPage() {
       if (controller.signal.aborted) return;
       setError(getErrorMessage(e));
     } finally {
-      setIsSearching(false);
+      if (!controller.signal.aborted) setIsSearching(false);
     }
   };
 
@@ -541,7 +545,7 @@ export default function TransactionsPage() {
     setError(null);
 
     try {
-      const records = await fetchPage(lastPagingToken);
+      const records = await fetchPage(searchedAccount, lastPagingToken);
       if (controller.signal.aborted) return;
       setOperations((prev) => [...prev, ...records]);
       setHasMore(records.length === PAGE_SIZE);
@@ -552,7 +556,7 @@ export default function TransactionsPage() {
       if (controller.signal.aborted) return;
       setError(getErrorMessage(e));
     } finally {
-      setIsLoadingMore(false);
+      if (!controller.signal.aborted) setIsLoadingMore(false);
     }
   };
 

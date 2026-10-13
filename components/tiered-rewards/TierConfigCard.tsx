@@ -55,6 +55,8 @@ interface ImportTier {
   assets: Array<{ assetCode: string; assetIssuer?: string; amount: number }>;
 }
 
+type Reconciliation = { blocked: boolean; ready?: boolean; transactions: { hash: string; successful: boolean | null }[] };
+
 function parseImportedTiers(raw: string): { tiers: ImportTier[]; error?: string } {
   let parsed: unknown;
   try {
@@ -125,6 +127,10 @@ export function TierConfigCard({ config, isServerless, onUpdate, onDelete, onUps
   const [history, setHistory] = useState<RunLogRow[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyRefreshKey, setHistoryRefreshKey] = useState(0);
+  const [reconciliation, setReconciliation] = useState<Reconciliation | null>(null);
+  const [reconciliationError, setReconciliationError] = useState<string | null>(null);
+  const [reconciliationLoading, setReconciliationLoading] = useState(false);
+  const [reconciliationConfirmed, setReconciliationConfirmed] = useState(false);
 
   // Exclude addresses local edit
   const [excludeDraft, setExcludeDraft] = useState((config.excludeAddresses ?? []).join("\n"));
@@ -151,6 +157,53 @@ export function TierConfigCard({ config, isServerless, onUpdate, onDelete, onUps
     })();
     return () => { cancelled = true; };
   }, [activeTab, expanded, config.id, historyRefreshKey]);
+
+  useEffect(() => {
+    if (!(activeTab === "history" && expanded)) return;
+    let cancelled = false;
+    setReconciliationLoading(true);
+    setReconciliationConfirmed(false);
+    (async () => {
+      try {
+        await waitForAuth();
+        const res = await fetch(`/api/tiered-rewards/reconcile?configId=${encodeURIComponent(config.id)}`, { headers: authHeaders() });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Could not inspect reward run");
+        if (!cancelled) { setReconciliation(data); setReconciliationError(null); }
+      } catch (error) {
+        if (!cancelled) {
+          setReconciliation(null);
+          setReconciliationError(error instanceof Error ? error.message : "Could not inspect reward run");
+        }
+      } finally {
+        if (!cancelled) setReconciliationLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [activeTab, expanded, config.id, historyRefreshKey]);
+
+  async function handleReconcile() {
+    setReconciliationLoading(true);
+    setReconciliationError(null);
+    try {
+      await waitForAuth();
+      const res = await fetch("/api/tiered-rewards/reconcile", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify({ configId: config.id, confirmation: "I reviewed the ledger and understand a future run can pay these recipients again" }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Reconciliation failed");
+      setReconciliation(data);
+      setReconciliationConfirmed(false);
+      onUpdate(config.id, { enabled: false, lastRunAt: Date.now() });
+      setHistoryRefreshKey((key) => key + 1);
+    } catch (error) {
+      setReconciliationError(error instanceof Error ? error.message : "Reconciliation failed");
+    } finally {
+      setReconciliationLoading(false);
+    }
+  }
 
   // Re-sync draft when config prop changes (e.g. focus-reload), but not while the user is actively editing.
   useEffect(() => {
@@ -193,9 +246,16 @@ export function TierConfigCard({ config, isServerless, onUpdate, onDelete, onUps
         headers: { "Content-Type": "application/json", ...authHeaders() },
         body: JSON.stringify({ mode: "run", configId: config.id, previewToken: preview?.previewToken }),
       });
-      const data = await res.json() as { error?: string; totalSent?: number; totalFailed?: number };
+      const data = await res.json() as { error?: string; totalSent?: number; totalFailed?: number; reconciliationRequired?: boolean };
       if (data.error) {
         setPreviewError(data.error);
+        if (data.error.includes("reconciliation")) { setExpanded(true); setActiveTab("history"); }
+      } else if (data.reconciliationRequired) {
+        setPreviewError(`Run stopped: ${data.totalSent ?? 0} confirmed, ${data.totalFailed ?? 0} failed or unresolved. Check History and reconcile on the ledger before another run.`);
+        setExpanded(true);
+        setActiveTab("history");
+        onUpdate(config.id, { lastRunAt: Date.now() });
+        setHistoryRefreshKey((k) => k + 1);
       } else if ((data.totalFailed ?? 0) > 0) {
         // No top-level error, but some payments in this run failed — surface that instead of
         // silently reporting success. Leave lastFailureAt untouched (only cleared on a fully clean run).
@@ -496,7 +556,34 @@ export function TierConfigCard({ config, isServerless, onUpdate, onDelete, onUps
 
               {/* ── HISTORY TAB ── */}
               {activeTab === "history" && (
-                <div>
+                <div className="space-y-4">
+                  {reconciliationError && <p role="alert" className="text-sm text-destructive">{reconciliationError}</p>}
+                  {reconciliationLoading && <p className="text-xs text-muted-foreground">Checking ledger results…</p>}
+                  {(reconciliation?.blocked || reconciliationError) && (
+                    <Button size="sm" variant="outline" disabled={reconciliationLoading} onClick={() => setHistoryRefreshKey((key) => key + 1)}>Refresh ledger status</Button>
+                  )}
+                  {reconciliation?.blocked && (
+                    <div className="rounded-lg border border-amber-700/60 bg-amber-950/20 p-3 space-y-3 text-sm">
+                      <p className="font-medium text-amber-400">Run blocked pending reconciliation</p>
+                      <p className="text-xs text-muted-foreground">{reconciliation.transactions.length
+                        ? "Each transaction must have a definitive ledger result. A missing result keeps this run blocked."
+                        : "This run stopped before any transaction was prepared for broadcast."}</p>
+                      {reconciliation.transactions.map((tx) => (
+                        <div key={tx.hash} className="flex flex-wrap gap-2 items-center text-xs">
+                          <a className="font-mono underline break-all" href={`https://stellar.expert/explorer/${config.network === "testnet" ? "testnet" : "public"}/tx/${tx.hash}`} target="_blank" rel="noopener noreferrer">{tx.hash}</a>
+                          <span className={tx.successful === true ? "text-green-400" : tx.successful === false ? "text-destructive" : "text-amber-400"}>
+                            {tx.successful === true ? "confirmed sent" : tx.successful === false ? "confirmed failed" : "unconfirmed"}
+                          </span>
+                        </div>
+                      ))}
+                      {reconciliation.ready && (
+                        <div className="space-y-2">
+                          <label className="flex items-center gap-2 text-xs"><Switch checked={reconciliationConfirmed} onCheckedChange={setReconciliationConfirmed} />I reviewed these ledger results. A future run may pay these recipients again.</label>
+                          <Button size="sm" variant="outline" disabled={!reconciliationConfirmed || reconciliationLoading} onClick={handleReconcile}>Reconcile and pause schedule</Button>
+                        </div>
+                      )}
+                    </div>
+                  )}
                   {historyLoading ? (
                     <div className="flex items-center gap-2 text-muted-foreground py-8 justify-center">
                       <Loader2 className="h-4 w-4 animate-spin" />Loading history...

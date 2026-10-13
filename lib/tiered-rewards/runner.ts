@@ -8,6 +8,7 @@ import { acquireRunLease, releaseRunLease } from "@/lib/run-lease";
 import { validateMainnetRun } from "@/lib/mainnet-safety";
 import { reserveMainnetSignature } from "@/lib/mainnet-signing-budget";
 import { resolveRewardSigningConfig } from "./signing";
+import { claimRewardRun, UncertainRewardSubmission, type RewardRunGuard } from "./run-guard";
 
 const { Server } = Horizon;
 
@@ -56,8 +57,9 @@ async function sendSingleOp(
   op: SendOp,
   fee = "100",
   memo: string | null = null,
-  userId?: string,
-): Promise<{ txHash?: string; error?: string; skipped?: boolean }> {
+  userId: string | undefined,
+  guard: RewardRunGuard,
+): Promise<{ txHash?: string; error?: string; skipped?: boolean; uncertain?: boolean }> {
   try {
     const account = await server.loadAccount(keypair.publicKey());
     let builder = new TransactionBuilder(account, { fee, networkPassphrase });
@@ -76,9 +78,10 @@ async function sendSingleOp(
     });
     if (budgetErrors.length) throw new Error(budgetErrors.join("; "));
     tx.sign(keypair);
-    const response = await server.submitTransaction(tx);
+    const response = await guard.submit(server, tx);
     return { txHash: (response as { hash?: string }).hash };
   } catch (err) {
+    if (err instanceof UncertainRewardSubmission) return { error: err.message, txHash: err.txHash, uncertain: true };
     const codes = getOpResultCodes(err);
     if (codes?.[0] === "op_no_trust") return { skipped: true };
     return { error: extractError(err) };
@@ -167,7 +170,8 @@ async function runTier(
   feeMultiplier: number,
   excludeSet: Set<string>,
   statusRows: { status: string }[],
-  userId?: string
+  userId: string | undefined,
+  guard: RewardRunGuard
 ): Promise<{ failed: boolean; logWriteFailed: boolean }> {
   const { tier, holders } = assignment;
   const eligible = holders.filter((h) => !excludeSet.has(h.address));
@@ -207,12 +211,12 @@ async function runTier(
         await record([{ configId, tierNumber: tier.tierNumber, holderAddress: op.holder, assetCode: op.assetCode, assetIssuer: op.assetIssuer, amountSent: 0, status: "aborted" as const, error: "Aborted — earlier payment failed", ranAt }]);
         continue;
       }
-      const result = await sendSingleOp(server, keypair, networkPassphrase, op, baseFee, memo, userId);
+      const result = await sendSingleOp(server, keypair, networkPassphrase, op, baseFee, memo, userId, guard);
       if (result.skipped) {
         await record([{ configId, tierNumber: tier.tierNumber, holderAddress: op.holder, assetCode: op.assetCode, assetIssuer: op.assetIssuer, amountSent: 0, status: "skipped" as const, error: "No trustline for reward asset", ranAt }]);
       } else if (result.error) {
         aborted = true;
-        await record([{ configId, tierNumber: tier.tierNumber, holderAddress: op.holder, assetCode: op.assetCode, assetIssuer: op.assetIssuer, amountSent: 0, status: "failed" as const, error: result.error, ranAt }]);
+        await record([{ configId, tierNumber: tier.tierNumber, holderAddress: op.holder, assetCode: op.assetCode, assetIssuer: op.assetIssuer, amountSent: 0, status: result.uncertain ? "uncertain" as const : "failed" as const, txHash: result.txHash, error: result.error, ranAt }]);
       } else {
         await record([{ configId, tierNumber: tier.tierNumber, holderAddress: op.holder, assetCode: op.assetCode, assetIssuer: op.assetIssuer, amountSent: op.amount, status: "sent" as const, txHash: result.txHash, ranAt }]);
       }
@@ -250,7 +254,7 @@ async function runTier(
       });
       if (budgetErrors.length) throw new Error(budgetErrors.join("; "));
       tx.sign(keypair);
-      const response = await server.submitTransaction(tx);
+      const response = await guard.submit(server, tx);
       const txHash = (response as { hash?: string }).hash;
 
       await record(
@@ -283,7 +287,7 @@ async function runTier(
           });
           if (budgetErrors.length) throw new Error(budgetErrors.join("; "));
           retryTx.sign(keypair);
-          const retryResponse = await server.submitTransaction(retryTx);
+          const retryResponse = await guard.submit(server, retryTx);
           const retryTxHash = (retryResponse as { hash?: string }).hash;
 
           await record(
@@ -307,12 +311,12 @@ async function runTier(
         // Retry each op individually — skip no_trust recipients, continue the rest
         for (let oi = 0; oi < batch.length; oi++) {
           const op = batch[oi];
-          const result = await sendSingleOp(server, keypair, networkPassphrase, op, baseFee, memo, userId);
+          const result = await sendSingleOp(server, keypair, networkPassphrase, op, baseFee, memo, userId, guard);
           if (result.skipped) {
             await record([{ configId, tierNumber: tier.tierNumber, holderAddress: op.holder, assetCode: op.assetCode, assetIssuer: op.assetIssuer, amountSent: 0, status: "skipped" as const, error: "No trustline for reward asset", ranAt }]);
           } else if (result.error) {
             aborted = true;
-            await record([{ configId, tierNumber: tier.tierNumber, holderAddress: op.holder, assetCode: op.assetCode, assetIssuer: op.assetIssuer, amountSent: 0, status: "failed" as const, error: result.error, ranAt }]);
+            await record([{ configId, tierNumber: tier.tierNumber, holderAddress: op.holder, assetCode: op.assetCode, assetIssuer: op.assetIssuer, amountSent: 0, status: result.uncertain ? "uncertain" as const : "failed" as const, txHash: result.txHash, error: result.error, ranAt }]);
             // batchStart is already past this whole batch — log the unfinished tail of THIS
             // batch here, so every holder in it gets some audit row (the outer aborted-batchStart
             // reconciliation below only covers subsequent, not-yet-started batches).
@@ -338,7 +342,7 @@ async function runTier(
           batch.map((op) => ({
             configId, tierNumber: tier.tierNumber, holderAddress: op.holder,
             assetCode: op.assetCode, assetIssuer: op.assetIssuer,
-            amountSent: 0, status: "failed" as const, error: message, ranAt,
+            amountSent: 0, status: err instanceof UncertainRewardSubmission ? "uncertain" as const : "failed" as const, txHash: err instanceof UncertainRewardSubmission ? err.txHash : undefined, error: message, ranAt,
           }))
         );
       }
@@ -368,6 +372,7 @@ export interface RunResult {
   totalSent: number;
   totalFailed: number;
   logWriteFailed?: boolean;
+  reconciliationRequired?: boolean;
 }
 
 /**
@@ -446,15 +451,20 @@ async function runConfigInner(
     ),
   });
   if (safetyErrors.length > 0) return { error: safetyErrors.join("; ") };
+  let guard: RewardRunGuard;
+  try { guard = await claimRewardRun(config.id); }
+  catch (error) { return { error: extractError(error) }; }
   const statusRows: { status: string }[] = [];
   let tiersProcessed = 0;
   let logWriteFailed = false;
   for (const assignment of assignments) {
-    const tierResult = await runTier(server, keypair, networkPassphrase, assignment, config.id, ranAt, config.batchSend ?? true, config.memo ?? null, config.feeMultiplier ?? 1.0, excludeSet, statusRows, userId);
+    const tierResult = await runTier(server, keypair, networkPassphrase, assignment, config.id, ranAt, config.batchSend ?? true, config.memo ?? null, config.feeMultiplier ?? 1.0, excludeSet, statusRows, userId, guard);
     tiersProcessed += 1;
     logWriteFailed ||= tierResult.logWriteFailed;
     if (tierResult.failed) break;
   }
+
+  const reconciliationRequired = await guard.complete(logWriteFailed || statusRows.some((row) => row.status === "failed" || row.status === "aborted" || row.status === "uncertain"));
 
   // Update last_run_at — leave last_failure_at for the caller to clear on full success.
   // Must be Supabase-aware: this is the only last_run_at write on the scheduler path (the
@@ -486,7 +496,8 @@ async function runConfigInner(
     ranAt,
     tiersProcessed,
     totalSent: statusRows.filter((r) => r.status === "sent").length,
-    totalFailed: statusRows.filter((r) => r.status === "failed" || r.status === "aborted").length,
+    totalFailed: statusRows.filter((r) => r.status === "failed" || r.status === "aborted" || r.status === "uncertain").length,
+    ...(reconciliationRequired ? { reconciliationRequired: true } : {}),
     ...(logWriteFailed ? { logWriteFailed: true } : {}),
   };
 }

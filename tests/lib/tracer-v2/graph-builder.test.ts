@@ -201,3 +201,17 @@ describe("buildGraph", () => {
     expect(edges.some((e) => e.source === "GBANK_TEST" || e.target === "GBANK_TEST")).toBe(false);
   });
 });
+
+ it("attributes shared destinations to their actual ledger senders", () => {
+   const analysis = mkAnalysis("senders", "USD", "GI", ["GA", "GB"], "public", [{ address: "GD", totalXlm: 30, count: 2 }]);
+   analysis.result.outgoingLedger = [
+     { id: "1", account: "GA", from: "GA", to: "GD", category: "payment", amountXlm: 10, txHash: "t1", createdAt: "", successful: true },
+     { id: "2", account: "GB", from: "GB", to: "GD", category: "payment", amountXlm: 20, txHash: "t2", createdAt: "", successful: true },
+   ];
+   expect(buildGraph({ ...emptyInput, analyses: [analysis] }).edges).toEqual([
+     { source: "GA", target: "GD", kind: "distrib-destination", weight: 10 },
+     { source: "GB", target: "GD", kind: "distrib-destination", weight: 20 },
+   ]);
+   analysis.result.outgoingLedger = [];
+   expect(buildGraph({ ...emptyInput, analyses: [analysis] }).edges).toEqual([]);
+ });

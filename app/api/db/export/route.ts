@@ -1,6 +1,6 @@
 /**
  * GET /api/db/export
- * Returns a user-data backup. Server-only signing safety state is excluded;
+ * Returns a user-data backup. Some server-only signing safety state is excluded;
  * recover it from a database snapshot before enabling mainnet transactions.
  */
 import { NextRequest, NextResponse } from "next/server";
@@ -33,7 +33,7 @@ export async function GET(req: NextRequest) {
       "address_book", "known_intermediaries", "known_creators", "saved_analyses",
       "bulk_recipients", "proceeds_presets", "saved_searches", "bulk_run_history",
       "asset_groups", "wallet_folders", "wallets", "app_state", "auto_send_groups",
-      "persons", "creator_children", "bulk_scan_state", "tiered_reward_configs",
+      "persons", "creator_children", "bulk_scan_state", "tiered_reward_configs", "bulk_payment_journal",
     ];
     const parentReads = await Promise.all([
       readAllUserRows(sb, "address_book", uid),
@@ -53,12 +53,13 @@ export async function GET(req: NextRequest) {
       readAllUserRows(sb, "creator_children", uid),
       readAllUserRows(sb, "bulk_scan_state", uid),
       readAllUserRows(sb, "tiered_reward_configs", uid),
+      readAllUserRows(sb, "bulk_payment_journal", uid),
     ]);
     const [
       addressBook, knownIntermediaries, knownCreators, savedAnalyses, bulkRecipients,
       proceedsPresets, savedSearches, bulkRunHistory, assetGroups, walletFolders,
       wallets, appState, autoSendGroups, persons, creatorChildren, bulkScanState,
-      tieredRewardConfigs,
+      tieredRewardConfigs, bulkPaymentJournal,
     ] = unwrapReads(parentReads as SupabaseRead[], parentTables);
     // Fetch members for user's asset groups only
     const groupIds = (assetGroups ?? []).map((g: Record<string, unknown>) => g.id as string);
@@ -92,6 +93,7 @@ export async function GET(req: NextRequest) {
       personReads as SupabaseRead[], ["person_addresses", "person_relationships"],
     );
     const tieredConfigIds = (tieredRewardConfigs ?? []).map((config: Record<string, unknown>) => config.id as string);
+    const rewardGuardIds = tieredConfigIds.map((id) => `reward-guard:${id}`);
     const tieredReads = await Promise.all([
       tieredConfigIds.length > 0
         ? readAllChildRows(sb, "tiered_reward_tiers", "config_id", tieredConfigIds)
@@ -99,9 +101,12 @@ export async function GET(req: NextRequest) {
       tieredConfigIds.length > 0
         ? readAllChildRows(sb, "tiered_reward_run_log", "config_id", tieredConfigIds)
         : Promise.resolve({ data: [], error: null }),
+      rewardGuardIds.length > 0
+        ? readAllChildRows(sb, "tiered_reward_run_leases", "resource_id", rewardGuardIds)
+        : Promise.resolve({ data: [], error: null }),
     ]);
-    const [tieredRewardTiers, tieredRewardRunLog] = unwrapReads(
-      tieredReads as SupabaseRead[], ["tiered_reward_tiers", "tiered_reward_run_log"],
+    const [tieredRewardTiers, tieredRewardRunLog, tieredRewardRunLeases] = unwrapReads(
+      tieredReads as SupabaseRead[], ["tiered_reward_tiers", "tiered_reward_run_log", "tiered_reward_run_leases"],
     );
     const tierIds = (tieredRewardTiers ?? []).map((tier: Record<string, unknown>) => tier.id as string);
     const tieredRewardAssetsRead = tierIds.length > 0
@@ -140,6 +145,8 @@ export async function GET(req: NextRequest) {
       tiered_reward_tiers: tieredRewardTiers ?? [],
       tiered_reward_assets: tieredRewardAssets ?? [],
       tiered_reward_run_log: tieredRewardRunLog ?? [],
+      tiered_reward_run_leases: tieredRewardRunLeases ?? [],
+      bulk_payment_journal: bulkPaymentJournal ?? [],
     });
     } catch (error) {
       console.error("[db/export] Supabase backup read failed:", error);
@@ -174,10 +181,12 @@ export async function GET(req: NextRequest) {
     person_relationships: db.prepare("SELECT * FROM person_relationships").all(),
     creator_children: db.prepare("SELECT * FROM creator_children").all(),
     bulk_scan_state: db.prepare("SELECT * FROM bulk_scan_state").all(),
+    bulk_payment_journal: db.prepare("SELECT * FROM bulk_payment_journal").all(),
     tiered_reward_configs: db.prepare("SELECT * FROM tiered_reward_configs").all(),
     tiered_reward_tiers: db.prepare("SELECT * FROM tiered_reward_tiers").all(),
     tiered_reward_assets: db.prepare("SELECT * FROM tiered_reward_assets").all(),
     tiered_reward_run_log: db.prepare("SELECT * FROM tiered_reward_run_log").all(),
+    tiered_reward_run_leases: db.prepare("SELECT * FROM tiered_reward_run_leases WHERE resource_id LIKE 'reward-guard:%'").all(),
     tracer_watchlist: db.prepare("SELECT * FROM tracer_watchlist").all(),
     tracer_watch_events: db.prepare("SELECT * FROM tracer_watch_events").all(),
     key_scan_state: db.prepare("SELECT * FROM key_scan_state").all(),

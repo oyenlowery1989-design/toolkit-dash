@@ -180,20 +180,21 @@ export function AddressBalancesPanel() {
     };
   }, [loadScanState]);
 
-  const updateRow = (index: number, patch: Partial<AddressRow>) => {
+  const updateRow = (index: number, address: string, signal: AbortSignal, patch: Partial<AddressRow>) => {
     setRows((prev) => {
-      const next = prev.map((r, i) => (i === index ? { ...r, ...patch } : r));
+      if (signal.aborted) return prev;
+      const next = prev.map((r, i) => (i === index && r.address === address ? { ...r, ...patch } : r));
       scanState.save(next);
       return next;
     });
   };
 
   const fetchRowInto = async (index: number, address: string, horizonUrl: string, signal: AbortSignal) => {
-    updateRow(index, { status: "loading" });
+    updateRow(index, address, signal, { status: "loading" });
     const result = await fetchAddressBalance(horizonUrl, address, signal);
     if (signal.aborted) return;
     if (result.status === "ok") {
-      updateRow(index, {
+      updateRow(index, address, signal, {
         status: "done",
         total: result.total,
         available: result.available,
@@ -201,9 +202,9 @@ export function AddressBalancesPanel() {
         lockReason: result.lockReason,
       });
     } else if (result.status === "unfunded") {
-      updateRow(index, { status: "unfunded" });
+      updateRow(index, address, signal, { status: "unfunded" });
     } else {
-      updateRow(index, { status: "error", error: "Failed to fetch balance." });
+      updateRow(index, address, signal, { status: "error", error: "Failed to fetch balance." });
     }
   };
 
@@ -249,6 +250,7 @@ export function AddressBalancesPanel() {
       signal,
     );
 
+    if (signal.aborted) return;
     setRunning(false);
     setRows((currentRows) => {
       scanState.saveImmediate(currentRows, false);
@@ -275,6 +277,7 @@ export function AddressBalancesPanel() {
       signal,
     );
 
+    if (signal.aborted) return;
     setRunning(false);
     setRows((currentRows) => {
       scanState.saveImmediate(currentRows, false);
@@ -289,7 +292,12 @@ export function AddressBalancesPanel() {
     const index = rows.findIndex((r) => r.address === address);
     if (index === -1) return;
     const horizonUrl = resolveHorizonUrl(settings);
-    await fetchRowInto(index, address, horizonUrl, new AbortController().signal);
+    if (!abortRef.current || abortRef.current.signal.aborted) {
+      abortRef.current = new AbortController();
+    }
+    const controller = abortRef.current;
+    await fetchRowInto(index, address, horizonUrl, controller.signal);
+    if (controller.signal.aborted) return;
     setRows((currentRows) => {
       scanState.saveImmediate(currentRows, false);
       return currentRows;

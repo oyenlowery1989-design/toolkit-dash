@@ -21,11 +21,16 @@ describe("pollWatch", () => {
     expect(result.nextCursor).toBe("1000");
   });
 
-  it("seed with an empty page returns nextCursor null", async () => {
+  it("empty seed persists a cursor and emits the first subsequent creation", async () => {
     const fetchPage = vi.fn(async () => page([]));
     const result = await pollWatch(fetchPage, HORIZON, ADDR, null);
     expect(result.events).toEqual([]);
-    expect(result.nextCursor).toBeNull();
+    expect(result.nextCursor).toBe("0");
+    const next = await pollWatch(async (url) => {
+      expect(url).toContain("cursor=0");
+      return page([{ paging_token: "1", funder: ADDR, account: "GFIRST" }]);
+    }, HORIZON, ADDR, result.nextCursor);
+    expect(next.events[0].accountCreated).toBe("GFIRST");
   });
 
   it("poll emits events only for records where record.funder === address", async () => {

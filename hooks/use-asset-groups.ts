@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { createDbCache, dbPost, dbPatch, authHeaders, debounce } from "@/lib/db-client";
+import { createDbCache, dbPost, dbPatch, dbDelete, debounce } from "@/lib/db-client";
 import {
   resolveGroupMemberLabel,
   type AssetGroup,
@@ -10,20 +10,6 @@ import {
 
 const ENDPOINT = "/api/db/groups";
 
-function dbDeleteGroup(id: string) {
-  fetch(ENDPOINT, {
-    method: "DELETE",
-    headers: { "Content-Type": "application/json", ...authHeaders() },
-    body: JSON.stringify({ key: id, type: "group" }),
-  }).catch(() => {});
-}
-function dbDeleteMember(id: string) {
-  fetch(ENDPOINT, {
-    method: "DELETE",
-    headers: { "Content-Type": "application/json", ...authHeaders() },
-    body: JSON.stringify({ key: id, type: "member" }),
-  }).catch(() => {});
-}
 const _cache = createDbCache<AssetGroup>();
 
 // Client group id -> promise resolving to the canonical server id.
@@ -226,7 +212,7 @@ export function useAssetGroups() {
   const deleteGroup = useCallback((id: string) => {
     _cache.set(_cache.get().filter((g) => g.id !== id));
     const pending = _pendingGroupCreates.get(id) ?? Promise.resolve(id);
-    pending.then((realId) => dbDeleteGroup(realId));
+    pending.then((realId) => dbDelete(ENDPOINT, realId, "group")).catch(() => _cache.reload(ENDPOINT));
   }, []);
 
   const upsertMember = useCallback(
@@ -303,7 +289,7 @@ export function useAssetGroups() {
             : { ...g, members: g.members.filter((m) => m.id !== memberId) },
         ),
     );
-    dbDeleteMember(memberId);
+    dbDelete(ENDPOINT, memberId, "member").catch(() => _cache.reload(ENDPOINT));
   }, []);
 
   // Groups created before asset-aware defaults used labels such as "Bank".

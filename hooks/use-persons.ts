@@ -1,32 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { createDbCache, dbPost, dbPatch, authHeaders, debounce } from "@/lib/db-client";
+import { createDbCache, dbPost, dbPatch, dbDelete, debounce } from "@/lib/db-client";
 import type { Person, PersonAddress, PersonRelationshipType } from "@/lib/persons/types";
 
 const ENDPOINT = "/api/db/persons";
 
-function dbDeletePerson(id: string) {
-  fetch(ENDPOINT, {
-    method: "DELETE",
-    headers: { "Content-Type": "application/json", ...authHeaders() },
-    body: JSON.stringify({ key: id, type: "person" }),
-  }).catch(() => {});
-}
-function dbDeleteAddress(id: string) {
-  fetch(ENDPOINT, {
-    method: "DELETE",
-    headers: { "Content-Type": "application/json", ...authHeaders() },
-    body: JSON.stringify({ key: id, type: "address" }),
-  }).catch(() => {});
-}
-function dbDeleteRelationship(id: string) {
-  fetch(ENDPOINT, {
-    method: "DELETE",
-    headers: { "Content-Type": "application/json", ...authHeaders() },
-    body: JSON.stringify({ key: id, type: "relationship" }),
-  }).catch(() => {});
-}
 const _cache = createDbCache<Person>();
 
 // asset_groups.person_id is a foreign key — a PATCH linking a group to a
@@ -105,7 +84,7 @@ export function usePersons() {
 
   const deletePerson = useCallback((id: string) => {
     _cache.set(_cache.get().filter((p) => p.id !== id));
-    dbDeletePerson(id);
+    dbDelete(ENDPOINT, id, "person").catch(() => _cache.reload(ENDPOINT));
   }, []);
 
   const addPersonAddress = useCallback(
@@ -135,7 +114,7 @@ export function usePersons() {
         p.id !== personId ? p : { ...p, addresses: p.addresses.filter((a) => a.id !== addressId) },
       ),
     );
-    dbDeleteAddress(addressId);
+    dbDelete(ENDPOINT, addressId, "address").catch(() => _cache.reload(ENDPOINT));
   }, []);
 
   const createRelationship = useCallback(
@@ -182,7 +161,7 @@ export function usePersons() {
         relationships: p.relationships.filter((r) => r.id !== id),
       })),
     );
-    dbDeleteRelationship(id);
+    dbDelete(ENDPOINT, id, "relationship").catch(() => _cache.reload(ENDPOINT));
   }, []);
 
   return {

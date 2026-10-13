@@ -39,30 +39,24 @@ async function fetchAccountMergeAmount(
   operationId: string,
   destination: string | undefined,
   signal: AbortSignal,
-  throwOnFailure = false,
 ): Promise<number> {
-  try {
-    const base = horizonBase.replace(/\/+$/, "");
-    const data = await fetchJson(
-      `${base}/operations/${operationId}/effects?limit=200`,
-      signal,
-    );
-    const records = (data._embedded?.records ?? []) as Record<
-      string,
-      unknown
-    >[];
-    for (const effect of records) {
-      if (effect.type !== "account_credited") continue;
-      if (effect.asset_type !== "native") continue;
-      if (destination && effect.account && effect.account !== destination)
-        continue;
-      return parseAmount(effect.amount);
-    }
-    return 0;
-  } catch (error) {
-    if (throwOnFailure) throw error;
-    return 0;
+  const base = horizonBase.replace(/\/+$/, "");
+  const data = await fetchJson(
+    `${base}/operations/${operationId}/effects?limit=200`,
+    signal,
+  );
+  const records = (data._embedded?.records ?? []) as Record<
+    string,
+    unknown
+  >[];
+  for (const effect of records) {
+    if (effect.type !== "account_credited") continue;
+    if (effect.asset_type !== "native") continue;
+    if (destination && effect.account && effect.account !== destination)
+      continue;
+    return parseAmount(effect.amount);
   }
+  return 0;
 }
 
 async function scanAccountDexAssetToXlm(
@@ -642,7 +636,6 @@ export async function fetchAddressInvestigation(
             opId,
             destination,
             signal,
-            true,
           );
         } catch (error) {
           if (signal.aborted) throw error;

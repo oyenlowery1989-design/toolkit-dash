@@ -81,12 +81,14 @@ export function createDbCache<T>(): DbCache<T> {
   let retryScheduled = false;
   let retryTimer: ReturnType<typeof setTimeout> | null = null;
   let syncListenerAdded = false;
+  let generation = 0;
   const listeners = new Set<() => void>();
 
   // Runs the actual GET + updates cache/error state. On failure the cache is left
   // untouched (stays null until a successful load, so isLoaded() stays false) and
   // a single retry is scheduled 3s out so we never stack up retry storms.
   function doFetch(endpoint: string): Promise<void> {
+    const startedGeneration = generation;
     loading = true;
     const p = waitForAuth()
       .then(() => fetch(endpoint, { headers: authHeaders() }))
@@ -95,6 +97,7 @@ export function createDbCache<T>(): DbCache<T> {
         return r.json() as Promise<T[]>;
       })
       .then((data: T[]) => {
+        if (startedGeneration !== generation) return;
         cache = data;
         error = null;
         // A success landing while a retry is pending means the retry is now
@@ -107,6 +110,7 @@ export function createDbCache<T>(): DbCache<T> {
         listeners.forEach((fn) => fn());
       })
       .catch((e) => {
+        if (startedGeneration !== generation) return;
         console.error(`[db] GET ${endpoint} failed:`, e);
         error = e instanceof Error ? e.message : String(e);
         listeners.forEach((fn) => fn());
@@ -120,7 +124,7 @@ export function createDbCache<T>(): DbCache<T> {
         }
       })
       .finally(() => {
-        loading = false;
+        if (startedGeneration === generation) loading = false;
       });
     fetchPromise = p;
     return p;
@@ -160,10 +164,13 @@ export function createDbCache<T>(): DbCache<T> {
     },
     async reload(endpoint: string) {
       if (loading) {
+        const requestedGeneration = generation;
         // Chain a fresh fetch after the in-flight one completes instead of
         // returning the stale promise — callers of reload() expect a fetch
         // that starts (or continues) after this call, not a no-op.
-        return fetchPromise!.then(() => doFetch(endpoint));
+        return fetchPromise!.then(() => {
+          if (requestedGeneration === generation) return doFetch(endpoint);
+        });
       }
       // Stale-while-revalidate: keep showing current data until the fresh GET
       // lands. Nulling here blanks every consumer (list → empty/spinner) and a
@@ -171,6 +178,7 @@ export function createDbCache<T>(): DbCache<T> {
       return doFetch(endpoint);
     },
     invalidate() {
+      generation++;
       cache = null;
       loading = false;
       fetchPromise = null;
@@ -239,14 +247,14 @@ export async function dbPatch(endpoint: string, data: unknown): Promise<void> {
   }
 }
 
-export async function dbDelete(endpoint: string, key: unknown): Promise<void> {
+export async function dbDelete(endpoint: string, key: unknown, type?: string): Promise<void> {
   await waitForAuth();
   let res: Response;
   try {
     res = await fetch(endpoint, {
       method: "DELETE",
       headers: { "Content-Type": "application/json", ...authHeaders() },
-      body: JSON.stringify({ key }),
+      body: JSON.stringify(type === undefined ? { key } : { key, type }),
     });
   } catch (e) {
     console.error(`[db] DELETE ${endpoint} network error:`, e);

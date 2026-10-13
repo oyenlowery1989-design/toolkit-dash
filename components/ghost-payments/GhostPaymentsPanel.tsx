@@ -51,7 +51,7 @@ import { ShortAddress } from "@/components/shared/ShortAddress";
 import { downloadCSV } from "@/lib/csv-export";
 import { fetchAllHolders } from "@/lib/asset-lookup/fetchers";
 import { estimateCost } from "@/lib/bulk-payments/builder";
-import { runBulkPayments } from "@/lib/bulk-payments/runner";
+import { runBulkPayments, reconcileBulkBatch } from "@/lib/bulk-payments/runner";
 import { parseGhostSenders } from "@/lib/bulk-payments/ghost-senders";
 import { signPaymentTransaction } from "@/lib/payments-signing";
 import { submitMainnetTransaction } from "@/lib/mainnet-submit-client";
@@ -213,6 +213,7 @@ function BatchRow({
             <CheckCircle2 className="h-3 w-3" /> Recorded
           </span>
         )}
+        {result.status === "uncertain" && <span className="text-orange-500" title={result.error}>Unresolved — check hash</span>}
         {result.status === "failed" && (
           <span className="flex items-center gap-1 text-destructive">
             <XCircle className="h-3 w-3" /> Failed
@@ -842,13 +843,8 @@ export function GhostPaymentsPanel() {
         return;
       }
 
-      // Underfunded mode's safety guarantee depends entirely on sending an
-      // amount that is known to exceed the sender's balance. If that amount
-      // hasn't finished computing yet (or failed to compute), refuse to
-      // send rather than falling back to amount/default values that could
-      // actually succeed as a real payment.
-      if (ghostMode === "underfunded" && !underfundedAmount) {
-        setError("Balance check has not finished yet — please wait before sending.");
+      if (ghostMode === "underfunded") {
+        setError("Underfunded mode is disabled: a balance increase before execution can transfer real XLM.");
         return;
       }
 
@@ -859,13 +855,8 @@ export function GhostPaymentsPanel() {
       setError(null);
       setCurrentRound(1);
 
-      // For underfunded mode, override amount + asset
-      const sendAmount =
-        ghostMode === "underfunded" && underfundedAmount
-          ? underfundedAmount
-          : amount.trim();
-      const sendAsset =
-        ghostMode === "underfunded" ? Asset.native() : getPaymentAsset();
+      const sendAmount = amount.trim();
+      const sendAsset = getPaymentAsset();
 
       const senderKeys =
         senderMode === "single"
@@ -919,9 +910,10 @@ export function GhostPaymentsPanel() {
       }
       setBatchResults(allBatches);
 
+      let unresolved = false;
       try {
         for (let ri = 0; ri < runs.length; ri++) {
-          if (abortRef.current.signal.aborted) break;
+          if (abortRef.current.signal.aborted || unresolved) break;
           const run = runs[ri];
           setCurrentRound(ri + 1);
           await runBulkPayments({
@@ -939,6 +931,7 @@ export function GhostPaymentsPanel() {
             ghost: true,
             signal: abortRef.current.signal,
             onBatchUpdate: (result) => {
+              if (result.status === "uncertain") unresolved = true;
               setBatchResults((prev) => {
                 const next = [...prev];
                 next[runOffsets[ri] + result.batchIndex] = {
@@ -956,6 +949,12 @@ export function GhostPaymentsPanel() {
         }
       }
 
+      if (unresolved) {
+        setBatchResults((prev) => prev.map((result) => result.status === "pending"
+          ? { ...result, status: "failed", error: "Not submitted — earlier transaction is unresolved" }
+          : result));
+      }
+
       // Auto-save manual signing key if not already in a group
       if (!activeWallet && senderMode === "single") {
         try {
@@ -971,12 +970,14 @@ export function GhostPaymentsPanel() {
       setBatchResults((prev) => {
         const failedCount = prev.filter((r) => r.status === "failed").reduce((s, r) => s + r.count, 0);
         const successCount = prev.filter((r) => r.status === "success").reduce((s, r) => s + r.count, 0);
-        if (failedCount > 0) {
+        if (prev.some((r) => r.status === "uncertain")) {
+          toast.error("Submission unresolved — check the transaction hash before sending again");
+        } else if (failedCount > 0) {
           toast.error(`Batch failed \u2014 ${failedCount} payments failed`);
         } else {
           toast.success("Batch sent successfully");
         }
-        notifyIfHidden("Ghost Payments Complete", `${successCount} payments sent`);
+        notifyIfHidden("Ghost Payments Complete", `${successCount} recorded, ${failedCount} failed${unresolved ? ", unresolved transactions need checking" : ""}`);
         return prev;
       });
     } finally {
@@ -988,7 +989,14 @@ export function GhostPaymentsPanel() {
     abortRef.current?.abort();
   }
 
+  async function handleCheckUnresolved() {
+    const next = await Promise.all(batchResults.map((result) => result.status === "uncertain" ? reconcileBulkBatch(horizonUrl, result, true) : result));
+    setBatchResults(next);
+    if (next.some((result) => result.status === "uncertain")) toast.error("Some transactions remain unresolved. Do not send them again.");
+  }
+
   function handleReset() {
+    if (batchResults.some((result) => result.status === "uncertain")) return;
     abortRef.current?.abort();
     setPhase("configure");
     setBatchResults([]);
@@ -1016,11 +1024,12 @@ export function GhostPaymentsPanel() {
         result.status,
         result.txHash ?? "",
         result.error ?? "",
+        result.signedXdr ?? "",
       ]);
     }
     downloadCSV(
       "ghost-payments-proof.csv",
-      ["Batch", "Recipients", "Status", "Proof (Tx Hash)", "Error"],
+      ["Batch", "Recipients", "Status", "Proof (Tx Hash)", "Error", "Signed XDR"],
       rows,
     );
   }
@@ -1311,11 +1320,12 @@ export function GhostPaymentsPanel() {
             )}
             {phase === "done" && (
               <>
+                {batchResults.some((r) => r.status === "uncertain") && <Button variant="outline" onClick={handleCheckUnresolved}>Check unresolved</Button>}
                 <Button variant="outline" onClick={handleExport}>
                   <Download className="mr-2 h-4 w-4" />
                   Export CSV
                 </Button>
-                <Button variant="outline" onClick={handleReset}>
+                <Button variant="outline" onClick={handleReset} disabled={batchResults.some((r) => r.status === "uncertain")}>
                   New Ghost Send
                 </Button>
               </>
@@ -1347,13 +1357,14 @@ export function GhostPaymentsPanel() {
             type="button"
             variant="outline"
             onClick={() => setGhostMode(m.id)}
+            disabled={m.id === "underfunded"}
             className={cn(
               "flex-col items-start justify-start whitespace-normal text-left h-auto w-full p-3 gap-1",
               ghostMode === m.id && "border-orange-500/60 bg-orange-500/10 ring-1 ring-orange-500/30",
             )}
           >
             <span className="text-sm font-semibold">{m.label}</span>
-            <span className="text-xs font-mono text-orange-400 font-normal">{m.tagline}</span>
+            <span className="text-xs font-mono text-orange-400 font-normal">{m.id === "underfunded" ? "Disabled: balance changes can transfer XLM" : m.tagline}</span>
           </Button>
         ))}
       </div>

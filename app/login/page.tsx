@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { getSupabaseBrowser } from "@/lib/supabase-client";
-import { setDbAuthToken } from "@/lib/db-client";
+import { clearAllCaches, setDbAuthToken } from "@/lib/db-client";
 
 type Mode = "password" | "magic" | "reset" | "update-password";
 
@@ -70,6 +70,7 @@ export default function LoginPage() {
           const { data: sessionData } = await sb.auth.getSession();
           if (sessionData.session) {
             setDbAuthToken(sessionData.session.access_token);
+            clearAllCaches();
             setLoggedInCookie(sessionData.session.expires_in ?? 3600);
           }
           setPasswordUpdated(!!data.user);
@@ -109,6 +110,7 @@ export default function LoginPage() {
 
       if (data.session) {
         setDbAuthToken(data.session.access_token);
+        clearAllCaches();
         setLoggedInCookie(data.session.expires_in ?? 3600);
         router.push("/");
       }

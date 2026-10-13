@@ -46,12 +46,12 @@ function setState(next: Partial<AuthState>) {
 }
 
 function applySession(session: Session | null) {
+  const userChanged = state.session?.user.id !== session?.user.id;
+  setDbAuthToken(session?.access_token ?? null);
+  if (userChanged) clearAllCaches();
   if (session) {
-    setDbAuthToken(session.access_token);
     setLoggedInCookie(session.expires_in ?? 3600);
   } else {
-    setDbAuthToken(null);
-    clearAllCaches();
     clearLoggedInCookie();
   }
   setState({ session, loading: false });

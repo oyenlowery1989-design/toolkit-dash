@@ -8,6 +8,7 @@ import { useActiveWallet } from "@/hooks/use-active-wallet";
 import { useAssetGroups } from "@/hooks/use-asset-groups";
 import { useSettings } from "@/lib/settings";
 import { shortAddr } from "@/lib/format";
+import { downloadCSV } from "@/lib/csv-export";
 import { defaultGroupMemberLabel } from "@/lib/asset-groups/types";
 import type { AssetCreatorForm, StepResult } from "@/lib/asset-creator/types";
 import { Step1Accounts } from "./steps/Step1Accounts";
@@ -43,6 +44,9 @@ export function AssetCreatorPanel() {
   const [results, setResults] = useState<StepResult[]>([]);
   const [groupId, setGroupId] = useState<string | undefined>();
   const [completedSteps, setCompletedSteps] = useState<Set<string>>(new Set());
+  const [backupDownloaded, setBackupDownloaded] = useState(false);
+  const [backupAcknowledged, setBackupAcknowledged] = useState(false);
+  const hasUnsavedKeys = Boolean(form.issuerSecretKey || form.distributorSecretKey);
 
   // Keep the funding wallet reference + network in sync with live global state
   // (handles cross-tab wallet disconnect, and a network change elsewhere in
@@ -71,11 +75,25 @@ export function AssetCreatorPanel() {
     // steps — those were completed for a different issuer/distributor/asset.
     if (
       patch.issuerPublicKey !== undefined ||
+      patch.issuerSecretKey !== undefined ||
       patch.distributorPublicKey !== undefined ||
+      patch.distributorSecretKey !== undefined ||
       patch.assetCode !== undefined
     ) {
       setCompletedSteps(new Set());
+      setBackupDownloaded(false);
+      setBackupAcknowledged(false);
     }
+  };
+
+  const downloadKeyBackup = () => {
+    const rows = [
+      ["issuer", form.issuerPublicKey, form.issuerSecretKey],
+      ["distributor", form.distributorPublicKey, form.distributorSecretKey],
+    ].filter(([, , secret]) => secret);
+    if (!rows.length) return;
+    downloadCSV("asset-creator-key-backup.csv", ["role", "public_key", "secret_key"], rows);
+    setBackupDownloaded(true);
   };
 
   const handleComplete = async (stepResults: StepResult[]) => {
@@ -129,10 +147,13 @@ export function AssetCreatorPanel() {
   };
 
   const handleStartOver = () => {
+    if (hasUnsavedKeys && !window.confirm("Start over will remove issuer/distributor secret keys from this page. Confirm your key backup is safe before continuing.")) return;
     setForm({ ...EMPTY_FORM, network, fundingWalletId: activeWallet?.id, fundingPublicKey: activeWallet?.publicKey });
     setResults([]);
     setGroupId(undefined);
     setCompletedSteps(new Set());
+    setBackupDownloaded(false);
+    setBackupAcknowledged(false);
     setStep("accounts");
   };
 
@@ -178,6 +199,10 @@ export function AssetCreatorPanel() {
             <Step3Preflight
               form={form}
               completedSteps={completedSteps}
+              backupDownloaded={backupDownloaded}
+              backupAcknowledged={backupAcknowledged}
+              onDownloadBackup={downloadKeyBackup}
+              onBackupAcknowledgedChange={setBackupAcknowledged}
               onBack={() => setStep("config")}
               onComplete={handleComplete}
             />
@@ -190,6 +215,8 @@ export function AssetCreatorPanel() {
               network={form.network}
               issuerPublicKey={form.issuerPublicKey}
               distributorPublicKey={form.distributorPublicKey}
+              hasUnsavedKeys={hasUnsavedKeys}
+              onDownloadBackup={downloadKeyBackup}
               onRetry={handleRetry}
               onStartOver={handleStartOver}
             />

@@ -78,9 +78,20 @@ export function buildGraph(input: GraphInput): GraphData {
 
   for (const a of analyses) {
     const destinations = a.result?.topDestinations ?? [];
-    for (const distrib of a.distribAddresses) {
-      for (const dest of destinations) {
-        pushEdge(edges, distrib, dest.address, "distrib-destination", dest.totalXlm);
+    for (const dest of destinations) {
+      const amounts = new Map<string, number>();
+      for (const entry of a.result?.outgoingLedger ?? []) {
+        if (entry.to !== dest.address || !entry.successful) continue;
+        const sender = entry.from ?? entry.account;
+        if (!a.distribAddresses.includes(sender)) continue;
+        amounts.set(sender, (amounts.get(sender) ?? 0) + entry.amountXlm);
+      }
+      // Legacy single-distributor analyses have unambiguous aggregate ownership.
+      if (!a.result?.outgoingLedger?.length && a.distribAddresses.length === 1) {
+        amounts.set(a.distribAddresses[0], dest.totalXlm);
+      }
+      for (const [sender, amount] of amounts) {
+        pushEdge(edges, sender, dest.address, "distrib-destination", amount);
       }
     }
   }
