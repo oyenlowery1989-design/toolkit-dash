@@ -39,6 +39,7 @@ async function fetchAccountMergeAmount(
   operationId: string,
   destination: string | undefined,
   signal: AbortSignal,
+  throwOnFailure = false,
 ): Promise<number> {
   try {
     const base = horizonBase.replace(/\/+$/, "");
@@ -58,7 +59,8 @@ async function fetchAccountMergeAmount(
       return parseAmount(effect.amount);
     }
     return 0;
-  } catch {
+  } catch (error) {
+    if (throwOnFailure) throw error;
     return 0;
   }
 }
@@ -465,7 +467,7 @@ export async function fetchAddressInvestigation(
   try {
   while (!signal.aborted) {
     const params = new URLSearchParams({
-      order: "asc",
+      order: "desc",
       limit: String(FETCH_LIMIT),
     });
     if (cursor) params.set("cursor", cursor);
@@ -484,8 +486,8 @@ export async function fetchAddressInvestigation(
     let doneEarly = false;
     for (const raw of records) {
       const opTs = new Date(String(raw.created_at ?? "")).getTime();
-      if (opTs < fromTs) continue;
-      if (opTs > toTs) { doneEarly = true; break; }
+      if (opTs > toTs) continue;
+      if (opTs < fromTs) { doneEarly = true; break; }
       const type = String(raw.type ?? "");
       const opId = String(raw.id ?? "");
       const txHash = String(raw.transaction_hash ?? "");
@@ -633,12 +635,22 @@ export async function fetchAddressInvestigation(
         }
       } else if (type === "account_merge") {
         const destination = String(raw.into ?? "");
-        const amount = await fetchAccountMergeAmount(
-          base,
-          opId,
-          destination,
-          signal,
-        );
+        let amount: number;
+        try {
+          amount = await fetchAccountMergeAmount(
+            base,
+            opId,
+            destination,
+            signal,
+            true,
+          );
+        } catch (error) {
+          if (signal.aborted) throw error;
+          complete = false;
+          const issue = `Account merge ${opId} amount unavailable: ${getErrorMessage(error)}`;
+          warning = warning ? `${warning}; ${issue}` : issue;
+          continue;
+        }
         if (amount > 0 && raw.source_account === account) {
           outgoingLedger.push({
             id: `out-merge-${opId}`,
@@ -703,8 +715,9 @@ export async function fetchAddressInvestigation(
   try {
   while (!signal.aborted) {
     const params = new URLSearchParams({
-      order: "asc",
+      order: "desc",
       limit: String(FETCH_LIMIT),
+      include_failed: "true",
     });
     if (cursor) params.set("cursor", cursor);
 
@@ -722,8 +735,8 @@ export async function fetchAddressInvestigation(
     let doneEarly = false;
     for (const raw of records) {
       const feeTs = new Date(String(raw.created_at ?? "")).getTime();
-      if (feeTs < fromTs) continue;
-      if (feeTs > toTs) { doneEarly = true; break; }
+      if (feeTs > toTs) continue;
+      if (feeTs < fromTs) { doneEarly = true; break; }
       if (raw.fee_account !== account) continue;
       const fee = parseAmount(raw.fee_charged) / 10_000_000;
       if (fee <= 0) continue;

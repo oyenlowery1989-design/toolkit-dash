@@ -496,8 +496,9 @@ export function AddressInvestigatorTab() {
   const { groups, upsertMember } = useAssetGroups();
   const { activeWallet } = useActiveWallet();
   const [address, setAddress] = useState(
-    () => urlAddress ?? addressHistoryGetSnapshot()[0]?.address ?? "",
+    () => urlAddress ?? addressHistoryGetSnapshot().find((entry) => entry.network === "public")?.address ?? "",
   );
+  const visibleHistory = searchHistory.filter((entry) => entry.network === settings.network);
   const lastUrlAddressRunRef = useRef<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [progressText, setProgressText] = useState<string | null>(null);
@@ -534,6 +535,7 @@ export function AddressInvestigatorTab() {
   const [investigationWarning, setInvestigationWarning] = useState<string | null>(null);
   const [searched, setSearched] = useState(false);
   const [homeDomain, setHomeDomain] = useState<string | null>(null);
+  const [accountUnavailable, setAccountUnavailable] = useState(false);
   const [groupDialog, setGroupDialog] = useState<{
     address: string;
     role: GroupMemberRole;
@@ -569,6 +571,15 @@ export function AddressInvestigatorTab() {
   useEffect(() => {
     if (!settingsHydrated) return;
     if (!urlAddress) return;
+    if (rawUrlNetwork && !urlNetwork) {
+      abortRef.current?.abort();
+      setAddress(urlAddress);
+      setResult(null);
+      setLoading(false);
+      setProgressText(null);
+      setError("This link targets an unsupported network. Account Investigator currently uses Mainnet only.");
+      return;
+    }
     if (urlNetwork && settings.network !== urlNetwork) {
       updateSettings({ network: urlNetwork });
       return;
@@ -604,7 +615,7 @@ export function AddressInvestigatorTab() {
     // (recreated each render) but re-invoking on its identity change would
     // defeat the "once per param value" guard above.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [urlAddress, urlNetwork, settings.network, settingsHydrated, updateSettings]);
+  }, [urlAddress, urlNetwork, rawUrlNetwork, settings.network, settingsHydrated, updateSettings]);
 
   const isCustomAssetSelection = paymentAssetSelection === "custom";
 
@@ -671,6 +682,8 @@ export function AddressInvestigatorTab() {
     accountId: string,
     selectedNetwork: Network,
     signal: AbortSignal,
+    fromTs: number,
+    toTs: number,
     onProgress?: (pages: number, records: number) => void,
   ): Promise<OperationsFetchSummary> {
     const server = new Horizon.Server(
@@ -693,14 +706,19 @@ export function AddressInvestigatorTab() {
         const page = await builder.call();
         if (signal.aborted) break;
 
-        const mapped = (page.records as Record<string, unknown>[]).map(
-          mapOperation,
-        );
+        const records = page.records as Record<string, unknown>[];
+        const mapped = records
+          .filter((record) => {
+            const time = Date.parse(String(record.created_at ?? ""));
+            return time >= fromTs && time <= toTs;
+          })
+          .map(mapOperation);
         all.push(...mapped);
         pages += 1;
         onProgress?.(pages, all.length);
 
-        if (page.records.length < FETCH_PAGE_SIZE) {
+        const oldestTime = Date.parse(String(records[records.length - 1]?.created_at ?? ""));
+        if (records.length < FETCH_PAGE_SIZE || oldestTime < fromTs) {
           return {
             operations: all,
             pages,
@@ -810,6 +828,7 @@ export function AddressInvestigatorTab() {
     setError(null);
     setResult(null);
     setHomeDomain(null);
+    setAccountUnavailable(false);
     setOperations([]);
     setVisibleCount(DISPLAY_PAGE_SIZE);
     setCategoryFilter("all");
@@ -832,8 +851,13 @@ export function AddressInvestigatorTab() {
     try {
       const horizonBase = resolveHorizonUrl(settings);
       const server = new Horizon.Server(resolveHorizonUrl(settings));
-      const parsedFromDate = fromDate ? new Date(fromDate) : undefined;
-      const parsedToDate = toDate ? new Date(toDate + "T23:59:59") : undefined;
+      const parsedFromDate = fromDate ? new Date(`${fromDate}T00:00:00`) : undefined;
+      const parsedToDate = toDate ? new Date(`${toDate}T23:59:59.999`) : undefined;
+      if (parsedFromDate && parsedToDate && parsedFromDate > parsedToDate) {
+        setError("From date must be before or equal to To date.");
+        setProgressText(null);
+        return;
+      }
 
       const [
         investigation,
@@ -857,13 +881,20 @@ export function AddressInvestigatorTab() {
           account,
           settings.network,
           controller.signal,
+          parsedFromDate?.getTime() ?? 0,
+          parsedToDate?.getTime() ?? Number.POSITIVE_INFINITY,
           (pages, records) => {
             setProgressText(
-              `Loading all transactions… page ${pages} (${records.toLocaleString()} records)`,
+              `Loading operations… page ${pages} (${records.toLocaleString()} in range)`,
             );
           },
         ),
-        server.loadAccount(account),
+        server.loadAccount(account).catch((e: unknown) => {
+          const status = (e as { response?: { status?: number }; status?: number })?.response?.status
+            ?? (e as { status?: number })?.status;
+          if (status === 404) return null;
+          throw e;
+        }),
         fetchClaimableBalancesForAccount(
           account,
           settings.network,
@@ -876,7 +907,8 @@ export function AddressInvestigatorTab() {
       setInvestigationWarning(
         investigation.complete === false ? (investigation.warning ?? null) : null,
       );
-      setHomeDomain((accountDetails as { home_domain?: string }).home_domain ?? null);
+      setHomeDomain(accountDetails?.home_domain ?? null);
+      setAccountUnavailable(accountDetails === null);
       upsertHistory({ address: account, network: settings.network });
       upsertSearch({ type: "address", value: account, network: settings.network });
       setOperations(operationsSummary.operations);
@@ -889,7 +921,7 @@ export function AddressInvestigatorTab() {
       setClaimableBalances(claimableSummary.rows);
       setClaimableWarning(claimableSummary.warning ?? null);
 
-      const trustlineOptions: TrustlineAssetOption[] = accountDetails.balances
+      const trustlineOptions: TrustlineAssetOption[] = (accountDetails?.balances ?? [])
         .filter(
           (b) =>
             b.asset_type === "credit_alphanum4" ||
@@ -910,7 +942,7 @@ export function AddressInvestigatorTab() {
         })
         .sort((a, b) => a.label.localeCompare(b.label));
 
-      const balanceRows: BalanceTrustlineRow[] = accountDetails.balances.map(
+      const balanceRows: BalanceTrustlineRow[] = (accountDetails?.balances ?? []).map(
         (balance, index) => {
           const raw = balance as unknown as Record<string, unknown>;
           const assetType = String(raw.asset_type ?? "");
@@ -991,14 +1023,14 @@ export function AddressInvestigatorTab() {
 
   return (
     <div className="space-y-6">
-      {searchHistory.length > 0 && (
+      {visibleHistory.length > 0 && (
         <div className="space-y-2">
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
             <Clock className="h-3.5 w-3.5" />
             Recent searches
           </div>
           <div className="flex flex-wrap gap-2">
-            {searchHistory.map((entry) => (
+            {visibleHistory.map((entry) => (
               <div
                 key={entry.timestamp}
                 className="flex items-center gap-1 rounded-md border border-border bg-muted/40 pl-2 pr-1 py-1 text-xs"
@@ -1090,7 +1122,7 @@ export function AddressInvestigatorTab() {
           </div>
           {(fromDate || toDate) && (
             <p className="text-xs text-muted-foreground">
-              Scanning only within the selected date range — much faster for recent data.
+              XLM flows and operation history are limited to these dates. Balances and claimable balances show their current state.
             </p>
           )}
 
@@ -1109,6 +1141,13 @@ export function AddressInvestigatorTab() {
             <p className="text-xs text-amber-600 flex items-center gap-2">
               <AlertTriangle className="h-4 w-4" />
               {opsFetchWarning}
+            </p>
+          )}
+
+          {claimableWarning && (
+            <p className="text-xs text-amber-600 flex items-center gap-2">
+              <AlertTriangle className="h-4 w-4" />
+              {claimableWarning}
             </p>
           )}
 
@@ -1281,8 +1320,9 @@ export function AddressInvestigatorTab() {
             <CardHeader>
               <CardTitle>Balances & Trustlines</CardTitle>
               <CardDescription>
-                Current account balances, trustline limits, liabilities, and
-                authorization state.
+                {accountUnavailable
+                  ? "No active account exists at this address. Current balances and trustlines are unavailable; historical activity, if any, is shown above."
+                  : "Current account balances, trustline limits, liabilities, and authorization state."}
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -1359,12 +1399,6 @@ export function AddressInvestigatorTab() {
                 <CardDescription>
                   Open claimable balances where this account is a claimant.
                 </CardDescription>
-                {claimableWarning && (
-                  <p className="text-xs text-amber-600 flex items-center gap-2">
-                    <AlertTriangle className="h-4 w-4" />
-                    {claimableWarning}
-                  </p>
-                )}
               </CardHeader>
               <CardContent>
                 <div className="overflow-x-auto border rounded-md">
