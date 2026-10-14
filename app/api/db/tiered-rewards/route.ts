@@ -5,6 +5,7 @@ import { refreshTieredRewardsScheduler } from "@/lib/tiered-rewards/scheduler";
 import { loadAllConfigs } from "@/lib/tiered-rewards/db";
 import type { TieredRewardConfig } from "@/lib/tiered-rewards/types";
 import { rewardSigningFields, rewardSigningUpdate } from "@/lib/tiered-rewards/signing";
+import { scheduleValidationError } from "@/lib/schedule-policy";
 
 type Row = Record<string, unknown>;
 
@@ -127,6 +128,10 @@ export async function POST(req: NextRequest) {
   }
   if (type === "config" && data.network !== undefined && data.network !== "public") {
     return NextResponse.json({ error: "Only mainnet is supported" }, { status: 400 });
+  }
+  if (type === "config") {
+    const scheduleError = scheduleValidationError(data.intervalMinutes, [60, 180, 360, 720, 1440]);
+    if (scheduleError) return NextResponse.json({ error: scheduleError }, { status: 400 });
   }
   if (process.env.VERCEL && type === "config" && data.enabled === true) {
     return NextResponse.json({ error: "Scheduled rewards are unavailable on this deployment. Use Run Now instead." }, { status: 400 });

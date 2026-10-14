@@ -1,7 +1,8 @@
+import { isLocalRestoreActive } from "@/lib/local-restore-lock";
 import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
 import { getSupabase, isSupabaseOnly, requireAuth } from "@/lib/supabase-server";
-import { AutoSendRunInProgressError, runGroup, previewGroup } from "@/lib/auto-send/runner";
+import { AutoSendApprovalChangedError, AutoSendRunInProgressError, runGroup, previewGroup } from "@/lib/auto-send/runner";
 import { refreshScheduler } from "@/lib/auto-send/scheduler";
 import { rowToGroup } from "@/lib/auto-send/db-map";
 import type { AutoSendGroup, DestinationRunResult } from "@/lib/auto-send/types";
@@ -75,6 +76,12 @@ async function writeRunLog(groupId: string, walletAddress: string, results: Dest
   }
 }
 
+declare global {
+  var _autoSendLoggingGroups: Set<string> | undefined;
+}
+if (!global._autoSendLoggingGroups) global._autoSendLoggingGroups = new Set<string>();
+const loggingGroups = global._autoSendLoggingGroups;
+
 /** Logs the run result after runFn completes. If runFn throws, no result exists to log — the
  *  error propagates to the outer handler. (runGroup never throws today; it always resolves a
  *  GroupRunResult.) */
@@ -82,6 +89,10 @@ async function runAndLog(
   group: AutoSendGroup,
   runFn: () => Promise<Awaited<ReturnType<typeof runGroup>>>
 ): Promise<{ result: Awaited<ReturnType<typeof runGroup>>; logWriteFailed: boolean }> {
+  if (isLocalRestoreActive()) throw new AutoSendRunInProgressError("A local restore is in progress. Try again after it finishes.");
+  if (loggingGroups.has(group.id)) throw new AutoSendRunInProgressError();
+  loggingGroups.add(group.id);
+  try {
   let result: Awaited<ReturnType<typeof runGroup>> | undefined;
   let logWriteFailed = false;
   try {
@@ -93,6 +104,10 @@ async function runAndLog(
     }
   }
   return { result, logWriteFailed };
+  } finally {
+    loggingGroups.delete(group.id);
+  }
+
 }
 
 export async function GET(req: NextRequest) {
@@ -184,9 +199,12 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Preview approval is missing, expired, or the payment amounts changed. Preview again." }, { status: 428 });
     }
 
-    const { result, logWriteFailed } = await runAndLog(group, () => runGroup(group));
+    const { result, logWriteFailed } = await runAndLog(group, () => runGroup(group, freshPreview));
     return NextResponse.json(logWriteFailed ? { ...result, logWriteFailed: true } : result);
   } catch (e) {
+    if (e instanceof AutoSendApprovalChangedError) {
+      return NextResponse.json({ error: e.message }, { status: 428 });
+    }
     if (e instanceof MainnetSigningBudgetUnavailableError) {
       return NextResponse.json({ error: e.message }, { status: 503 });
     }

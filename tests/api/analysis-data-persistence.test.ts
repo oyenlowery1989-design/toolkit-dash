@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/db", () => ({ getDb: () => ({
+  transaction: (fn: () => unknown) => fn,
   prepare: (sql: string) => ({ run: (...values: unknown[]) => mocks.sqliteWrites.push({ sql, values }) }),
 }) }));
 vi.mock("@/lib/supabase-server", () => ({

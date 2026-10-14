@@ -16,6 +16,9 @@ async function setup(page: Page, walletId = "saved") {
       : path.endsWith("/startup-sync") ? { ok: true, skipped: true } : [];
     await route.fulfill({ json: body });
   });
+  await page.route("**/api/payments/submission", async (route) => {
+    await route.fulfill({ json: route.request().method() === "DELETE" ? { ok: true } : null });
+  });
   await page.route("https://horizon.stellar.org/**", async (route) => {
     const address = new URL(route.request().url()).pathname.split("/").at(-1)!;
     await route.fulfill({ json: {
@@ -185,4 +188,44 @@ test("Payments keeps each tab's draft while switching between extracted tabs", a
 
   await page.getByRole("tab", { name: "Fee Bump", exact: true }).click();
   await expect(page.getByPlaceholder("Paste the signed transaction XDR here…")).toHaveValue("draft-xdr");
+});
+
+
+test("a lost payment response stays blocked across reload and resolves without another signature", async ({ page }) => {
+  await setup(page);
+  let signatures = 0;
+  let submissions = 0;
+  let record: { hash: string; xdr: string; status: string } | null = null;
+  await page.route("**/api/payments/submission", async (route) => {
+    if (route.request().method() === "DELETE") record = null;
+    await route.fulfill({ json: record });
+  });
+  await page.route("**/api/wallet/sign", async (route) => {
+    signatures++;
+    const tx = TransactionBuilder.fromXDR(route.request().postDataJSON().xdr, Networks.PUBLIC);
+    tx.sign(signer);
+    await route.fulfill({ json: { xdr: tx.toXDR() } });
+  });
+  await page.route("**/api/transactions/submit", async (route) => {
+    submissions++;
+    const { xdr, trackPayment } = route.request().postDataJSON();
+    expect(trackPayment).toBe(true);
+    record = { hash: TransactionBuilder.fromXDR(xdr, Networks.PUBLIC).hash().toString("hex"), xdr, status: "pending" };
+    await route.abort("failed");
+  });
+  await confirmPayment(page);
+  await expect(page.getByText("A new payment is blocked", { exact: false })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Sign & Submit", exact: true })).toBeDisabled();
+  await page.reload();
+  await expect(page.getByText("A new payment is blocked", { exact: false })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Sign & Submit", exact: true })).toBeDisabled();
+  expect(record).not.toBeNull();
+  record = { ...record!, status: "success" };
+  await page.getByRole("button", { name: "Check payment status", exact: true }).click();
+  await expect(page.getByText("Transaction Submitted", { exact: true })).toBeVisible();
+  expect(signatures).toBe(1);
+  expect(submissions).toBe(1);
+  await page.getByRole("button", { name: "Send Another", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Sign & Submit", exact: true })).toBeVisible();
+  expect(record).toBeNull();
 });

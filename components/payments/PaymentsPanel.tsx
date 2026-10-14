@@ -20,6 +20,7 @@ import { PaymentsSuccess } from "./PaymentsSuccess";
 
 export function PaymentsPanel() {
   const {
+    recovery, checkingRecovery, recoveryError, checkPaymentStatus,
     txStatus,
     txHash,
     network,
@@ -149,6 +150,19 @@ export function PaymentsPanel() {
   return (
     <div className="space-y-3">
       <h1 className="text-lg font-semibold">Payments</h1>
+
+      {(checkingRecovery || recoveryError || recovery) && (
+        <Card>
+          <CardContent className="p-4 space-y-3" aria-live="polite">
+            <p>{checkingRecovery ? "Checking previous payment…" : recoveryError ?? (recovery?.status === "pending"
+              ? "Payment outcome is not confirmed. A new payment is blocked until this transaction is resolved."
+              : "The previous payment failed. Review it before starting another.")}</p>
+            {recovery && <code className="block break-all text-xs">{recovery.hash}</code>}
+            <Button variant="outline" disabled={checkingRecovery} onClick={checkPaymentStatus}>Check payment status</Button>
+            {recovery?.status === "failed" && <Button onClick={handleReset}>Start new payment</Button>}
+          </CardContent>
+        </Card>
+      )}
 
       {/* ================================================================== */}
       {/* Signing Card — always at top so balances load immediately          */}
@@ -334,7 +348,7 @@ export function PaymentsPanel() {
         <div className="flex justify-end">
           <Button
             onClick={handleOpenConfirm}
-            disabled={isSubmitting || !formValid || !hasSigningKey}
+            disabled={isSubmitting || checkingRecovery || !!recoveryError || !!recovery || !formValid || !hasSigningKey}
             className="w-full sm:w-auto"
           >
             {isSubmitting ? (

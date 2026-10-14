@@ -1,3 +1,4 @@
+import { readAllChildRows, readAllUserRows } from "@/lib/supabase-read-all";
 import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
 import { getSupabase, isSupabaseOnly, syncToSupabase, requireAuth } from "@/lib/supabase-server";
@@ -89,18 +90,14 @@ export async function GET(req: NextRequest) {
 
   if (isSupabaseOnly()) {
     const sb = getSupabase()!;
-    const { data: persons, error: personsError } = await sb
-      .from("persons")
-      .select("*")
-      .eq("user_id", userId!)
-      .order("updated_at", { ascending: false });
+    const { data: persons, error: personsError } = await readAllUserRows(sb, "persons", userId!);
     if (personsError) {
       console.error("[persons] GET failed:", personsError);
       return NextResponse.json({ error: personsError.message }, { status: 500 });
     }
     const personIds = (persons ?? []).map((p) => p.id as string);
     const { data: allAddresses, error: addressesError } = personIds.length > 0
-      ? await sb.from("person_addresses").select("*").in("person_id", personIds).order("added_at", { ascending: true })
+      ? await readAllChildRows(sb, "person_addresses", "person_id", personIds)
       : { data: [], error: null };
     if (addressesError) {
       console.error("[persons] GET (addresses) failed:", addressesError);
@@ -109,12 +106,14 @@ export async function GET(req: NextRequest) {
     // person_a_id ∈ personIds already implies person_b_id ∈ personIds too —
     // both sides of a relationship are always created under the same caller.
     const { data: allRelationships, error: relationshipsError } = personIds.length > 0
-      ? await sb.from("person_relationships").select("*").in("person_a_id", personIds)
+      ? await readAllChildRows(sb, "person_relationships", "person_a_id", personIds)
       : { data: [], error: null };
     if (relationshipsError) {
       console.error("[persons] GET (relationships) failed:", relationshipsError);
       return NextResponse.json({ error: relationshipsError.message }, { status: 500 });
     }
+    persons!.sort((a, b) => Number(b.updated_at) - Number(a.updated_at));
+    allAddresses!.sort((a, b) => Number(a.added_at) - Number(b.added_at));
     return NextResponse.json(buildPersonsFromRows(persons ?? [], allAddresses ?? [], allRelationships ?? []));
   }
 
@@ -170,35 +169,29 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true });
     }
 
-    getDb()
-      .prepare(
-        `INSERT INTO persons (id, name, role, notes, telegram_channel, telegram_link, telegram_username, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(id) DO UPDATE SET
-           name              = excluded.name,
-           role              = excluded.role,
-           notes             = excluded.notes,
-           telegram_channel  = excluded.telegram_channel,
-           telegram_link     = excluded.telegram_link,
-           telegram_username = excluded.telegram_username,
-           updated_at        = excluded.updated_at`,
-      )
-      .run(id, nameTrimmed, role ?? null, notes ?? null, telegramChannel ?? null, telegramLink ?? null, telegramUsername ?? null, now, now);
+    const db = getDb();
+    db.transaction(() => {
+      db
+        .prepare(
+          `INSERT INTO persons (id, name, role, notes, telegram_channel, telegram_link, telegram_username, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(id) DO UPDATE SET
+             name              = excluded.name,
+             role              = excluded.role,
+             notes             = excluded.notes,
+             telegram_channel  = excluded.telegram_channel,
+             telegram_link     = excluded.telegram_link,
+             telegram_username = excluded.telegram_username,
+             updated_at        = excluded.updated_at`,
+        )
+        .run(id, nameTrimmed, role ?? null, notes ?? null, telegramChannel ?? null, telegramLink ?? null, telegramUsername ?? null, now, now);
 
-    syncToSupabase(async () => {
-      await getSupabase()!.from("persons").upsert({
-        id,
-        user_id: userId,
-        name: nameTrimmed,
-        role: role ?? null,
-        notes: notes ?? null,
-        telegram_channel: telegramChannel ?? null,
-        telegram_link: telegramLink ?? null,
-        telegram_username: telegramUsername ?? null,
-        created_at: now,
-        updated_at: now,
-      }).throwOnError();
-    });
+      syncToSupabase({ table: "persons", action: "upsert", data: {
+        id, name: nameTrimmed, role: role ?? null, notes: notes ?? null,
+        telegram_channel: telegramChannel ?? null, telegram_link: telegramLink ?? null,
+        telegram_username: telegramUsername ?? null, created_at: now, updated_at: now,
+      } });
+    })();
 
     return NextResponse.json({ ok: true });
   }
@@ -238,13 +231,20 @@ export async function POST(req: NextRequest) {
     const addressId = (db.prepare("SELECT id FROM person_addresses WHERE person_id = ? AND address = ?")
       .get(personId, address) as { id: string } | undefined)?.id ?? id;
     try {
-      db.prepare(
-        `INSERT INTO person_addresses (id, person_id, address, label, added_at)
-         VALUES (?, ?, ?, ?, ?)
-         ON CONFLICT(person_id, address) DO UPDATE SET
-           label = excluded.label`,
-      ).run(addressId, personId, address, label ?? null, now);
-      db.prepare("UPDATE persons SET updated_at = ? WHERE id = ?").run(now, personId);
+      db.transaction(() => {
+        db.prepare(
+          `INSERT INTO person_addresses (id, person_id, address, label, added_at)
+           VALUES (?, ?, ?, ?, ?)
+           ON CONFLICT(person_id, address) DO UPDATE SET
+             label = excluded.label`,
+        ).run(addressId, personId, address, label ?? null, now);
+        db.prepare("UPDATE persons SET updated_at = ? WHERE id = ?").run(now, personId);
+        syncToSupabase([
+          { table: "person_addresses", action: "upsert", data: { id: addressId, person_id: personId, address, label: label ?? null, added_at: now },
+            onConflict: "person_id,address", preserveExisting: ["id", "added_at"] },
+          { table: "persons", action: "update", data: { updated_at: now }, match: { id: personId } },
+        ]);
+      })();
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       if (message.toLowerCase().includes("foreign key")) {
@@ -252,17 +252,6 @@ export async function POST(req: NextRequest) {
       }
       throw error;
     }
-
-    syncToSupabase(async () => {
-      const sb = getSupabase()!;
-      const { data: existing } = await sb.from("person_addresses")
-        .select("id,added_at").eq("person_id", personId).eq("address", address).maybeSingle().throwOnError();
-      await sb.from("person_addresses").upsert(
-        { id: existing?.id ?? addressId, person_id: personId, address, label: label ?? null, added_at: existing?.added_at ?? now },
-        { onConflict: "person_id,address" },
-      ).throwOnError();
-      await sb.from("persons").update({ updated_at: now }).eq("id", personId).eq("user_id", userId!).throwOnError();
-    });
 
     return NextResponse.json({ ok: true, id: addressId });
   }
@@ -297,10 +286,15 @@ export async function POST(req: NextRequest) {
 
     const db = getDb();
     try {
-      db.prepare(
-        `INSERT INTO person_relationships (id, person_a_id, person_b_id, type, created_at)
-         VALUES (?, ?, ?, ?, ?)`,
-      ).run(id, personAId, personBId, relationshipType, now);
+      db.transaction(() => {
+        db.prepare(
+          `INSERT INTO person_relationships (id, person_a_id, person_b_id, type, created_at)
+           VALUES (?, ?, ?, ?, ?)`,
+        ).run(id, personAId, personBId, relationshipType, now);
+        syncToSupabase({ table: "person_relationships", action: "upsert", data: {
+          id, person_a_id: personAId, person_b_id: personBId, type: relationshipType, created_at: now,
+        } });
+      })();
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       if (message.toLowerCase().includes("foreign key")) {
@@ -308,16 +302,6 @@ export async function POST(req: NextRequest) {
       }
       throw error;
     }
-
-    syncToSupabase(async () => {
-      await getSupabase()!.from("person_relationships").insert({
-        id,
-        person_a_id: personAId,
-        person_b_id: personBId,
-        type: relationshipType,
-        created_at: now,
-      }).throwOnError();
-    });
 
     return NextResponse.json({ ok: true });
   }
@@ -355,12 +339,13 @@ export async function PATCH(req: NextRequest) {
   }
 
   const fields = Object.entries(patch);
-  getDb().prepare(`UPDATE persons SET ${fields.map(([key]) => `${key} = ?`).join(", ")} WHERE id = ?`)
-    .run(...fields.map(([, value]) => value), id);
+  const db = getDb();
+  db.transaction(() => {
+    db.prepare(`UPDATE persons SET ${fields.map(([key]) => `${key} = ?`).join(", ")} WHERE id = ?`)
+      .run(...fields.map(([, value]) => value), id);
 
-  syncToSupabase(async () => {
-    await getSupabase()!.from("persons").update(patch).eq("id", id).eq("user_id", userId!).throwOnError();
-  });
+    syncToSupabase({ table: "persons", action: "update", data: patch, match: { id } });
+  })();
 
   return NextResponse.json({ ok: true });
 }
@@ -404,32 +389,20 @@ export async function DELETE(req: NextRequest) {
   }
 
   const db = getDb();
-  if (type === "person") {
-    db.prepare("DELETE FROM persons WHERE id = ?").run(key);
-  } else if (type === "address") {
-    db.prepare("DELETE FROM person_addresses WHERE id = ?").run(key);
-  } else if (type === "relationship") {
-    db.prepare("DELETE FROM person_relationships WHERE id = ?").run(key);
-  }
-
-  syncToSupabase(async () => {
-    const sb = getSupabase()!;
+  db.transaction(() => {
+    const address = type === "address" ? db.prepare("SELECT person_id, address FROM person_addresses WHERE id = ?").get(key) as
+      { person_id: string; address: string } | undefined : undefined;
     if (type === "person") {
-      return sb.from("persons").delete().eq("id", key).eq("user_id", userId!);
+      db.prepare("DELETE FROM persons WHERE id = ?").run(key);
+    } else if (type === "address") {
+      db.prepare("DELETE FROM person_addresses WHERE id = ?").run(key);
     } else if (type === "relationship") {
-      const { data: rel } = await sb.from("person_relationships").select("person_a_id").eq("id", key).maybeSingle().throwOnError();
-      if (!rel) return;
-      const { data: parentPerson } = await sb.from("persons").select("id").eq("id", rel.person_a_id).eq("user_id", userId!).maybeSingle().throwOnError();
-      if (!parentPerson) return;
-      return sb.from("person_relationships").delete().eq("id", key);
-    } else {
-      const { data: addr } = await sb.from("person_addresses").select("person_id").eq("id", key).maybeSingle().throwOnError();
-      if (!addr) return;
-      const { data: parentPerson } = await sb.from("persons").select("id").eq("id", addr.person_id).eq("user_id", userId!).maybeSingle().throwOnError();
-      if (!parentPerson) return;
-      return sb.from("person_addresses").delete().eq("id", key);
+      db.prepare("DELETE FROM person_relationships WHERE id = ?").run(key);
     }
-  });
+
+    const table = type === "person" ? "persons" : type === "relationship" ? "person_relationships" : "person_addresses";
+    if (type !== "address" || address) syncToSupabase({ table, action: "delete", match: address ?? { id: key } });
+  })();
 
   return NextResponse.json({ ok: true });
 }

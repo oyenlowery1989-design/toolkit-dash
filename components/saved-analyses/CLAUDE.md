@@ -1,6 +1,6 @@
 ## Saved Analyses Module
 - Hook: `hooks/use-saved-analyses.ts` — DB-backed, stores `SavedAnalysis` (id, name, assetCode, issuer, distribAddresses, network, timestamp, result, notes?, tags?)
-- `result` is the full `AssetProceedsResult` — all XLM proceeds/sold/outgoing/onHand + topDestinations
+- Stored `result` remains the full `AssetProceedsResult`. List responses omit raw ledgers and preserve totals, top destinations and exact graph flow summaries. Full detail is fetched on demand and streamed.
 - **Auto-save**: Asset Sales' Bulk tab calls `saveAnalysis()` automatically on each row completion (no manual button needed); Single Asset tab still has manual "Save Analysis" button; Asset Lookup's Distribution Sales feature also auto-saves (added so all three proceeds-producing surfaces share one history)
 - `SavedAnalysesPanel` has three tabs, keeping the page compact. Inactive audit tabs are deferred until opened, so the initial Analyses view does not calculate their detail tables:
   - **Analyses**: aggregate stats, search, and the saved-analysis list in either table or cards view.
@@ -12,5 +12,5 @@
 - **Aggregate stats bar**: total XLM proceeds, total outgoing, unique assets, unique issuers, top earner — shown above the list
 - **Compare Snapshots** section (`components/saved-analyses/SnapshotCompare.tsx` + `lib/saved-analyses/diff.ts`): groups saved analyses by `assetCode:issuer:network`, shown only for assets with 2+ snapshots. Pick a baseline (older) and compare (newer) snapshot — renders field deltas (XLM proceeds/asset sold/outgoing/on-hand, before → after with signed delta) plus a destinations-diff table (`new`/`increased`/`decreased`/`dropped` per address, sorted by `|delta|` desc). "dropped" means the address fell out of the top-50 `topDestinations` cap, not proven-empty — this is stated in the UI. Collapsed by default, next to Cross-Asset Destinations
 - **Cross-Asset Destinations** section: aggregates `topDestinations` across ALL filtered analyses, highlights addresses that appear in multiple assets with a yellow "shared" badge — reveals shared banks/exchanges across projects; collapsed by default
-- DB endpoint: `/api/db/saved-analyses`; the page loads only the newest 50 snapshots to keep its payload bounded. Export and startup sync retain full history.
-- `window focus` sync not added to saved-analyses (only asset-groups has it) — may be needed if cross-tab save is required
+- DB endpoint: `/api/db/saved-analyses`; small summary pages use timestamp+ID cursors and load the complete history without a 50-row cap. `?id=...` retrieves one full snapshot. Export streams complete JSON and startup sync retains full history.
+- Window focus reloads the summary cache; generation/session checks reject stale continuation or detail responses. Save-only callers use `{ load: false }`.

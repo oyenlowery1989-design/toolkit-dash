@@ -47,7 +47,7 @@ import { fetchHomeDomain } from "@/components/shared/ChainDisplay";
 import { assetKey, diffSnapshots } from "@/lib/saved-analyses/diff";
 import { DeltaBadge, FieldDeltaCard } from "@/components/saved-analyses/SnapshotCompare";
 import { timeAgo } from "@/lib/stellar-helpers";
-import type { SavedAnalysis } from "@/hooks/use-saved-analyses";
+import type { SavedAnalysisSummary } from "@/hooks/use-saved-analyses";
 import {
   notifyIfHidden,
   requestNotificationPermission,
@@ -67,7 +67,7 @@ import {
 // ---------------------------------------------------------------------------
 
 interface PriorSaveInfo {
-  matches: SavedAnalysis[]; // sorted newest-first
+  matches: SavedAnalysisSummary[]; // sorted newest-first
 }
 
 interface AssetRow {
@@ -87,7 +87,7 @@ interface AssetRow {
 }
 
 /** True when a fresh result is identical (all tracked fields + destinations) to the given prior save. */
-function isUnchangedSince(prior: SavedAnalysis, result: AssetProceedsResult): boolean {
+function isUnchangedSince(prior: SavedAnalysisSummary, result: AssetProceedsResult): boolean {
   const diff = diffSnapshots(prior, { ...prior, timestamp: Date.now(), result });
   return diff.fields.every((f) => f.delta === 0) && diff.destinations.length === 0;
 }
@@ -138,7 +138,7 @@ function SavedEntryRow({
   isLatest,
   onDelete,
 }: {
-  analysis: SavedAnalysis;
+  analysis: SavedAnalysisSummary;
   xlmUsdPrice: number | null;
   isLatest: boolean;
   onDelete: (id: string) => void;
@@ -335,7 +335,8 @@ export function AssetSalesTab() {
   const router = useRouter();
   const { settings, updateSettings } = useSettings();
   const { upsert: upsertSearch } = useSavedSearches();
-  const { analyses: savedAnalyses, saveAnalysis, remove: removeSavedAnalysis } = useSavedAnalyses();
+  const { analyses: savedAnalyses, saveAnalysis, remove: removeSavedAnalysis, isLoaded: historyLoaded, loadingHistory, error: historyError, retry: retryHistory } = useSavedAnalyses();
+  const historyReady = historyLoaded && !loadingHistory && !historyError;
   const { groups } = useAssetGroups();
   const {
     history: searchHistory,
@@ -436,6 +437,7 @@ export function AssetSalesTab() {
   };
 
   const handleRun = async () => {
+    if (!historyReady) return;
     const pairs = parseAssetPairs(assetsText);
     if (pairs.length === 0) {
       setParseError("No valid CODE:ISSUER pairs found. Enter one per line.");
@@ -519,7 +521,7 @@ export function AssetSalesTab() {
             const hd = await fetchHomeDomain(horizonUrl, issuer, signal);
             if (!signal.aborted && hd) updateRow(i, { homeDomain: hd });
           } else {
-            // Step 1: infer distribution address from issuer payments.
+            // Step 1: infer issuer-funded recipients, including verified claim relays.
             updateRow(i, { status: "inferring" });
             try {
               const candidates = await inferDistribLite(
@@ -527,6 +529,7 @@ export function AssetSalesTab() {
                 assetCode,
                 issuer,
                 signal,
+                (message) => console.info(`[Asset Sales ${assetCode}] ${message}`),
               );
               if (signal.aborted) return;
               if (candidates.length === 0) {
@@ -642,12 +645,12 @@ export function AssetSalesTab() {
 
   // Fire a pending autorun once the deep-linked text has actually landed in state.
   useEffect(() => {
-    if (pendingAutorunRef.current && assetsText) {
+    if (pendingAutorunRef.current && assetsText && historyReady) {
       pendingAutorunRef.current = false;
       handleRun();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [assetsText]);
+  }, [assetsText, historyReady]);
 
   const handleCancel = () => {
     abortRef.current?.abort();
@@ -853,7 +856,7 @@ export function AssetSalesTab() {
           </div>
         </CardContent>
         <CardFooter className="flex gap-2 flex-wrap">
-          <Button onClick={handleRun} disabled={running}>
+          <Button onClick={handleRun} disabled={running || !historyReady}>
             {running ? (
               <Loader2 className="mr-2 h-4 w-4 animate-spin" />
             ) : (
@@ -886,6 +889,8 @@ export function AssetSalesTab() {
         </CardFooter>
       </Card>
 
+      {(!historyLoaded || loadingHistory) && <p className="text-sm text-muted-foreground">Loading saved history for comparison…</p>}
+      {historyError && <div role="alert" className="text-sm text-destructive">{historyError} <Button size="sm" variant="outline" onClick={retryHistory}>Retry history</Button></div>}
       {/* Running progress */}
       {running && (
         <div className="flex items-center gap-3 rounded-lg border border-border bg-muted/40 px-4 py-3">

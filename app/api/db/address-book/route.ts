@@ -64,32 +64,31 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true });
   }
 
-  getDb()
-    .prepare(
-      `INSERT INTO address_book (public_key, label, notes, color, created_at)
+  return getDb().transaction(() => {
+    getDb()
+      .prepare(
+        `INSERT INTO address_book (public_key, label, notes, color, created_at)
        VALUES (?, ?, ?, ?, ?)
        ON CONFLICT(public_key) DO UPDATE SET
          label = excluded.label,
          notes = excluded.notes,
          color = excluded.color`,
-    )
-    .run(b.publicKey, b.label, b.notes ?? null, b.color ?? null, now);
+      )
+      .run(b.publicKey, b.label, b.notes ?? null, b.color ?? null, now);
 
-  syncToSupabase(() =>
-    getSupabase()!.from("address_book").upsert(
-      {
+    syncToSupabase({
+      table: "address_book", action: 'upsert', data: {
         user_id: userId,
         public_key: b.publicKey,
         label: b.label,
         notes: b.notes ?? null,
         color: b.color ?? null,
         created_at: now,
-      },
-      { onConflict: "user_id,public_key" },
-    ),
-  );
+      }, onConflict: "user_id,public_key"
+    });
 
-  return NextResponse.json({ ok: true });
+    return NextResponse.json({ ok: true });
+  })();
 }
 
 export async function DELETE(req: NextRequest) {
@@ -113,10 +112,10 @@ export async function DELETE(req: NextRequest) {
     return NextResponse.json({ ok: true });
   }
 
-  getDb().prepare("DELETE FROM address_book WHERE public_key = ?").run(key);
-  syncToSupabase(() =>
-    getSupabase()!.from("address_book").delete().eq("user_id", userId!).eq("public_key", key),
-  );
+  return getDb().transaction(() => {
+    getDb().prepare("DELETE FROM address_book WHERE public_key = ?").run(key);
+    syncToSupabase({ table: "address_book", action: 'delete', match: { "user_id": userId!, "public_key": key } });
 
-  return NextResponse.json({ ok: true });
+    return NextResponse.json({ ok: true });
+  })();
 }

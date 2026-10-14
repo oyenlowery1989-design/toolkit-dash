@@ -25,6 +25,8 @@ Keep the encryption key stable across deployments. Losing it makes encrypted sig
 
 ## Deployment order
 
+These steps describe an initial installation. For the existing deployment's audited recovery update, use the release checklist below; do not reset the database or re-run the full schema as a substitute for the reviewed migration.
+
 1. Apply `supabase-schema.sql`, then `supabase-rls-migration.sql` using a privileged migration connection.
 2. Run `supabase test db`; all tenant-isolation tests must pass.
 3. Deploy with mainnet transactions disabled and browser signing disabled.
@@ -33,6 +35,19 @@ Keep the encryption key stable across deployments. Losing it makes encrypted sig
 6. Run `npm run drill:backup` against a disposable dual-provider deployment. Use validation-only mode first; set `DRILL_CONFIRM_DISPOSABLE=DISPOSABLE` only on a target that can be overwritten.
 7. Verify browser safety tests and CI are green.
 8. Set explicit limits and, if practical, a destination allowlist. Only then set `MAINNET_TRANSACTIONS_ENABLED=true` and redeploy.
+
+## Audited recovery update — release checklist
+
+Preparation is local until deployment is explicitly authorized. Do not push a deployment-triggering branch during preparation.
+
+1. Preserve a complete database backup, including the server-only signing budget, issuance claims, and payment/reward recovery records. Keep the existing encryption and approval secrets stable.
+2. Confirm the previous bulk-payment journal migration is already present. Apply only the pending `supabase/migrations/20261014120906_atomic_local_restore.sql` using the approved production migration process. It adds/replaces one restore function and limits execution to `service_role`; it does not replace user tables or rewrite their contents.
+3. Verify that `restore_local_backup(text,jsonb)` exists, uses invoker permissions, and cannot be executed by `anon` or `authenticated`. Do not exercise the restore function on production data as a smoke test. A missing function safely disables local-to-cloud restore with HTTP 503.
+4. Commit the reviewed source, new regression tests and migration together as the configured Git user; publish/deploy only after authorization. Preserve the approved 10,000 XLM per-run and 10,000 XLM per-day limits and existing signing safety controls.
+5. After deployment, check the authenticated health endpoint, wallet/analysis/group loading, and Payments recovery state without sending funds. A journal whose outcome is uncertain must remain blocked; never clear it merely to permit another payment.
+6. Confirm no new runtime errors or authorization failures. For an application rollback, preserve all journals/consumed approvals and pause transaction execution until pending hashes are reconciled; an older UI may not enforce the new recovery controls.
+
+Local verification commands include `npm test`, `npm run test:e2e`, `npm run test:e2e:session`, TypeScript, lint/build, and the `database-security` job's Supabase/TAP plus BOOLEAN/INTEGER restore assertions. The session suite uses real browser/SDK state changes with isolated test responses and cannot submit live transactions.
 
 ## Health and alerting
 

@@ -323,68 +323,120 @@ export async function inferDistributionAddresses(
 // Lightweight distribution inference (no full holder crawl required)
 // ---------------------------------------------------------------------------
 
-/**
- * Infer the most likely distribution address(es) for an asset.
- *
- * Strategy: scan all outgoing payments of this asset from the issuer account.
- * The distribution address is definitively whoever received the most asset
- * from the issuer — top holders are buyers/holders, not necessarily the
- * distribution address (they could have acquired tokens on the DEX).
- *
- * Uses /payments endpoint (payment ops only, faster than /operations).
- *
- * Returns up to 5 candidates sorted by total received, highest first.
- */
+/** Rank issuer-funded recipients, following only proven claimable-balance receipts. */
 export async function inferDistribLite(
   horizonUrl: string,
   assetCode: string,
   issuer: string,
   signal: AbortSignal,
+  onLog?: (message: string) => void,
 ): Promise<{ address: string; score: number; reason: string }[]> {
   const horizonBase = horizonUrl.replace(/\/$/, "");
-  const paymentTotals = new Map<string, { amount: number; count: number }>();
-  let cursor: string | undefined;
-
-  while (!signal.aborted) {
-    const params = new URLSearchParams({ limit: "200", order: "asc" });
-    if (cursor) params.set("cursor", cursor);
-    const data = (await fetchJson(
-      `${horizonBase}/accounts/${encodeURIComponent(issuer)}/payments?${params}`,
-      signal,
-    )) as { _embedded?: { records?: Record<string, unknown>[] } };
-    const records = data._embedded?.records ?? [];
-
-    for (const op of records) {
-      const isPaymentType =
-        op.type === "payment" ||
-        op.type === "path_payment_strict_send" ||
-        op.type === "path_payment_strict_receive";
-      if (!isPaymentType) continue;
-      // Must be outgoing and for this specific asset
-      if (op.from !== issuer) continue;
-      if (op.asset_code !== assetCode || op.asset_issuer !== issuer) continue;
-      const to = op.to as string | undefined;
-      if (!to || to === issuer) continue;
-      const amount = parseFloat((op.amount as string) ?? "0");
-      const existing = paymentTotals.get(to) ?? { amount: 0, count: 0 };
-      paymentTotals.set(to, {
-        amount: existing.amount + amount,
-        count: existing.count + 1,
-      });
+  type RecordData = Record<string, unknown>;
+  const totals = new Map<string, { amount: number; count: number; cursor?: string; claimed: boolean }>();
+  const readRecords = async (path: string, firstCursor?: string, pageLimit = 20) => {
+    const records: RecordData[] = [];
+    let cursor = firstCursor;
+    for (let page = 0; page < pageLimit; page++) {
+      signal.throwIfAborted();
+      const params = new URLSearchParams({ limit: "200", order: "asc" });
+      if (cursor) params.set("cursor", cursor);
+      const url = `${horizonBase}${path}?${params}`;
+      onLog?.(`  GET ${url}`);
+      const data = await fetchJson(url, signal, { onLog });
+      signal.throwIfAborted();
+      const batch: RecordData[] = data._embedded?.records ?? [];
+      records.push(...batch);
+      if (batch.length < 200) return records;
+      const next = batch[batch.length - 1].paging_token;
+      if (typeof next !== "string" || next === cursor) break;
+      cursor = next;
     }
+    throw new Error("Distributor inference history limit reached. Enter seller accounts manually.");
+  };
 
-    if (records.length < 200) break;
-    cursor = records[records.length - 1].paging_token as string;
+  const payments = await readRecords(`/accounts/${encodeURIComponent(issuer)}/payments`, undefined, Infinity);
+  for (const op of payments) {
+    if (!["payment", "path_payment_strict_send", "path_payment_strict_receive"].includes(String(op.type))) continue;
+    if (op.transaction_successful === false || op.from !== issuer) continue;
+    if (op.asset_code !== assetCode || op.asset_issuer !== issuer) continue;
+    const to = op.to;
+    const amount = Number(op.amount);
+    if (typeof to !== "string" || to === issuer || !Number.isFinite(amount) || amount <= 0) continue;
+    const existing = totals.get(to);
+    totals.set(to, {
+      amount: (existing?.amount ?? 0) + amount,
+      count: (existing?.count ?? 0) + 1,
+      cursor: existing?.cursor ?? (typeof op.paging_token === "string" ? op.paging_token : undefined),
+      claimed: false,
+    });
   }
 
-  const ranked = [...paymentTotals.entries()]
-    .sort((a, b) => b[1].amount - a[1].amount)
-    .slice(0, 5);
-
+  // shortcut: trace the top five funded accounts and at most three claim hops;
+  // deeper or wider proven routes require explicit seller accounts.
+  const queue = [...totals.entries()].sort((a, b) => b[1].amount - a[1].amount)
+    .slice(0, 5).map(([address]) => ({ address, depth: 0 }));
+  const visited = new Set<string>();
+  const seenBalances = new Set<string>();
+  for (let index = 0; index < queue.length; index++) {
+    signal.throwIfAborted();
+    const { address, depth } = queue[index];
+    if (visited.has(address)) continue;
+    if (index >= 20) throw new Error("Distributor inference account limit reached. Enter seller accounts manually.");
+    visited.add(address);
+    const info = totals.get(address)!;
+    const operations = await readRecords(`/accounts/${encodeURIComponent(address)}/operations`, info.cursor);
+    for (const op of operations) {
+      if (op.type !== "create_claimable_balance" || op.transaction_successful === false) continue;
+      if (op.source_account !== address || op.asset !== `${assetCode}:${issuer}`) continue;
+      const amount = Number(op.amount);
+      if (!Number.isFinite(amount) || amount <= 0 || info.amount <= 0) continue;
+      if (typeof op.id !== "string") throw new Error("Missing claimable-balance creation ID. Enter seller accounts manually.");
+      // Creation operations omit balance_id; the successful creation effect proves it.
+      const effects = await readRecords(`/operations/${encodeURIComponent(op.id)}/effects`);
+      const effect = effects.find(e => e.type === "claimable_balance_created"
+        && e.account === address && e.asset === op.asset && Number(e.amount) === amount);
+      if (typeof effect?.balance_id !== "string") {
+        throw new Error("Claimable-balance creation history is incomplete. Enter seller accounts manually.");
+      }
+      const balanceId = effect.balance_id;
+      if (seenBalances.has(balanceId)) continue;
+      seenBalances.add(balanceId);
+      const history = await readRecords(`/claimable_balances/${encodeURIComponent(balanceId)}/operations`);
+      if (!history.some(ref => ref.type === "create_claimable_balance" && ref.id === op.id && ref.source_account === address
+        && ref.asset === op.asset && Number(ref.amount) === amount && ref.transaction_successful === true)) {
+        throw new Error("Claimable-balance history does not prove its creation. Enter seller accounts manually.");
+      }
+      const claim = history.find(ref => ref.type === "claim_claimable_balance" && ref.balance_id === balanceId && ref.transaction_successful === true
+        && (ref.source_account === undefined || ref.source_account === ref.claimant));
+      if (!claim || typeof claim.claimant !== "string" || claim.claimant === address || claim.claimant === issuer) continue;
+      if (history.some(ref => ref.type === "clawback_claimable_balance" && ref.transaction_successful === true)) continue;
+      const claimants = op.claimants as { destination?: string }[] | undefined;
+      if (!claimants?.some(c => c.destination === claim.claimant)) continue;
+      if (depth >= 3 || visited.has(claim.claimant)) {
+        throw new Error("Distributor inference reached a claim hop limit, cycle or converging route. Enter seller accounts manually.");
+      }
+      const transferred = Math.min(amount, info.amount);
+      info.amount -= transferred;
+      const recipient = totals.get(claim.claimant);
+      totals.set(claim.claimant, {
+        amount: (recipient?.amount ?? 0) + transferred,
+        count: (recipient?.count ?? 0) + 1,
+        cursor: recipient?.cursor ?? (typeof claim.paging_token === "string" ? claim.paging_token : undefined),
+        claimed: true,
+      });
+      queue.push({ address: claim.claimant, depth: depth + 1 });
+    }
+  }
+  signal.throwIfAborted();
+  const ranked = [...totals.entries()].filter(([, info]) => info.amount > 0)
+    .sort((a, b) => b[1].amount - a[1].amount).slice(0, 5);
   return ranked.map(([address, info], i) => ({
     address,
     score: ranked.length - i,
-    reason: `Received ${Number(info.amount).toLocaleString()} ${assetCode} from issuer across ${info.count} payment${info.count !== 1 ? "s" : ""}`,
+    reason: info.claimed
+      ? `Verified claim recipient of up to ${info.amount.toLocaleString()} ${assetCode} from issuer-funded distribution; retained Horizon history only`
+      : `Remaining issuer-funded amount: ${info.amount.toLocaleString()} ${assetCode} across ${info.count} direct payment${info.count !== 1 ? "s" : ""}; retained Horizon history only`,
   }));
 }
 

@@ -1,3 +1,4 @@
+import { normalizeApprovalGuardToken, readBackupRunGuards, LOCAL_RUN_GUARDS_SQL } from "@/lib/backup-run-guards";
 /**
  * POST /api/db/restore
  * Restores data from Supabase into local SQLite (or vice versa).
@@ -10,7 +11,8 @@
  */
 import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
-import { getSupabase, isSupabaseConfigured, requireAuth } from "@/lib/supabase-server";
+import { LocalRestoreBusyError, withLocalRestoreLock } from "@/lib/local-restore-lock";
+import { getSupabase, isSupabaseConfigured, isSupabaseOnly, requireAuth } from "@/lib/supabase-server";
 import { encryptImportedStoredSecret } from "@/lib/secret-storage";
 import { readAllChildRows, readAllUserRows } from "@/lib/supabase-read-all";
 
@@ -33,6 +35,16 @@ export async function POST(req: NextRequest) {
 
   if (!isSupabaseConfigured()) {
     return NextResponse.json({ error: "Supabase not configured" }, { status: 400 });
+  }
+
+  if (isSupabaseOnly()) {
+    return NextResponse.json({ error: "Restore requires a local SQLite database. Use export/import for Supabase-only deployments." }, { status: 400 });
+  }
+
+  try {
+    return await withLocalRestoreLock(async () => {
+  if (auth.userId && getDb().prepare("SELECT 1 FROM local_backup_queue WHERE user_id = ? LIMIT 1").get(auth.userId)) {
+    return NextResponse.json({ error: "Local backup changes are pending. Let them finish syncing before restoring either direction." }, { status: 409 });
   }
 
   const sb = getSupabase()!;
@@ -117,11 +129,10 @@ export async function POST(req: NextRequest) {
     const [tieredRewardAssets] = unwrapReads(
       [tieredRewardAssetsRead as SupabaseRead], ["tiered_reward_assets"],
     );
-    const rewardGuardIds = tieredConfigIds.map((id) => `reward-guard:${id}`);
-    const rewardGuardRead = rewardGuardIds.length > 0
-      ? await readAllChildRows(sb, "tiered_reward_run_leases", "resource_id", rewardGuardIds)
-      : { data: [], error: null };
-    const [tieredRewardRunLeases] = unwrapReads([rewardGuardRead as SupabaseRead], ["tiered_reward_run_leases"]);
+    const rewardGuardRead = await readBackupRunGuards(sb, userId, tieredConfigIds);
+    const [cloudRunGuards] = unwrapReads([rewardGuardRead as SupabaseRead], ["tiered_reward_run_leases"]);
+    const tieredRewardRunLeases = cloudRunGuards.map(row => row.resource_id === `payment-guard:${userId}`
+      ? { ...row, resource_id: "payment-guard:local" } : row);
     const remoteJournal = bulkPaymentJournal[0];
     if (remoteJournal) {
       const localJournal = db.prepare("SELECT run_id, version, payload_json FROM bulk_payment_journal WHERE user_id = 'local'")
@@ -133,9 +144,14 @@ export async function POST(req: NextRequest) {
     }
     for (const row of tieredRewardRunLeases) {
       const existing = db.prepare("SELECT lease_token FROM tiered_reward_run_leases WHERE resource_id = ?").get(row.resource_id) as { lease_token: string } | undefined;
-      if (existing && existing.lease_token !== row.lease_token) {
+      if (existing && normalizeApprovalGuardToken(row.resource_id as string, existing.lease_token, userId) !==
+        normalizeApprovalGuardToken(row.resource_id as string, row.lease_token as string, userId)) {
         return NextResponse.json({ error: "A local reward run guard differs; reconcile it before restoring" }, { status: 409 });
       }
+    }
+
+    if (db.prepare("SELECT 1 FROM local_backup_queue WHERE user_id = ? LIMIT 1").get(userId)) {
+      return NextResponse.json({ error: "Local backup changes arrived during restore. Let them finish syncing before retrying." }, { status: 409 });
     }
 
     db.transaction(() => {
@@ -219,11 +235,11 @@ export async function POST(req: NextRequest) {
       for (const r of autoSendGroups ?? []) {
         db.prepare(`INSERT INTO auto_send_groups (id, name, network, secret_key, interval_minutes, enabled, batch_send, batch_memo, min_reserve, min_sender_threshold, preview_only, last_failure_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT(id) DO UPDATE SET name = excluded.name, network = excluded.network, secret_key = excluded.secret_key, interval_minutes = excluded.interval_minutes, enabled = excluded.enabled, batch_send = excluded.batch_send, batch_memo = excluded.batch_memo, min_reserve = excluded.min_reserve, min_sender_threshold = excluded.min_sender_threshold, preview_only = excluded.preview_only, last_failure_at = excluded.last_failure_at, created_at = excluded.created_at`)
-          .run(r.id, r.name, "public", encryptImportedStoredSecret(r.secret_key), r.interval_minutes, r.enabled, r.batch_send, r.batch_memo, r.min_reserve, r.min_sender_threshold, r.preview_only, r.last_failure_at, r.created_at);
+          .run(r.id, r.name, "public", encryptImportedStoredSecret(r.secret_key), r.interval_minutes, Number(r.enabled), Number(r.batch_send), r.batch_memo, r.min_reserve, r.min_sender_threshold, Number(r.preview_only), r.last_failure_at, r.created_at);
       }
       for (const r of autoSendDestinations ?? []) {
         db.prepare(`INSERT OR REPLACE INTO auto_send_destinations (id, group_id, destination, percentage, is_remainder, is_paused, label, memo, min_threshold, max_cap, position) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-          .run(r.id, r.group_id, r.destination, r.percentage, r.is_remainder, r.is_paused, r.label, r.memo, r.min_threshold, r.max_cap, r.position);
+          .run(r.id, r.group_id, r.destination, r.percentage, Number(r.is_remainder), Number(r.is_paused), r.label, r.memo, r.min_threshold, r.max_cap, r.position);
       }
       for (const r of autoSendRunLog ?? []) {
         db.prepare(`INSERT OR REPLACE INTO auto_send_run_log (id, group_id, wallet_address, destination, amount_sent, status, error, ran_at, tx_hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
@@ -239,7 +255,7 @@ export async function POST(req: NextRequest) {
       }
       for (const r of bulkScanState ?? []) {
         db.prepare(`INSERT OR REPLACE INTO bulk_scan_state (id, scan_key, rows_json, interrupted, updated_at) VALUES (?, ?, ?, ?, ?)`)
-          .run(`local:${r.scan_key}`, r.scan_key, r.rows_json, r.interrupted, r.updated_at);
+          .run(`local:${r.scan_key}`, r.scan_key, r.rows_json, Number(r.interrupted), r.updated_at);
       }
       for (const r of bulkPaymentJournal ?? []) {
         db.prepare(`INSERT OR IGNORE INTO bulk_payment_journal (user_id, run_id, version, payload_json, updated_at) VALUES (?, ?, ?, ?, ?)`)
@@ -250,7 +266,7 @@ export async function POST(req: NextRequest) {
           ? r.exclude_addresses : JSON.stringify(r.exclude_addresses ?? []);
         db.prepare(`INSERT INTO tiered_reward_configs (id, name, asset_code, asset_issuer, network, secret_key, interval_minutes, enabled, min_reserve, min_sender_threshold, preview_only, batch_send, memo, fee_multiplier, exclude_addresses, last_run_at, last_failure_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT(id) DO UPDATE SET name = excluded.name, asset_code = excluded.asset_code, asset_issuer = excluded.asset_issuer, network = excluded.network, secret_key = excluded.secret_key, interval_minutes = excluded.interval_minutes, enabled = excluded.enabled, min_reserve = excluded.min_reserve, min_sender_threshold = excluded.min_sender_threshold, preview_only = excluded.preview_only, batch_send = excluded.batch_send, memo = excluded.memo, fee_multiplier = excluded.fee_multiplier, exclude_addresses = excluded.exclude_addresses, last_run_at = excluded.last_run_at, last_failure_at = excluded.last_failure_at, created_at = excluded.created_at`)
-          .run(r.id, r.name, r.asset_code, r.asset_issuer, "public", encryptImportedStoredSecret(r.secret_key), r.interval_minutes, r.enabled, r.min_reserve, r.min_sender_threshold, r.preview_only, r.batch_send, r.memo, r.fee_multiplier, excludeAddresses, r.last_run_at, r.last_failure_at, r.created_at);
+          .run(r.id, r.name, r.asset_code, r.asset_issuer, "public", encryptImportedStoredSecret(r.secret_key), r.interval_minutes, Number(r.enabled), r.min_reserve, r.min_sender_threshold, Number(r.preview_only), Number(r.batch_send), r.memo, r.fee_multiplier, excludeAddresses, r.last_run_at, r.last_failure_at, r.created_at);
       }
       for (const r of tieredRewardTiers ?? []) {
         db.prepare(`INSERT INTO tiered_reward_tiers (id, config_id, tier_number, min_tokens, max_tokens, position) VALUES (?, ?, ?, ?, ?, ?)
@@ -305,153 +321,76 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const db = getDb();
-
-    const tables = [
-      { name: "address_book", rows: db.prepare("SELECT * FROM address_book").all() },
-      { name: "known_intermediaries", rows: db.prepare("SELECT * FROM known_intermediaries").all() },
-      { name: "known_creators", rows: db.prepare("SELECT * FROM known_creators").all() },
-      { name: "saved_analyses", rows: db.prepare("SELECT * FROM saved_analyses").all() },
-      { name: "bulk_recipients", rows: db.prepare("SELECT * FROM bulk_recipients").all() },
-      { name: "proceeds_presets", rows: db.prepare("SELECT * FROM proceeds_presets").all() },
-      { name: "saved_searches", rows: db.prepare("SELECT * FROM saved_searches").all() },
-      { name: "bulk_run_history", rows: db.prepare("SELECT * FROM bulk_run_history").all() },
-      { name: "persons", rows: db.prepare("SELECT * FROM persons").all() },
-      { name: "person_addresses", rows: db.prepare("SELECT * FROM person_addresses").all() },
-      { name: "person_relationships", rows: db.prepare("SELECT * FROM person_relationships").all() },
-      { name: "asset_groups", rows: db.prepare("SELECT * FROM asset_groups").all() },
-      { name: "asset_group_members", rows: db.prepare("SELECT * FROM asset_group_members").all() },
-      { name: "wallet_folders", rows: db.prepare("SELECT * FROM wallet_folders").all() },
-      { name: "wallets", rows: db.prepare("SELECT * FROM wallets").all() },
-      { name: "app_state", rows: db.prepare("SELECT * FROM app_state").all() },
-      { name: "auto_send_groups", rows: db.prepare("SELECT * FROM auto_send_groups").all() },
-      { name: "auto_send_destinations", rows: db.prepare("SELECT * FROM auto_send_destinations").all() },
-      { name: "auto_send_run_log", rows: db.prepare("SELECT * FROM auto_send_run_log").all() },
-      { name: "creator_children", rows: db.prepare("SELECT * FROM creator_children").all() },
-      { name: "bulk_scan_state", rows: db.prepare("SELECT * FROM bulk_scan_state").all() },
-      { name: "bulk_payment_journal", rows: db.prepare("SELECT * FROM bulk_payment_journal").all() },
-      { name: "tiered_reward_configs", rows: db.prepare("SELECT * FROM tiered_reward_configs").all() },
-      { name: "tiered_reward_tiers", rows: db.prepare("SELECT * FROM tiered_reward_tiers").all() },
-      { name: "tiered_reward_assets", rows: db.prepare("SELECT * FROM tiered_reward_assets").all() },
-      { name: "tiered_reward_run_log", rows: db.prepare("SELECT * FROM tiered_reward_run_log").all() },
-    ];
-
-    // Saved analyses: parse JSON fields back to objects for Supabase JSONB
-    const savedAnalysesRows = (db.prepare("SELECT * FROM saved_analyses").all() as Record<string, unknown>[]).map((r) => ({
-      ...r,
-      distrib_addresses: JSON.parse(r.distrib_addresses as string),
-      result_json: JSON.parse(r.result_json as string),
-      tags: r.tags ? JSON.parse(r.tags as string) : null,
-    }));
-    const bulkRecipientsRows = (db.prepare("SELECT * FROM bulk_recipients").all() as Record<string, unknown>[]).map((r) => ({
-      ...r,
-      addresses: JSON.parse(r.addresses as string),
-    }));
-    const creatorChildrenRows = (db.prepare("SELECT * FROM creator_children").all() as Record<string, unknown>[]).map((r) => ({
-      ...r,
-      network: "public",
-      issued_assets: r.issued_assets ? JSON.parse(r.issued_assets as string) : null,
-      distributed_assets: r.distributed_assets ? JSON.parse(r.distributed_assets as string) : null,
-    }));
-    const bulkScanStateRows = (db.prepare("SELECT * FROM bulk_scan_state").all() as Record<string, unknown>[]).map(({ id: _id, ...r }) => r);
-    const journalRows = db.prepare("SELECT * FROM bulk_payment_journal").all() as Record<string, unknown>[];
-    if (journalRows.length) {
-      const { data: remoteJournal, error: journalReadError } = await sb.from("bulk_payment_journal")
-        .select("run_id,version,payload_json").eq("user_id", userId).maybeSingle();
-      if (journalReadError) return NextResponse.json({ error: "Could not inspect the remote payment journal" }, { status: 502 });
-      const localJournal = journalRows[0];
-      if (remoteJournal && (remoteJournal.run_id !== localJournal.run_id ||
-          remoteJournal.version > Number(localJournal.version) ||
-          remoteJournal.version === Number(localJournal.version) && remoteJournal.payload_json !== localJournal.payload_json)) {
-        return NextResponse.json({ error: "Remote payment journal differs; reconcile it before restoring" }, { status: 409 });
+    try {
+      const db = getDb();
+      // Snapshot every table together; the RPC commits the entire cloud merge or nothing.
+      const payload = db.transaction(() => {
+        const tables = [
+          "address_book", "known_intermediaries", "known_creators", "saved_analyses",
+          "bulk_recipients", "proceeds_presets", "saved_searches", "bulk_run_history",
+          "persons", "person_addresses", "person_relationships", "asset_groups",
+          "asset_group_members", "wallet_folders", "wallets", "app_state",
+          "auto_send_groups", "auto_send_destinations", "auto_send_run_log",
+          "creator_children", "bulk_scan_state", "bulk_payment_journal",
+          "tiered_reward_configs", "tiered_reward_tiers", "tiered_reward_assets",
+          "tiered_reward_run_log",
+        ];
+        const jsonColumns: Record<string, string[]> = {
+          saved_analyses: ["distrib_addresses", "result_json", "tags"],
+          bulk_recipients: ["addresses"],
+          creator_children: ["issued_assets", "distributed_assets"],
+          tiered_reward_configs: ["exclude_addresses"],
+        };
+        const booleanColumns = ["enabled", "batch_send", "preview_only", "is_remainder", "is_paused", "interrupted"];
+        const result: Record<string, Record<string, unknown>[]> = {};
+        for (const table of tables) {
+          result[table] = (db.prepare(`SELECT * FROM ${table}`).all() as Record<string, unknown>[]).map((original) => {
+            const row = { ...original };
+            delete row.user_id;
+            if (table === "saved_searches" || table === "bulk_scan_state") delete row.id;
+            for (const column of jsonColumns[table] ?? []) {
+              if (typeof row[column] === "string") row[column] = JSON.parse(row[column] as string);
+            }
+            for (const column of booleanColumns) {
+              if (column in row) row[column] = Boolean(row[column]);
+            }
+            if ("secret_key" in row) row.secret_key = encryptImportedStoredSecret(row.secret_key);
+            if (["creator_children", "tiered_reward_configs", "auto_send_groups"].includes(table)) row.network = "public";
+            return row;
+          });
+        }
+        result.tiered_reward_run_leases = db.prepare(LOCAL_RUN_GUARDS_SQL).all() as Record<string, unknown>[];
+        result.tiered_reward_run_leases = result.tiered_reward_run_leases.map(row => {
+          if (row.resource_id === "payment-guard:local") return { ...row, resource_id: `payment-guard:${userId}` };
+          if (String(row.resource_id).startsWith("reward-approval:")) {
+            const approval = JSON.parse(row.lease_token as string);
+            if (approval.userId !== "local" && approval.userId !== userId) throw new Error("Reward approval belongs to another user");
+            return { ...row, lease_token: JSON.stringify({ ...approval, userId }) };
+          }
+          return row;
+        });
+        return result;
+      })();
+      const { error } = await sb.rpc("restore_local_backup", { p_user_id: userId, p_tables: payload });
+      if (error) {
+        if (error.code === "PGRST202" || error.code === "42883") {
+          return NextResponse.json({ error: "Atomic restore RPC is unavailable. Apply the atomic_local_restore migration and reload the Supabase API schema cache before retrying. No data was restored." }, { status: 503 });
+        }
+        return NextResponse.json({ error: `Atomic restore failed: ${error.message}` }, { status: error.code === "23505" || error.code === "PT409" ? 409 : 502 });
       }
+      return NextResponse.json({ ok: true, message: "Pushed local SQLite to Supabase atomically" });
+    } catch (error) {
+      return NextResponse.json({ error: `Could not prepare local restore: ${error instanceof Error ? error.message : "Unknown error"}` }, { status: 500 });
     }
-    const rewardGuardRows = db.prepare("SELECT * FROM tiered_reward_run_leases WHERE resource_id LIKE 'reward-guard:%'").all() as Record<string, unknown>[];
-    const localConfigIds = new Set((db.prepare("SELECT id FROM tiered_reward_configs").all() as { id: string }[]).map((row) => row.id));
-    if (rewardGuardRows.some((row) => !localConfigIds.has(String(row.resource_id).slice("reward-guard:".length)))) {
-      return NextResponse.json({ error: "A reward run guard has no local config; reconcile it before restoring" }, { status: 409 });
-    }
-    const guardedConfigIds = rewardGuardRows.map((row) => String(row.resource_id).slice("reward-guard:".length));
-    const remoteConfigsRead = guardedConfigIds.length > 0
-      ? await readAllChildRows(sb, "tiered_reward_configs", "id", guardedConfigIds)
-      : { data: [], error: null };
-    if (remoteConfigsRead.error) return NextResponse.json({ error: "Could not verify remote reward config ownership" }, { status: 502 });
-    if ((remoteConfigsRead.data ?? []).some((row) => row.user_id !== userId)) {
-      return NextResponse.json({ error: "A remote reward config belongs to another user" }, { status: 409 });
-    }
-    const remoteRewardGuardRead = rewardGuardRows.length > 0
-      ? await readAllChildRows(sb, "tiered_reward_run_leases", "resource_id", rewardGuardRows.map((row) => row.resource_id as string))
-      : { data: [], error: null };
-    if (remoteRewardGuardRead.error) return NextResponse.json({ error: "Could not inspect remote reward run guards" }, { status: 502 });
-    const remoteRewardGuards = new Map((remoteRewardGuardRead.data ?? []).map((row) => [row.resource_id, row.lease_token]));
-    if (rewardGuardRows.some((row) => remoteRewardGuards.has(row.resource_id) && remoteRewardGuards.get(row.resource_id) !== row.lease_token)) {
-      return NextResponse.json({ error: "A remote reward run guard differs; reconcile it before restoring" }, { status: 409 });
-    }
-    const missingRewardGuards = rewardGuardRows.filter((row) => !remoteRewardGuards.has(row.resource_id));
-    for (let i = 0; i < missingRewardGuards.length; i += 500) {
-      const { error } = await sb.from("tiered_reward_run_leases").insert(missingRewardGuards.slice(i, i + 500));
-      if (error) return NextResponse.json({ error: "Could not preserve reward run guards in Supabase" }, { status: 409 });
-    }
-    const tieredRewardConfigRows = (db.prepare("SELECT * FROM tiered_reward_configs").all() as Record<string, unknown>[]).map((r) => ({
-      ...r,
-      network: "public",
-      secret_key: encryptImportedStoredSecret(r.secret_key),
-      exclude_addresses: r.exclude_addresses ? JSON.parse(r.exclude_addresses as string) : [],
-    }));
-    const walletRows = (db.prepare("SELECT * FROM wallets").all() as Record<string, unknown>[]).map((r) => ({
-      ...r,
-      secret_key: encryptImportedStoredSecret(r.secret_key),
-    }));
-    const autoSendGroupRows = (db.prepare("SELECT * FROM auto_send_groups").all() as Record<string, unknown>[]).map((r) => ({
-      ...r,
-      network: "public",
-      secret_key: encryptImportedStoredSecret(r.secret_key),
-    }));
-
-    // Child tables scoped through their parent's group_id — no user_id column of their own
-    const NO_USER_ID_TABLES = new Set([
-      "person_addresses",
-      "person_relationships",
-      "asset_group_members",
-      "auto_send_destinations",
-      "auto_send_run_log",
-      "tiered_reward_tiers",
-      "tiered_reward_assets",
-    ]);
-
-    const errors: string[] = [];
-
-    for (const { name, rows } of tables) {
-      if (rows.length === 0) continue;
-      const data =
-        name === "saved_analyses" ? savedAnalysesRows :
-        name === "bulk_recipients" ? bulkRecipientsRows :
-        name === "creator_children" ? creatorChildrenRows :
-        name === "bulk_scan_state" ? bulkScanStateRows :
-        name === "tiered_reward_configs" ? tieredRewardConfigRows :
-        name === "wallets" ? walletRows :
-        name === "auto_send_groups" ? autoSendGroupRows :
-        rows;
-
-      const skipUserId = NO_USER_ID_TABLES.has(name);
-
-      // Upsert in batches of 500 — every row must carry the resolved user_id
-      // (except child tables scoped via their parent's group_id)
-      for (let i = 0; i < data.length; i += 500) {
-        const batch = (data.slice(i, i + 500) as Record<string, unknown>[]).map((row) =>
-          skipUserId ? row : { ...row, user_id: userId },
-        );
-        const { error } = await sb.from(name).upsert(batch);
-        if (error) errors.push(`${name}: ${error.message}`);
-      }
-    }
-
-    if (errors.length > 0) {
-      return NextResponse.json({ ok: false, errors }, { status: 500 });
-    }
-
-    return NextResponse.json({ ok: true, message: "Pushed local SQLite to Supabase" });
   }
 
   return NextResponse.json({ error: "source must be 'supabase' or 'local'" }, { status: 400 });
+    });
+  } catch (error) {
+    if (error instanceof LocalRestoreBusyError) {
+      return NextResponse.json({ error: error.message }, { status: 409 });
+    }
+    throw error;
+  }
+
 }

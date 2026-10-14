@@ -1,14 +1,14 @@
-import type { SavedAnalysis } from "@/hooks/use-saved-analyses";
+import type { SavedAnalysisSummary } from "@/hooks/use-saved-analyses";
 import type { DestinationSummary } from "@/lib/proceeds-investigator/types";
 
-export function assetKey(a: Pick<SavedAnalysis, "assetCode" | "issuer" | "network">): string {
+export function assetKey(a: Pick<SavedAnalysisSummary, "assetCode" | "issuer" | "network">): string {
   // Exact case — asset codes are case-sensitive on the Stellar ledger.
   return `${a.assetCode}:${a.issuer}:${a.network}`;
 }
 
 /** Groups analyses by asset identity (code+issuer+network), each group sorted newest-first. */
-export function groupSnapshots(analyses: SavedAnalysis[]): Map<string, SavedAnalysis[]> {
-  const map = new Map<string, SavedAnalysis[]>();
+export function groupSnapshots(analyses: SavedAnalysisSummary[]): Map<string, SavedAnalysisSummary[]> {
+  const map = new Map<string, SavedAnalysisSummary[]>();
   for (const a of analyses) {
     const key = assetKey(a);
     const group = map.get(key);
@@ -23,8 +23,8 @@ export function groupSnapshots(analyses: SavedAnalysis[]): Map<string, SavedAnal
 
 /** Only groups with 2+ snapshots — the minimum needed to show a diff. */
 export function comparableGroups(
-  analyses: SavedAnalysis[],
-): { key: string; snapshots: SavedAnalysis[] }[] {
+  analyses: SavedAnalysisSummary[],
+): { key: string; snapshots: SavedAnalysisSummary[] }[] {
   return [...groupSnapshots(analyses).entries()]
     .filter(([, snapshots]) => snapshots.length >= 2)
     .map(([key, snapshots]) => ({ key, snapshots }));
@@ -73,7 +73,7 @@ function toMap(list: DestinationSummary[]): Map<string, DestinationSummary> {
 }
 
 /** Diffs two snapshots of the same asset. Defensively swaps if passed out of chronological order. */
-export function diffSnapshots(older: SavedAnalysis, newer: SavedAnalysis): SnapshotDiff {
+export function diffSnapshots(older: SavedAnalysisSummary, newer: SavedAnalysisSummary): SnapshotDiff {
   if (older.timestamp > newer.timestamp) {
     return diffSnapshots(newer, older);
   }

@@ -10,6 +10,7 @@ vi.mock("@/lib/db", () => ({ getDb: () => ({ prepare: () => ({ run: () => ({ cha
 import { startKeyScanLoopRun, stopKeyScanLoopRun, updateKeyScanConfig } from "@/lib/key-scanner/loop";
 
 afterEach(() => {
+  global._localRestoreActive = false;
   stopKeyScanLoopRun();
   vi.useRealTimers();
   delete global._keyScanLoop;
@@ -44,4 +45,29 @@ it("discards a result that arrives after the run was stopped", async () => {
   await vi.advanceTimersByTimeAsync(1);
   expect(global._keyScanLoop?.totalGenerated).toBe(0);
   expect(global._keyScanLoop?.totalNotFound).toBe(0);
+});
+
+it("defers a checkpoint during maintenance and persists it after maintenance", async () => {
+  vi.useFakeTimers();
+  checkAccount.mockResolvedValueOnce({ status: "not-found" }).mockImplementation(() => new Promise(() => {}));
+  updateKeyScanConfig({ concurrency: 1, pacedRps: 10 });
+  startKeyScanLoopRun();
+  await vi.advanceTimersByTimeAsync(1);
+  expect(global._keyScanLoop?.dirty).toBe(true);
+  global._localRestoreActive = true;
+  await vi.advanceTimersByTimeAsync(1500);
+  expect(global._keyScanLoop?.dirty).toBe(true);
+  global._localRestoreActive = false;
+  await vi.advanceTimersByTimeAsync(1500);
+  expect(global._keyScanLoop?.dirty).toBe(false);
+});
+
+it("refuses restore while the scanner is running or a checkpoint is pending", async () => {
+  const { withLocalRestoreLock } = await import("@/lib/local-restore-lock");
+  checkAccount.mockImplementation(() => new Promise(() => {}));
+  startKeyScanLoopRun();
+  await expect(withLocalRestoreLock(async () => undefined)).rejects.toThrow("scanner");
+  stopKeyScanLoopRun();
+  global._keyScanLoop!.dirty = true;
+  await expect(withLocalRestoreLock(async () => undefined)).rejects.toThrow("scanner");
 });

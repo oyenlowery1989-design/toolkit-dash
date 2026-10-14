@@ -12,7 +12,7 @@ vi.mock("@/lib/db", () => ({ getDb: () => ({ prepare: () => ({
   all: () => [],
 }) }) }));
 vi.mock("@/lib/auto-send/runner", () => ({
-  AutoSendRunInProgressError: class extends Error {}, runGroup: vi.fn(), previewGroup: mocks.preview,
+  AutoSendApprovalChangedError: class extends Error {}, AutoSendRunInProgressError: class extends Error {}, runGroup: vi.fn(), previewGroup: mocks.preview,
 }));
 vi.mock("@/lib/auto-send/scheduler", () => ({ refreshScheduler: vi.fn() }));
 vi.mock("@/lib/mainnet-signing-budget", () => ({

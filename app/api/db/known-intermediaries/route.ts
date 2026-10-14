@@ -98,30 +98,29 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true });
   }
 
-  getDb()
-    .prepare(
-      `INSERT INTO known_intermediaries (address, name, notes, added_at)
+  return getDb().transaction(() => {
+    getDb()
+      .prepare(
+        `INSERT INTO known_intermediaries (address, name, notes, added_at)
        VALUES (?, ?, ?, ?)
        ON CONFLICT(address) DO UPDATE SET
          name = excluded.name,
          notes = excluded.notes`,
-    )
-    .run(b.address, b.name, b.notes ?? null, now);
+      )
+      .run(b.address, b.name, b.notes ?? null, now);
 
-  syncToSupabase(() =>
-    getSupabase()!.from("known_intermediaries").upsert(
-      {
+    syncToSupabase({
+      table: "known_intermediaries", action: 'upsert', data: {
         user_id: userId,
         address: b.address,
         name: b.name,
         notes: b.notes ?? null,
         added_at: now,
-      },
-      { onConflict: "user_id,address" },
-    ),
-  );
+      }, onConflict: "user_id,address"
+    });
 
-  return NextResponse.json({ ok: true });
+    return NextResponse.json({ ok: true });
+  })();
 }
 
 export async function DELETE(req: NextRequest) {
@@ -145,11 +144,11 @@ export async function DELETE(req: NextRequest) {
     return NextResponse.json({ ok: true });
   }
 
-  getDb().prepare("DELETE FROM known_intermediaries WHERE address = ?").run(key);
+  return getDb().transaction(() => {
+    getDb().prepare("DELETE FROM known_intermediaries WHERE address = ?").run(key);
 
-  syncToSupabase(() =>
-    getSupabase()!.from("known_intermediaries").delete().eq("user_id", userId!).eq("address", key),
-  );
+    syncToSupabase({ table: "known_intermediaries", action: 'delete', match: { "user_id": userId!, "address": key } });
 
-  return NextResponse.json({ ok: true });
+    return NextResponse.json({ ok: true });
+  })();
 }

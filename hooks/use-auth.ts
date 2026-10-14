@@ -48,7 +48,11 @@ function setState(next: Partial<AuthState>) {
 function applySession(session: Session | null) {
   const userChanged = state.session?.user.id !== session?.user.id;
   setDbAuthToken(session?.access_token ?? null);
-  if (userChanged) clearAllCaches();
+  if (userChanged) {
+    clearAllCaches();
+    // Mounted caches may have started before auth resolved; reload under the new owner.
+    if (session) window.dispatchEvent(new CustomEvent("stellardb:sync"));
+  }
   if (session) {
     setLoggedInCookie(session.expires_in ?? 3600);
   } else {

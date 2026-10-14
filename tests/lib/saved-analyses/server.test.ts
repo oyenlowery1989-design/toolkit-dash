@@ -11,10 +11,13 @@ function source(size: number, cap = 1000, failAt?: number) {
     const url = new URL(String(input));
     const offset = Number(url.searchParams.get("offset") ?? 0);
     const limit = Number(url.searchParams.get("limit") ?? cap);
-    if (offset === failAt) return new Response(JSON.stringify({ message: "read failed" }), { status: 400 });
-    const page = rows.slice(offset, offset + Math.min(cap, limit));
+    if ((url.searchParams.has("or") ? size - Number(url.searchParams.get("or")!.match(/created_at.lt.(\d+)/)![1]) + 1 : offset) === failAt) return new Response(JSON.stringify({ message: "read failed" }), { status: 400 });
+    const cursor = url.searchParams.get("or");
+    const match = cursor?.match(/created_at.lt.(\d+),and\(created_at.eq.\d+,id.lt.(.*?)\)\)/);
+    const filtered = match ? rows.filter(row => row.created_at < Number(match[1]) || (row.created_at === Number(match[1]) && row.id < JSON.parse(match[2]))) : rows;
+    const page = filtered.slice(offset, offset + Math.min(cap, limit));
     return new Response(JSON.stringify(page), {
-      headers: { "Content-Range": `${offset}-${offset + page.length - 1}/${size}`, "Content-Type": "application/json" },
+      headers: { "Content-Range": `${offset}-${offset + page.length - 1}/${filtered.length}`, "Content-Type": "application/json" },
     });
   });
   mocks.client = createClient("https://test.supabase.co", "test-key", { global: { fetch }, auth: { persistSession: false } });
@@ -58,4 +61,19 @@ describe("complete saved analysis history", () => {
     expect(await readSavedAnalysisRows("user-1")).toEqual({ data: [], error: null });
     expect(fetch).toHaveBeenCalledTimes(1);
   });
+});
+
+it("retains every original snapshot when a newer snapshot arrives between full-history pages", async () => {
+  const original = Array.from({ length: 1001 }, (_, i) => ({ id: String(i), created_at: 1001 - i }));
+  let calls = 0;
+  mocks.client = createClient("https://test.supabase.co", "test-key", { auth: { persistSession: false }, global: { fetch: async input => {
+    const url = new URL(String(input));
+    const all = calls++ === 0 ? original : [{ id: "new", created_at: 1002 }, ...original];
+    const cursor = url.searchParams.get("or")?.match(/created_at.lt.(\d+)/);
+    const filtered = cursor ? all.filter(row => row.created_at < Number(cursor[1])) : all;
+    const offset = Number(url.searchParams.get("offset") ?? 0);
+    const page = filtered.slice(offset, offset + 1000);
+    return new Response(JSON.stringify(page), { headers: { "Content-Type": "application/json", "Content-Range": `${offset}-${offset + page.length - 1}/${filtered.length}` } });
+  } } });
+  expect(await readSavedAnalysisRows("user-1")).toEqual({ data: original, error: null });
 });

@@ -222,7 +222,7 @@ export function AssetLookupPanel({
     remove: removeHistory,
   } = useAssetHistory();
   const { upsert: upsertSearch } = useSavedSearches();
-  const { saveAnalysis } = useSavedAnalyses();
+  const { saveAnalysis } = useSavedAnalyses({ load: false });
   const { entries: knownIntermediaries } = useKnownIntermediaries();
   const knownIntermediarySet = useMemo(
     () => new Set(knownIntermediaries.map((e) => e.address)),

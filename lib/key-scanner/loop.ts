@@ -1,5 +1,6 @@
 import type { CheckResult, KeyScanNetwork, KeyScanState, KeyScanTailEntry } from "./types";
 import { generateKeypair, checkAccount } from "./engine";
+import { isLocalRestoreActive, LocalRestoreBusyError } from "@/lib/local-restore-lock";
 import { getDb } from "@/lib/db";
 
 type ExistsResult = Extract<CheckResult, { status: "exists" }>;
@@ -120,7 +121,15 @@ function scheduleCheckpoint(s: KeyScanLoopSingleton): void {
   if (s.checkpointTimer) return;
   s.checkpointTimer = setTimeout(() => {
     s.checkpointTimer = null;
-    if (s.dirty) checkpoint(s);
+    if (!s.dirty) return;
+    if (isLocalRestoreActive()) { scheduleCheckpoint(s); return; }
+    try {
+      checkpoint(s);
+    } catch (error) {
+      s.lastError = error instanceof Error ? error.message : String(error);
+      console.error("[key-scanner] checkpoint failed:", error);
+      scheduleCheckpoint(s);
+    }
   }, CHECKPOINT_DEBOUNCE_MS);
 }
 
@@ -256,6 +265,7 @@ function spawnWorkers(s: KeyScanLoopSingleton, fromIndex = 0): void {
 }
 
 export function startKeyScanLoopRun(): void {
+  if (isLocalRestoreActive()) throw new LocalRestoreBusyError();
   const s = getSingleton();
   if (s.running) return;
   s.running = true;

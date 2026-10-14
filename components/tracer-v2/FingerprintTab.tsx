@@ -1,5 +1,7 @@
 "use client";
 
+import { Button } from "@/components/ui/button";
+
 import { useMemo, useState } from "react";
 import { ChevronDown, ChevronRight, ExternalLink, Loader2 } from "lucide-react";
 import { Input } from "@/components/ui/input";
@@ -138,7 +140,7 @@ function MatchRow({ match }: { match: OperatorMatch }) {
 
 export function FingerprintTab() {
   const { groups, isLoaded } = useAssetGroups();
-  const { analyses } = useSavedAnalyses();
+  const { analyses, isLoaded: historyLoaded, loadingHistory, error: historyError, retry: retryHistory } = useSavedAnalyses();
   const { all } = useCreatorChildren();
   const [minScore, setMinScore] = useState(25);
 
@@ -158,6 +160,8 @@ export function FingerprintTab() {
 
   return (
     <div className="space-y-4">
+      {(!historyLoaded || loadingHistory) && <p className="text-sm text-muted-foreground">Loading saved analysis history… Results include loaded snapshots until history completes.</p>}
+      {historyError && <div role="alert" className="text-sm text-destructive">Saved history is incomplete: {historyError} <Button size="sm" variant="outline" onClick={retryHistory}>Retry history</Button></div>}
       <div className="flex items-end gap-3">
         <div className="space-y-1">
           <Label htmlFor="min-score" className="text-xs text-muted-foreground">

@@ -38,9 +38,9 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { useSavedAnalyses } from "@/hooks/use-saved-analyses";
+import { useSavedAnalyses, loadSavedAnalysis } from "@/hooks/use-saved-analyses";
 import { ADDRESS_COLORS, useAddressBook } from "@/hooks/use-address-book";
-import type { SavedAnalysis } from "@/hooks/use-saved-analyses";
+import type { SavedAnalysisSummary } from "@/hooks/use-saved-analyses";
 import { useXlmUsdPrice } from "@/hooks/use-xlm-usd-price";
 import { useConfirmClick } from "@/hooks/use-confirm-click";
 import { ShortAddress } from "@/components/shared/ShortAddress";
@@ -77,12 +77,12 @@ const SORT_OPTIONS: { value: string; label: string; sort: Sort }[] = [
 /** Groups snapshots of the same asset+issuer+network together — re-running an
  *  analysis saves a fresh snapshot (needed for Compare Snapshots), so the
  *  list must group by identity rather than show one row per snapshot. */
-function groupKey(a: SavedAnalysis): string {
+function groupKey(a: SavedAnalysisSummary): string {
   return `${a.assetCode}:${a.issuer}:${a.network}`;
 }
 
-function groupAnalyses(analyses: SavedAnalysis[]): SavedAnalysis[][] {
-  const map = new Map<string, SavedAnalysis[]>();
+function groupAnalyses(analyses: SavedAnalysisSummary[]): SavedAnalysisSummary[][] {
+  const map = new Map<string, SavedAnalysisSummary[]>();
   for (const a of analyses) {
     const key = groupKey(a);
     const arr = map.get(key);
@@ -95,7 +95,7 @@ function groupAnalyses(analyses: SavedAnalysis[]): SavedAnalysis[][] {
 /** Latest snapshot per asset+issuer+network — use this (not the raw flat
  *  list) for any aggregate/total, so re-run snapshots don't get double- or
  *  triple-counted alongside their earlier versions. */
-function latestPerGroup(analyses: SavedAnalysis[]): SavedAnalysis[] {
+function latestPerGroup(analyses: SavedAnalysisSummary[]): SavedAnalysisSummary[] {
   return groupAnalyses(analyses).map((g) => g[0]);
 }
 
@@ -103,7 +103,7 @@ function latestPerGroup(analyses: SavedAnalysis[]): SavedAnalysis[] {
  *  AssetLookupPanel's "View full data in Asset Sales" and Search History's
  *  "Run Asset Sales" (asset/issuer/account/autorun). Lets you cross-check a
  *  saved snapshot against a live scan. */
-function assetSalesUrl(analysis: SavedAnalysis): string {
+function assetSalesUrl(analysis: SavedAnalysisSummary): string {
   const params = new URLSearchParams({
     asset: analysis.assetCode,
     issuer: analysis.issuer,
@@ -113,7 +113,7 @@ function assetSalesUrl(analysis: SavedAnalysis): string {
   return `/asset-sales?${params.toString()}`;
 }
 
-function sortAnalyses(analyses: SavedAnalysis[], sort: Sort): SavedAnalysis[] {
+function sortAnalyses(analyses: SavedAnalysisSummary[], sort: Sort): SavedAnalysisSummary[] {
   return [...analyses].sort((a, b) => {
     let av = 0, bv = 0;
     switch (sort.field) {
@@ -135,10 +135,10 @@ function sortAnalyses(analyses: SavedAnalysis[], sort: Sort): SavedAnalysis[] {
 // fresh snapshot (so it also shows up in Compare Snapshots), no navigation.
 // ---------------------------------------------------------------------------
 
-type SaveAnalysisFn = (entry: Omit<SavedAnalysis, "id" | "timestamp">) => string;
+type SaveAnalysisFn = (entry: Omit<import("@/hooks/use-saved-analyses").SavedAnalysis, "id" | "timestamp">) => string;
 
 export async function rerunAnalysis(
-  analysis: SavedAnalysis,
+  analysis: SavedAnalysisSummary,
   settings: Settings,
   saveAnalysis: SaveAnalysisFn,
   signal: AbortSignal,
@@ -171,7 +171,7 @@ export async function rerunAnalysis(
 }
 
 /** Shared re-run state/handler — one instance per row, used by both Card and Table views. */
-function useRerun(analysis: SavedAnalysis, saveAnalysis: SaveAnalysisFn) {
+function useRerun(analysis: SavedAnalysisSummary, saveAnalysis: SaveAnalysisFn) {
   const { settings } = useSettings();
   const [rerunning, setRerunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -231,13 +231,26 @@ function ConfirmDeleteButton({
 // AnalysisCard — expanded card view
 // ---------------------------------------------------------------------------
 
-function AnalysisCard({ group, xlmUsdPrice }: { group: SavedAnalysis[]; xlmUsdPrice: number | null }) {
+function AnalysisCard({ group, xlmUsdPrice }: { group: SavedAnalysisSummary[]; xlmUsdPrice: number | null }) {
   const analysis = group[0]; // most recent snapshot — drives header, editing, Top Destinations
   const history = group; // all snapshots for this asset+issuer+network, newest first
-  const { updateName, updateNotes, updateTags, remove, saveAnalysis } = useSavedAnalyses();
+  const { updateName, updateNotes, updateTags, remove, saveAnalysis } = useSavedAnalyses({ load: false });
   const { rerunning, error: rerunError, rerun } = useRerun(analysis, saveAnalysis);
   const { confirming: confirmingDelete, onClick: handleDeleteClick } = useConfirmClick(() => remove(analysis.id));
   const [expanded, setExpanded] = useState(false);
+  const [detail, setDetail] = useState<import("@/hooks/use-saved-analyses").SavedAnalysis | null>(null);
+  const [detailError, setDetailError] = useState<string | null>(null);
+  const [detailAttempt, setDetailAttempt] = useState(0);
+  useEffect(() => {
+    if (!expanded) return;
+    const controller = new AbortController();
+    setDetail(null);
+    setDetailError(null);
+    loadSavedAnalysis(analysis.id, controller.signal).then((loaded) => { if (!controller.signal.aborted) setDetail(loaded); }).catch((error) => {
+      if (!controller.signal.aborted) setDetailError(String(error));
+    });
+    return () => controller.abort();
+  }, [analysis.id, expanded, detailAttempt]);
   const [editing, setEditing] = useState(false);
   const [nameInput, setNameInput] = useState(analysis.name);
   const [editingNotes, setEditingNotes] = useState(false);
@@ -421,11 +434,11 @@ function AnalysisCard({ group, xlmUsdPrice }: { group: SavedAnalysis[]; xlmUsdPr
           </div>
 
           <div className="mt-3">
-            <WindowedSalesStats
-              ledger={analysis.result.proceedsLedger}
+            {detailError ? <div role="alert" className="text-sm text-destructive">{detailError} <Button size="sm" variant="outline" onClick={() => setDetailAttempt((n) => n + 1)}>Retry</Button></div> : !detail ? <p className="text-sm text-muted-foreground">Loading snapshot detail…</p> : <WindowedSalesStats
+              ledger={detail.result.proceedsLedger}
               assetCode={analysis.assetCode}
               xlmUsdPrice={xlmUsdPrice}
-            />
+            />}
             <p className="text-[11px] text-muted-foreground mt-1">
               Based on this snapshot&apos;s scanned trades — re-run to include sales since {timeAgo(analysis.timestamp)}.
             </p>
@@ -583,7 +596,7 @@ function TableView({
   sort,
   onSortChange,
 }: {
-  analyses: SavedAnalysis[];
+  analyses: SavedAnalysisSummary[];
   sort: Sort;
   onSortChange: (sort: Sort) => void;
 }) {
@@ -636,8 +649,8 @@ function TableView({
   );
 }
 
-function TableRow({ analysis: a }: { analysis: SavedAnalysis }) {
-  const { remove, saveAnalysis } = useSavedAnalyses();
+function TableRow({ analysis: a }: { analysis: SavedAnalysisSummary }) {
+  const { remove, saveAnalysis } = useSavedAnalyses({ load: false });
   const { rerunning, error: rerunError, rerun } = useRerun(a, saveAnalysis);
   const { confirming: confirmingDelete, onClick: handleDeleteClick } = useConfirmClick(() => remove(a.id));
 
@@ -719,7 +732,7 @@ function TableRow({ analysis: a }: { analysis: SavedAnalysis }) {
 // AggregateStats — Phase 3
 // ---------------------------------------------------------------------------
 
-function AggregateStats({ analyses, xlmUsdPrice }: { analyses: SavedAnalysis[]; xlmUsdPrice: number | null }) {
+function AggregateStats({ analyses, xlmUsdPrice }: { analyses: SavedAnalysisSummary[]; xlmUsdPrice: number | null }) {
   if (analyses.length === 0) return null;
 
   const totalXlm = analyses.reduce((s, a) => s + a.result.totalXlmProceeds, 0);
@@ -761,7 +774,7 @@ function AggregateStats({ analyses, xlmUsdPrice }: { analyses: SavedAnalysis[]; 
 // CrossAssetDestinations — Phase 4
 // ---------------------------------------------------------------------------
 
-function CrossAssetDestinations({ analyses }: { analyses: SavedAnalysis[] }) {
+function CrossAssetDestinations({ analyses }: { analyses: SavedAnalysisSummary[] }) {
   const [show, setShow] = useState(false);
 
   const aggregated = useMemo(() => {
@@ -854,21 +867,55 @@ function CrossAssetDestinations({ analyses }: { analyses: SavedAnalysis[] }) {
   );
 }
 
-export function AdPaymentsSection({ analyses }: { analyses: SavedAnalysis[] }) {
+function classifySummaryAdPayment(analysis: SavedAnalysisSummary, recipient: string): AdPaymentClassification {
+  if (!Array.isArray(analysis.result?.outgoingLedger)) return {
+    status: "unknown", paidXlm: 0, percentage: null, requiredXlm: 0, shortfallXlm: 0, evidence: [], reason: "Open Ad payments to load snapshot evidence.",
+  };
+  return classifyAdPayment(analysis.result as import("@/lib/proceeds-investigator/types").AssetProceedsResult, recipient);
+}
+
+export function AdPaymentsSection({ analyses, onClassifications }: { analyses: SavedAnalysisSummary[]; onClassifications?: (value: { recipient: string; items: Record<string, AdPaymentClassification> }) => void }) {
   const { settings, updateSettings } = useSettings();
-  const { saveAnalysis } = useSavedAnalyses();
+  const { saveAnalysis } = useSavedAnalyses({ load: false });
   const { entries } = useAddressBook();
   const [statusFilter, setStatusFilter] = useState<"all" | AdPaymentClassification["status"]>("all");
   const [draftState, setDraftState] = useState<string | null>(null);
   const [validationError, setValidationError] = useState<string | null>(null);
   const draft = draftState ?? settings.adPaymentRecipient;
   const recipientEntry = entries.find((entry) => entry.publicKey === settings.adPaymentRecipient);
+  const [detailCount, setDetailCount] = useState(10);
+  const [details, setDetails] = useState<Record<string, import("@/hooks/use-saved-analyses").SavedAnalysis>>({});
+  const [detailError, setDetailError] = useState<string | null>(null);
+  const [detailAttempt, setDetailAttempt] = useState(0);
+  const selected = useMemo(() => latestPerGroup(analyses).slice(0, detailCount), [analyses, detailCount]);
+  useEffect(() => {
+    const controller = new AbortController();
+    setDetailError(null);
+    (async () => {
+      for (const analysis of selected) {
+        if (analysis.result?.outgoingLedger !== undefined || details[analysis.id]) continue;
+        const detail = await loadSavedAnalysis(analysis.id, controller.signal);
+        if (controller.signal.aborted) return;
+        setDetails((previous) => ({ ...previous, [analysis.id]: detail }));
+      }
+    })().catch((error) => { if (!controller.signal.aborted) setDetailError(String(error)); });
+    return () => controller.abort();
+  // Details stream in one by one; do not restart the request sequence on each result.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected, detailAttempt]);
+  const loadingDetails = selected.some((analysis) => analysis.result?.outgoingLedger === undefined && !details[analysis.id]);
   const latest = useMemo(() => {
     const order = { compliant: 0, unpaid: 1, underpaid: 2, unknown: 3 };
-    return latestPerGroup(analyses)
-      .map((analysis) => ({ analysis, classification: classifyAdPayment(analysis.result, settings.adPaymentRecipient) }))
+    return selected
+      .map((summary) => {
+        const analysis = details[summary.id] ? { ...summary, result: details[summary.id].result } : summary;
+        return { analysis, classification: classifySummaryAdPayment(analysis, settings.adPaymentRecipient) };
+      })
       .sort((a, b) => order[a.classification.status] - order[b.classification.status]);
-  }, [analyses, settings.adPaymentRecipient]);
+  }, [selected, details, settings.adPaymentRecipient]);
+  useEffect(() => {
+    onClassifications?.({ recipient: settings.adPaymentRecipient, items: Object.fromEntries(latest.map(({ analysis, classification }) => [analysis.id, classification])) });
+  }, [latest, onClassifications, settings.adPaymentRecipient]);
   const validRecipient = StrKey.isValidEd25519PublicKey(settings.adPaymentRecipient ?? "");
   const counts = { all: latest.length, compliant: 0, unpaid: 0, underpaid: 0, unknown: 0 };
   const totals = new Map<string, { paid: number; required: number; shortfall: number }>();
@@ -962,6 +1009,10 @@ export function AdPaymentsSection({ analyses }: { analyses: SavedAnalysis[] }) {
           <p className="text-sm text-muted-foreground">No saved analyses yet.</p>
         ) : (
           <section aria-label="Ad payment results" className="space-y-3">
+            {loadingDetails && !detailError && <p className="text-sm text-muted-foreground">Loading snapshot evidence…</p>}
+            {detailError && <div role="alert" className="text-sm text-destructive">{detailError} <Button size="sm" variant="outline" onClick={() => setDetailAttempt((n) => n + 1)}>Retry</Button></div>}
+            <p className="text-xs text-muted-foreground">Reviewing {selected.length} of {latestPerGroup(analyses).length} assets. Totals cover loaded evidence.</p>
+            {detailCount < latestPerGroup(analyses).length && <Button size="sm" variant="outline" onClick={() => setDetailCount((n) => n + 10)}>Load more assets</Button>}
             <div className="flex flex-wrap gap-2" role="group" aria-label="Filter ad payments by status">
               {(["all", "compliant", "unpaid", "underpaid", "unknown"] as const).map((status) => (
                 <Button key={status} size="sm" variant={statusFilter === status ? "default" : "outline"} aria-pressed={statusFilter === status} onClick={() => setStatusFilter(status)}>
@@ -997,7 +1048,7 @@ export function AdPaymentsSection({ analyses }: { analyses: SavedAnalysis[] }) {
 }
 
 function AdPaymentRow({ analysis, classification, settings, saveAnalysis }: {
-  analysis: SavedAnalysis;
+  analysis: SavedAnalysisSummary;
   classification: AdPaymentClassification;
   settings: Settings;
   saveAnalysis: SaveAnalysisFn;
@@ -1048,7 +1099,7 @@ function AdPaymentRow({ analysis, classification, settings, saveAnalysis }: {
 const PAGE_SIZE = 10;
 
 export function SavedAnalysesPanel() {
-  const { analyses, isLoaded, error } = useSavedAnalyses();
+  const { analyses, isLoaded, error, loadingHistory, retry } = useSavedAnalyses();
   const { settings } = useSettings();
   const { price: xlmUsdPrice, ensure: ensureXlmUsdPrice } = useXlmUsdPrice();
   const [query, setQuery] = useState("");
@@ -1058,22 +1109,25 @@ export function SavedAnalysesPanel() {
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   const legacyAnalyses = useMemo(
     () => analyses.filter((analysis) => {
-      const result = analysis.result as Partial<NonNullable<SavedAnalysis["result"]>> | null | undefined;
+      const result = analysis.result as Partial<NonNullable<SavedAnalysisSummary["result"]>> | null | undefined;
       return !!result
         && Number.isFinite(result.totalXlmProceeds)
         && Number.isFinite(result.totalAssetSold)
         && Number.isFinite(result.totalOutgoingXlm)
         && Number.isFinite(result.estimatedOnHandXlm)
-        && Array.isArray(result.proceedsLedger)
         && Array.isArray(result.topDestinations);
     }),
     [analyses],
   );
+  const [loadedClassifications, setLoadedClassifications] = useState<{ recipient: string; items: Record<string, AdPaymentClassification> } | null>(null);
   const adPaymentCounts = useMemo(() => {
     const counts = { compliant: 0, unpaid: 0, underpaid: 0, unknown: 0 };
-    for (const analysis of latestPerGroup(analyses)) counts[classifyAdPayment(analysis.result, settings.adPaymentRecipient).status]++;
+    for (const analysis of latestPerGroup(analyses)) {
+      const loaded = loadedClassifications?.recipient === settings.adPaymentRecipient ? loadedClassifications.items[analysis.id] : undefined;
+      counts[(loaded ?? classifySummaryAdPayment(analysis, settings.adPaymentRecipient)).status]++;
+    }
     return counts;
-  }, [analyses, settings.adPaymentRecipient]);
+  }, [analyses, settings.adPaymentRecipient, loadedClassifications]);
   const adPaymentsToReview = adPaymentCounts.unpaid + adPaymentCounts.underpaid + adPaymentCounts.unknown;
 
   useEffect(() => {
@@ -1160,6 +1214,8 @@ export function SavedAnalysesPanel() {
         )}
       </div>
 
+      {loadingHistory && <p className="text-sm text-muted-foreground">Loading older saved snapshots…</p>}
+      {error && isLoaded && <div role="alert" className="text-sm text-destructive">{error} <Button size="sm" variant="outline" onClick={retry}>Retry history</Button></div>}
       {isLoaded && analyses.length > 0 && (
         <div aria-label="Ad payment status summary" className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
           <span>{latestPerGroup(analyses).length} assets</span>
@@ -1257,7 +1313,7 @@ export function SavedAnalysesPanel() {
         </TabsContent>
 
         <TabsContent value="ad-payments" className="space-y-6">
-          {section === "ad-payments" && <AdPaymentsSection analyses={analyses} />}
+          {section === "ad-payments" && <AdPaymentsSection analyses={analyses} onClassifications={setLoadedClassifications} />}
         </TabsContent>
 
         <TabsContent value="connections" className="space-y-6">

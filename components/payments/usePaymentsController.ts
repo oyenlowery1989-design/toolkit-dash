@@ -6,6 +6,10 @@ import { toast } from "sonner";
 import { useSettings, resolveNetworkPassphrase } from "@/lib/settings";
 import { getErrorMessage } from "@/lib/stellar-helpers";
 import { useAddressBook } from "@/hooks/use-address-book";
+import { useAuth } from "@/hooks/use-auth";
+import { authHeaders } from "@/lib/db-client";
+import { loadPaymentSubmission, acknowledgePayment } from "@/lib/payments/recovery-client";
+import type { PaymentSubmission } from "@/lib/payments/submission-journal";
 import { useActiveWallet } from "@/hooks/use-active-wallet";
 import { useWalletsV2 } from "@/hooks/use-wallets-v2";
 import { useAutoSaveSigningKey } from "@/hooks/use-auto-save-signing-key";
@@ -122,6 +126,37 @@ export function usePaymentsController() {
   const [txHash, setTxHash] = useState<string | null>(null);
   const [txError, setTxError] = useState<string | null>(null);
 
+  const { session, loading: authLoading } = useAuth();
+  const authUser = session?.user.id;
+  const [recovery, setRecovery] = useState<PaymentSubmission | null>(null);
+  const recoveryRef = useRef<PaymentSubmission | null>(null);
+  const [checkingRecovery, setCheckingRecovery] = useState(true);
+  const [recoveryError, setRecoveryError] = useState<string | null>(null);
+  const recoveryGeneration = useRef(0);
+  const applyRecovery = useCallback((value: PaymentSubmission | null) => {
+    recoveryRef.current = value;
+    setRecovery(value);
+    if (value) {
+      setTxHash(value.hash);
+      setTxStatus(value.status === "pending" ? "uncertain" : value.status === "success" ? "success" : "error");
+      setTxError(value.status === "failed" ? String(value.response?.body.error ?? "The previous transaction failed.") : null);
+    }
+  }, []);
+  const checkPaymentStatus = useCallback(async () => {
+    const generation = recoveryGeneration.current;
+    setCheckingRecovery(true);
+    try {
+      const value = await loadPaymentSubmission();
+      if (generation !== recoveryGeneration.current) return;
+      applyRecovery(value);
+      setRecoveryError(null);
+    } catch (error) {
+      if (generation === recoveryGeneration.current) setRecoveryError(getErrorMessage(error));
+    } finally {
+      if (generation === recoveryGeneration.current) setCheckingRecovery(false);
+    }
+  }, [applyRecovery]);
+
   // -- Trustline recovery prompt
   interface TrustlineFix { leg: PaymentLeg; walletId: string; publicKey: string; walletName: string }
   const [trustlinePrompt, setTrustlinePrompt] = useState<TrustlineFix[] | null>(null);
@@ -141,6 +176,71 @@ export function usePaymentsController() {
 
   // -- Clipboard feedback
   const [copied, setCopied] = useState(false);
+
+  const clearPaymentDraft = useCallback(() => {
+    setLegs([makeLeg()]);
+    setPathMode("strict-receive");
+    setSrcIsNative(true);
+    setSrcAssetCode("");
+    setSrcAssetIssuer("");
+    setMaxSendAmount("");
+    setExactSendAmount("");
+    setDestIsNative(true);
+    setDestAssetCode("");
+    setDestAssetIssuer("");
+    setDestAmount("");
+    setMinReceiveAmount("");
+    setPathDest("");
+    setPaths([]);
+    setSelectedPathIndex(null);
+    setPathError(null);
+    setClaimAssetKey("native");
+    setClaimAmount("");
+    setClaimants([makeClaimant()]);
+    setInnerTxXdr("");
+    setParsedInnerTxOps(null);
+    setParsedInnerTxFee(null);
+    setParsedInnerTxSigs(null);
+    setInnerTxParseError(null);
+    setFeeBumpBaseFee("200");
+    setMemoValue("");
+    setMemoSkipped(false);
+    setFee("100");
+    setSecretKeyDisplay("");
+    secretKeyRef.current = "";
+    setShowSecret(false);
+    setTxStatus("idle");
+    setTxHash(null);
+    setTxError(null);
+    setTrustlinePrompt(null);
+    setTrustlinePromptTab(null);
+    setTrustlineAdding(false);
+    setTrustlineStatus(null);
+    setCopied(false);
+    setAddressBookOpen(false);
+    setNewLabel("");
+    setNewKey("");
+    setAddressBookTargetLegId(null);
+    setConfirmOpen(false);
+    pathRequestRef.current++;
+    setIsFindingPaths(false);
+    setPathsFetchedAt(null);
+  }, []);
+
+  const previousAuthUser = useRef(authUser);
+  useEffect(() => {
+    const generation = ++recoveryGeneration.current;
+    if (previousAuthUser.current && previousAuthUser.current !== authUser) clearPaymentDraft();
+    previousAuthUser.current = authUser;
+    applyRecovery(null);
+    setTxStatus("idle");
+    setTxHash(null);
+    setTxError(null);
+    setRecoveryError(null);
+    setCheckingRecovery(true);
+    if (!authLoading) void checkPaymentStatus();
+    return () => { recoveryGeneration.current = generation + 1; };
+  }, [authUser, authLoading, applyRecovery, checkPaymentStatus, clearPaymentDraft]);
 
   // -- Cleanup secret on unmount
   useEffect(() => {
@@ -553,7 +653,7 @@ export function usePaymentsController() {
   // ---------------------------------------------------------------------------
 
   function handleOpenConfirm() {
-    if (!isFormValid()) return;
+    if (checkingRecovery || recoveryError || recoveryRef.current || !isFormValid()) return;
     if (!hasSigningKey) {
       toast.error(signingWalletId ? "This wallet is watch-only; save its signing key in Wallet Manager first." : "Please select a wallet or enter your secret key.");
       return;
@@ -562,15 +662,18 @@ export function usePaymentsController() {
   }
 
   async function handleSubmit() {
-    if (submittingRef.current) return;
+    if (submittingRef.current || checkingRecovery || recoveryError || recoveryRef.current) return;
     submittingRef.current = true;
+    const generation = recoveryGeneration.current;
     const walletId = signingWalletId;
     const manualSecret = secretKeyRef.current;
     const identity = signingIdentity;
     const version = signingVersionRef.current;
     const publicKey = currentPublicKey;
+    const authAtStart = authHeaders().Authorization;
     let manualKeyCleared = false;
     const assertSignerUnchanged = () => {
+      if (generation !== recoveryGeneration.current || authHeaders().Authorization !== authAtStart) throw new Error("Session changed. Review the payment again.");
       const clearedAfterSigning = !walletId && manualKeyCleared && signingIdentityRef.current === "manual:" && signingVersionRef.current === version + 1;
       if ((signingIdentityRef.current !== identity || signingVersionRef.current !== version) && !clearedAfterSigning) throw new Error("Signing wallet changed. Review the payment again.");
     };
@@ -580,8 +683,42 @@ export function usePaymentsController() {
       assertSignerUnchanged();
       return signed;
     };
+    const submit = async (tx: Transaction | FeeBumpTransaction) => {
+      assertSignerUnchanged();
+      const record: PaymentSubmission = { hash: tx.hash().toString("hex"), xdr: tx.toXDR(), status: "pending" };
+      applyRecovery(record);
+      setTxStatus("submitting");
+      try {
+        const result = await submitMainnetTransaction(tx, { trackPayment: true });
+        if (generation !== recoveryGeneration.current) throw new Error("Session changed. Check payment status in the original account.");
+        applyRecovery({ ...record, status: "success" });
+        return result;
+      } catch (error) {
+        if (generation !== recoveryGeneration.current) throw error;
+        const response = (error as { response?: { status?: number; data?: { extras?: { result_codes?: { transaction?: string } }; unresolved?: boolean } } }).response;
+        if (response?.status === 400 && response.data?.extras?.result_codes?.transaction === "tx_failed") {
+          await acknowledgePayment(record.hash);
+          if (generation !== recoveryGeneration.current) throw error;
+          applyRecovery(null);
+        } else {
+          // The server journal wins over a lost browser response, including another tab's payment.
+          try {
+            const saved = await loadPaymentSubmission();
+            if (generation !== recoveryGeneration.current) throw error;
+            if (saved) applyRecovery(saved);
+            else if (response && [400, 401, 403, 409].includes(response.status ?? 0) && !response.data?.unresolved) applyRecovery(null);
+          } catch { /* Retain the signed envelope and block rebuilding while status is unknown. */ }
+        }
+        if (generation !== recoveryGeneration.current) throw error;
+        if (recoveryRef.current?.status === "success") return { hash: recoveryRef.current.hash } as Awaited<ReturnType<typeof submitMainnetTransaction>>;
+        throw error;
+      }
+    };
     try {
       setConfirmOpen(false);
+      const previous = await loadPaymentSubmission();
+      if (generation !== recoveryGeneration.current) return;
+      if (previous) { applyRecovery(previous); return; }
       setTxStatus("building");
       setTxHash(null);
       setTxError(null);
@@ -600,6 +737,7 @@ export function usePaymentsController() {
             networkPassphrase,
           );
           feeBumpTx = await sign(feeBumpTx);
+          if (generation !== recoveryGeneration.current) return;
           if (!signingWalletId) {
             autoSaveSigningKey(publicKey);
             manualKeyCleared = true;
@@ -608,7 +746,8 @@ export function usePaymentsController() {
             setShowSecret(false);
           }
           setTxStatus("submitting");
-          const result = await submitMainnetTransaction(feeBumpTx);
+          const result = await submit(feeBumpTx);
+          if (generation !== recoveryGeneration.current) return;
           const hash = (result as any).hash ?? (result as any).id ?? "unknown";
           setTxHash(hash);
           setTxStatus("success");
@@ -619,6 +758,7 @@ export function usePaymentsController() {
         // 2. Load account
         const server = horizonServer;
         const account = await server.loadAccount(publicKey);
+        if (generation !== recoveryGeneration.current) return;
 
         // 3. Build transaction
         const networkPassphrase = resolveNetworkPassphrase(network);
@@ -629,9 +769,11 @@ export function usePaymentsController() {
           let offers: any[] = [];
           if (needsOffers) {
             let page = await server.offers().forAccount(publicKey).limit(200).call();
+            if (generation !== recoveryGeneration.current) return;
             offers = [...page.records];
             while (page.records.length === 200) {
               page = await page.next();
+              if (generation !== recoveryGeneration.current) return;
               offers = [...offers, ...page.records];
             }
           }
@@ -648,6 +790,7 @@ export function usePaymentsController() {
         // 5. Build & sign
         setTxStatus("signing");
         const tx = await sign(builder.setTimeout(30).build());
+        if (generation !== recoveryGeneration.current) return;
 
         // 6. Clear manual secret key after signing
         if (!signingWalletId) {
@@ -662,8 +805,9 @@ export function usePaymentsController() {
         setTxStatus("submitting");
         let result: Awaited<ReturnType<typeof submitMainnetTransaction>>;
         try {
-          result = await submitMainnetTransaction(tx);
+          result = await submit(tx);
         } catch (submitErr: any) {
+          if (generation !== recoveryGeneration.current) return;
           const opCodes: string[] =
             submitErr?.response?.data?.extras?.result_codes?.operations ?? [];
           const errMsg: string = getErrorMessage(submitErr);
@@ -739,28 +883,35 @@ export function usePaymentsController() {
             toast.info("Destination account not found — retrying as account creation…");
             setTxStatus("building");
             const account2 = await server.loadAccount(publicKey);
+            if (generation !== recoveryGeneration.current) return;
             const tx2 = await sign(buildCreateAccountTransaction(account2, fee, networkPassphrase, legs[0].destination, legs[0].amount, memoValue));
+            if (generation !== recoveryGeneration.current) return;
             setTxStatus("submitting");
-            result = await submitMainnetTransaction(tx2);
+            result = await submit(tx2);
           } else {
             throw submitErr;
           }
         }
 
+        if (generation !== recoveryGeneration.current) return;
         const hash = (result as any).hash ?? (result as any).id ?? "unknown";
         setTxHash(hash);
         setTxStatus("success");
         toast.success("Transaction submitted successfully!");
       } catch (e) {
+        if (generation !== recoveryGeneration.current) return;
         if (!signingWalletId) {
           secretKeyRef.current = "";
           setSecretKeyDisplay("");
           setShowSecret(false);
         }
-        setTxError(getErrorMessage(e));
-        setTxStatus("error");
-        toast.error("Transaction failed: " + getErrorMessage(e));
+        const unresolved = (recoveryRef.current as PaymentSubmission | null)?.status === "pending";
+        setTxError(unresolved ? "Payment outcome is not confirmed. Check its status before sending again." : getErrorMessage(e));
+        setTxStatus(unresolved ? "uncertain" : "error");
+        toast.error(unresolved ? "Payment outcome is not confirmed" : "Transaction failed: " + getErrorMessage(e));
       }
+    } catch (error) {
+      if (generation === recoveryGeneration.current) setRecoveryError(getErrorMessage(error));
     } finally {
       submittingRef.current = false;
     }
@@ -770,45 +921,16 @@ export function usePaymentsController() {
   // Reset
   // ---------------------------------------------------------------------------
 
-  function handleReset() {
-    setLegs([makeLeg()]);
-    setPathMode("strict-receive");
-    setSrcIsNative(true);
-    setSrcAssetCode("");
-    setSrcAssetIssuer("");
-    setMaxSendAmount("");
-    setExactSendAmount("");
-    setDestIsNative(true);
-    setDestAssetCode("");
-    setDestAssetIssuer("");
-    setDestAmount("");
-    setMinReceiveAmount("");
-    setPathDest("");
-    setPaths([]);
-    setSelectedPathIndex(null);
-    setPathError(null);
-    setClaimAssetKey("native");
-    setClaimAmount("");
-    setClaimants([makeClaimant()]);
-    setInnerTxXdr("");
-    setParsedInnerTxOps(null);
-    setParsedInnerTxFee(null);
-    setParsedInnerTxSigs(null);
-    setInnerTxParseError(null);
-    setFeeBumpBaseFee("200");
-    setMemoValue("");
-    setMemoSkipped(false);
-    setFee("100");
-    setSecretKeyDisplay("");
-    secretKeyRef.current = "";
-    setShowSecret(false);
-    setTxStatus("idle");
-    setTxHash(null);
-    setTxError(null);
-    setTrustlinePrompt(null);
-    setTrustlinePromptTab(null);
-    setTrustlineStatus(null);
-    setCopied(false);
+  async function handleReset() {
+    const generation = recoveryGeneration.current;
+    if (submittingRef.current || recoveryRef.current?.status === "pending") return;
+    if (recoveryRef.current) {
+      try { await acknowledgePayment(recoveryRef.current.hash); }
+      catch (error) { if (generation === recoveryGeneration.current) toast.error(getErrorMessage(error)); return; }
+      if (generation !== recoveryGeneration.current) return;
+      applyRecovery(null);
+    }
+    clearPaymentDraft();
   }
 
   // ---------------------------------------------------------------------------
@@ -826,7 +948,10 @@ export function usePaymentsController() {
     }
     const identity = signingIdentity;
     const version = signingVersionRef.current;
+    const generation = recoveryGeneration.current;
+    const authAtStart = authHeaders().Authorization;
     const assertSignerUnchanged = () => {
+      if (generation !== recoveryGeneration.current || authHeaders().Authorization !== authAtStart) throw new Error("Session changed. Review the payment again.");
       if (signingIdentityRef.current !== identity || signingVersionRef.current !== version) throw new Error("Signing wallet changed. Review the payment again.");
     };
     setTrustlineAdding(true);
@@ -840,11 +965,12 @@ export function usePaymentsController() {
         const fix = trustlinePrompt[i];
         setTrustlineStatus(`Adding trustline for ${assetLabel(fix.leg.assetKey)} on ${fix.walletName}\u2026 (${i + 1}/${trustlinePrompt.length})`);
         const destAccount = await server.loadAccount(fix.publicKey);
-        const trustTx = buildTrustlineTransaction(destAccount, fee, networkPassphrase, fix.leg.assetKey);
         assertSignerUnchanged();
+        const trustTx = buildTrustlineTransaction(destAccount, fee, networkPassphrase, fix.leg.assetKey);
         const signedTrustTx = await signPaymentTransaction(trustTx, fix.walletId, "");
         assertSignerUnchanged();
         await submitMainnetTransaction(signedTrustTx);
+        assertSignerUnchanged();
         toast.success(`Trustline added on ${fix.walletName}`);
       }
 
@@ -858,6 +984,7 @@ export function usePaymentsController() {
       setTxError(null);
       handleOpenConfirm();
     } catch (e) {
+      if (generation !== recoveryGeneration.current) return;
       setTrustlineAdding(false);
       setTrustlineStatus(null);
       setTxError("Failed to add trustline: " + getErrorMessage(e));
@@ -898,6 +1025,10 @@ export function usePaymentsController() {
   // ---------------------------------------------------------------------------
 
   return {
+    recovery,
+    checkingRecovery,
+    recoveryError,
+    checkPaymentStatus,
     txStatus,
     txHash,
     network,

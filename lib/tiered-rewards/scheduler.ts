@@ -1,3 +1,4 @@
+import { isLocalRestoreActive } from "@/lib/local-restore-lock";
 /**
  * Tiered Rewards scheduler.
  * Uses node-cron to schedule enabled configs server-side.
@@ -13,6 +14,7 @@ declare global {
   var _tieredRewardsTasks: Map<string, ScheduledTask> | undefined;
   var _tieredRewardsStarted: boolean | undefined;
   var _tieredRewardsRunningConfigs: Set<string> | undefined;
+  var _tieredRewardsSchedulingConfigs: Set<string> | undefined;
 }
 
 /**
@@ -25,6 +27,8 @@ declare global {
  */
 if (!global._tieredRewardsRunningConfigs) global._tieredRewardsRunningConfigs = new Set<string>();
 const _runningConfigs = global._tieredRewardsRunningConfigs;
+if (!global._tieredRewardsSchedulingConfigs) global._tieredRewardsSchedulingConfigs = new Set<string>();
+const schedulingConfigs = global._tieredRewardsSchedulingConfigs;
 
 /** A loaded config, tagged with the Supabase user_id that owns it (Supabase mode only —
  *  used so runner.ts can attribute run-log rows / last_run_at writes to the right user). */
@@ -180,14 +184,16 @@ async function scheduleAll(): Promise<void> {
     if (!config.intervalMinutes) continue;
     const expr = minutesToCronExpression(config.intervalMinutes);
     const task = cron.schedule(expr, async () => {
+      if (isLocalRestoreActive()) return;
       // Cheap early skip + log. The authoritative overlap guard (add/delete on this same
       // globalized Set) lives inside runner.ts's runConfig, so a manual run and a scheduler
       // tick for this configId can never both execute a real send concurrently even if this
       // check races past this point.
-      if (_runningConfigs.has(config.id)) {
+      if (_runningConfigs.has(config.id) || schedulingConfigs.has(config.id)) {
         console.warn(`[tiered-rewards] Config "${config.name}" still running — skipping tick`);
         return;
       }
+      schedulingConfigs.add(config.id);
       console.log(`[tiered-rewards] Running config "${config.name}" (${config.id})`);
       try {
         const { calculatePreview } = await import("./calculator");
@@ -246,6 +252,8 @@ async function scheduleAll(): Promise<void> {
         }
       } catch (err) {
         console.error(`[tiered-rewards] Config "${config.name}" run failed:`, err);
+      } finally {
+        schedulingConfigs.delete(config.id);
       }
     });
     tasks.set(config.id, task);

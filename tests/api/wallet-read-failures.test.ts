@@ -7,7 +7,7 @@ vi.mock("@/lib/supabase-server", () => ({
   requireAuth: vi.fn(async () => ({ ok: true, userId: "user" })),
   isSupabaseOnly: vi.fn(() => true),
   getSupabase: vi.fn(() => ({ from: () => ({
-    select: () => ({ eq: () => ({ order: async () => ({ data: null, error: { message: "down" } }) }) }),
+    select: () => ({ eq: () => ({ order: () => ({ range: async () => ({ data: null, error: { message: "down" } }), then: (resolve: (value: unknown) => unknown) => resolve({ data: null, error: { message: "down" } }) }) }) }),
   }) })),
   checkSupabaseRowOwnership: vi.fn(),
   syncToSupabase: vi.fn(),

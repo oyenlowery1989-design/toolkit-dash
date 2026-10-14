@@ -89,64 +89,47 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true });
   }
 
-  const db = getDb();
-  db.prepare(
-    `INSERT INTO saved_searches
-       (type, value, label, network, distrib_address, total_xlm_proceeds,
-        total_asset_sold, intermediary_name, accounts_found, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-     ON CONFLICT(type, value) DO UPDATE SET
-       label              = excluded.label,
-       network            = excluded.network,
-       distrib_address    = excluded.distrib_address,
-       total_xlm_proceeds = excluded.total_xlm_proceeds,
-       total_asset_sold   = excluded.total_asset_sold,
-       intermediary_name  = excluded.intermediary_name,
-       accounts_found     = excluded.accounts_found,
-       created_at         = excluded.created_at`,
-  ).run(
-    b.type, b.value, b.label ?? null, b.network ?? null,
-    b.distribAddress ?? null, b.totalXlmProceeds ?? null,
-    b.totalAssetSold ?? null, b.intermediaryName ?? null,
-    b.accountsFound ?? null, now,
-  );
-  db.prepare(
-    `DELETE FROM saved_searches WHERE id NOT IN
-     (SELECT id FROM saved_searches ORDER BY created_at DESC LIMIT ?)`,
-  ).run(MAX);
+  return getDb().transaction(() => {
+    const db = getDb();
+    db.prepare(
+      `INSERT INTO saved_searches
+         (type, value, label, network, distrib_address, total_xlm_proceeds,
+          total_asset_sold, intermediary_name, accounts_found, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(type, value) DO UPDATE SET
+         label              = excluded.label,
+         network            = excluded.network,
+         distrib_address    = excluded.distrib_address,
+         total_xlm_proceeds = excluded.total_xlm_proceeds,
+         total_asset_sold   = excluded.total_asset_sold,
+         intermediary_name  = excluded.intermediary_name,
+         accounts_found     = excluded.accounts_found,
+         created_at         = excluded.created_at`,
+    ).run(
+      b.type, b.value, b.label ?? null, b.network ?? null,
+      b.distribAddress ?? null, b.totalXlmProceeds ?? null,
+      b.totalAssetSold ?? null, b.intermediaryName ?? null,
+      b.accountsFound ?? null, now,
+    );
+    db.prepare(
+      `DELETE FROM saved_searches WHERE id NOT IN
+       (SELECT id FROM saved_searches ORDER BY created_at DESC LIMIT ?)`,
+    ).run(MAX);
 
-  syncToSupabase(async () => {
-    const sb = getSupabase()!;
-    await sb.from("saved_searches").upsert(
+    syncToSupabase([
       {
-        user_id: userId,
-        type: b.type,
-        value: b.value,
-        label: b.label ?? null,
-        network: b.network ?? null,
-        distrib_address: b.distribAddress ?? null,
-        total_xlm_proceeds: b.totalXlmProceeds ?? null,
-        total_asset_sold: b.totalAssetSold ?? null,
-        intermediary_name: b.intermediaryName ?? null,
-        accounts_found: b.accountsFound ?? null,
-        created_at: now,
+        table: 'saved_searches', action: 'upsert', onConflict: 'user_id,type,value', data: {
+          user_id: userId, type: b.type, value: b.value, label: b.label ?? null, network: b.network ?? null,
+          distrib_address: b.distribAddress ?? null, total_xlm_proceeds: b.totalXlmProceeds ?? null,
+          total_asset_sold: b.totalAssetSold ?? null, intermediary_name: b.intermediaryName ?? null,
+          accounts_found: b.accountsFound ?? null, created_at: now,
+        }
       },
-      { onConflict: "user_id,type,value" },
-    ).throwOnError();
-    // Trim to MAX
-    const { data: oldest } = await sb
-      .from("saved_searches")
-      .select("id")
-      .eq("user_id", userId!)
-      .order("created_at", { ascending: true })
-      .limit(1000).throwOnError();
-    if (oldest && oldest.length > MAX) {
-      const toDelete = oldest.slice(0, oldest.length - MAX).map((r) => r.id);
-      await sb.from("saved_searches").delete().in("id", toDelete).eq("user_id", userId!).throwOnError();
-    }
-  });
+      { table: 'saved_searches', action: 'trim', keep: MAX, orderColumn: 'created_at' },
+    ]);
 
-  return NextResponse.json({ ok: true });
+    return NextResponse.json({ ok: true });
+  })();
 }
 
 export async function DELETE(req: NextRequest) {
@@ -169,17 +152,16 @@ export async function DELETE(req: NextRequest) {
     return NextResponse.json({ ok: true });
   }
 
-  if (id !== undefined && id !== null) {
-    getDb().prepare("DELETE FROM saved_searches WHERE id = ?").run(id);
-  } else {
-    getDb().prepare("DELETE FROM saved_searches WHERE created_at = ?").run(key);
-  }
-
-  syncToSupabase(() =>
-    id !== undefined && id !== null
-      ? getSupabase()!.from("saved_searches").delete().eq("id", id).eq("user_id", userId!)
-      : getSupabase()!.from("saved_searches").delete().eq("created_at", key).eq("user_id", userId!),
-  );
-
-  return NextResponse.json({ ok: true });
+  return getDb().transaction(() => {
+    const db = getDb();
+    const rows = id !== undefined && id !== null
+      ? db.prepare("SELECT type, value FROM saved_searches WHERE id = ?").all(id)
+      : db.prepare("SELECT type, value FROM saved_searches WHERE created_at = ?").all(key);
+    if (id !== undefined && id !== null) db.prepare("DELETE FROM saved_searches WHERE id = ?").run(id);
+    else db.prepare("DELETE FROM saved_searches WHERE created_at = ?").run(key);
+    if (rows.length) syncToSupabase((rows as { type: string; value: string; }[]).map((row) => ({
+      table: "saved_searches", action: "delete", match: { type: row.type, value: row.value, user_id: userId },
+    })));
+    return NextResponse.json({ ok: true });
+  })();
 }

@@ -1,7 +1,7 @@
 /**
  * Supabase server-side client for dual-write sync and auth verification.
  *
- * Local dev:  SQLite is primary. Writes also go to Supabase (fire-and-forget backup).
+ * Local dev:  SQLite is primary. Writes also enter a durable ordered Supabase backup queue.
  * Vercel:     No SQLite file on disk → auto-detects and uses Supabase as primary.
  *
  * Env vars required for Supabase:
@@ -13,7 +13,8 @@
 
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
 import { NextRequest, NextResponse } from "next/server";
-import { getDb } from "@/lib/db";
+import { enqueueLocalBackup, startLocalBackupWorker, type BackupOperation } from "@/lib/local-backup-queue";
+import { isLocalRestoreActive } from "@/lib/local-restore-lock";
 
 let _client: SupabaseClient | null = null;
 
@@ -72,39 +73,33 @@ export function warnSyncSkippedOnce(): void {
 }
 
 /**
- * Fire-and-forget: run a Supabase write in the background.
- * Never blocks the API response. Errors are logged, not thrown.
+ * Persist an ordered Supabase backup job in the caller's SQLite transaction.
+ * The remote write runs after commit; failures survive restart and are retried.
  *
  * In local dual-write mode (isSupabaseOnly() === false), the sync is skipped
  * entirely — with a once-per-boot warning — unless SUPABASE_SYNC_USER_ID is
  * set. This is the single place that gates local→Supabase writes so no
  * caller can accidentally push a user_id: null row.
  */
-export function syncToSupabase(fn: () => PromiseLike<unknown>): void {
+export function syncToSupabase(operations: BackupOperation | BackupOperation[]): void {
   const sb = getSupabase();
   if (!sb) return;
   if (!isSupabaseOnly() && !resolveLocalSyncUserId()) {
     warnSyncSkippedOnce();
     return;
   }
-  Promise.resolve().then(fn)
-    .then((result) => {
-      if (result && typeof result === "object" && "error" in result && result.error) {
-        throw result.error;
-      }
-    })
-    .catch((e) => {
-      console.error("[supabase-sync]", e);
-      if (!isSupabaseOnly()) {
-        try {
-          getDb().prepare(`INSERT INTO local_backup_failure (user_id, last_failed_at) VALUES (?, ?)
-            ON CONFLICT(user_id) DO UPDATE SET last_failed_at = excluded.last_failed_at`)
-            .run(resolveLocalSyncUserId(), Date.now());
-        } catch (dbError) {
-          console.error("[supabase-sync] could not record backup failure", dbError);
-        }
-      }
-    });
+  if (isSupabaseOnly()) throw new Error("Local backup jobs are only supported in SQLite mode");
+  const userId = resolveLocalSyncUserId()!;
+  enqueueLocalBackup(operations, userId);
+  // Runs after the caller commits its SQLite transaction.
+  Promise.resolve().then(() => startLocalBackupWorker(sb, userId));
+}
+
+export function startSupabaseSyncWorker(): void {
+  if (isSupabaseOnly()) return;
+  const sb = getSupabase();
+  const userId = resolveLocalSyncUserId();
+  if (sb && userId) startLocalBackupWorker(sb, userId);
 }
 
 // ── Auth helpers ──────────────────────────────────────────────────────────────
@@ -150,6 +145,9 @@ export async function checkSupabaseRowOwnership(
  * returns 401 if missing or invalid.
  */
 export async function requireAuth(req: NextRequest): Promise<AuthResult> {
+  if (!isSupabaseOnly() && req.method !== "GET" && req.method !== "HEAD" && isLocalRestoreActive()) {
+    return { ok: false, response: NextResponse.json({ error: "A local restore is in progress. Retry after it finishes." }, { status: 409 }) };
+  }
   if (
     !isSupabaseOnly()
     && process.env.NODE_ENV !== "production"

@@ -6,6 +6,7 @@ import { decryptStoredSecret, encryptStoredSecret } from "@/lib/secret-storage";
 import type { AutoSendRunGuard } from "@/lib/auto-send/run-guard";
 import { readAllChildRows, readPages } from "@/lib/supabase-read-all";
 import { loadSavedWalletSigner } from "@/lib/saved-wallet-server";
+import { scheduleValidationError } from "@/lib/schedule-policy";
 
 type Row = Record<string, unknown>;
 
@@ -100,6 +101,8 @@ export async function POST(req: NextRequest) {
 
     if (body.type === "group") {
       const { id, name, network, secretKey, walletId, copyFromGroupId, intervalMinutes, enabled } = body as Record<string, unknown>;
+      const scheduleError = scheduleValidationError(intervalMinutes, [1, 15, 30, 60, 180, 360, 720, 1440]);
+      if (scheduleError) return NextResponse.json({ error: scheduleError }, { status: 400 });
       if (!id || !name) return NextResponse.json({ error: "id and name required" }, { status: 400 });
       if (network !== undefined && network !== "public") {
         return NextResponse.json({ error: "Only mainnet is supported" }, { status: 400 });
@@ -202,6 +205,8 @@ export async function PATCH(req: NextRequest) {
 
     if (body.type === "group") {
       const { id, name, network, secretKey, walletId, intervalMinutes, enabled, batchSend, batchMemo, minReserve, minSenderThreshold, previewOnly, lastFailureAt } = body;
+      const scheduleError = scheduleValidationError(intervalMinutes, [1, 15, 30, 60, 180, 360, 720, 1440]);
+      if (scheduleError) return NextResponse.json({ error: scheduleError }, { status: 400 });
       if (!id) return NextResponse.json({ error: "id required" }, { status: 400 });
       if (network !== undefined && network !== "public") {
         return NextResponse.json({ error: "Only mainnet is supported" }, { status: 400 });

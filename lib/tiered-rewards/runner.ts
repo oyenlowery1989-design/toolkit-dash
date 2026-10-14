@@ -1,6 +1,7 @@
 import { Keypair, TransactionBuilder, Operation, Asset, Horizon, Memo } from "stellar-sdk";
 import type { TieredRewardConfig, TierAssignment, RunLogRow } from "./types";
 import { getDb } from "@/lib/db";
+import { isLocalRestoreActive } from "@/lib/local-restore-lock";
 import { withAccountLock, isBadSeq } from "@/lib/stellar-submit";
 import { getSupabase, isSupabaseOnly } from "@/lib/supabase-server";
 import { getErrorMessage } from "@/lib/stellar-helpers";
@@ -390,6 +391,7 @@ export async function runConfig(
   userId?: string,
   expectedSenderAddress?: string
 ): Promise<RunResult | { error: string }> {
+  if (isLocalRestoreActive()) return { error: "A local restore is in progress. Try again after it finishes." };
   if (_runningConfigs.has(config.id)) {
     return { error: "This config is already running — try again shortly." };
   }

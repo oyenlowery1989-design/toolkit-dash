@@ -5,8 +5,10 @@ import { refreshTieredRewardsScheduler } from "@/lib/tiered-rewards/scheduler";
 import { loadConfig } from "@/lib/tiered-rewards/db";
 import type { TieredRewardConfig, Tier, RewardAsset, RewardsPreview } from "@/lib/tiered-rewards/types";
 import { rewardSigningFields } from "@/lib/tiered-rewards/signing";
-import { createPreviewApproval, stablePreviewDigest, validateMainnetRun, verifyPreviewApproval } from "@/lib/mainnet-safety";
+import { stablePreviewDigest, validateMainnetRun } from "@/lib/mainnet-safety";
 import { getReservedMainnetXlm, MainnetSigningBudgetUnavailableError } from "@/lib/mainnet-signing-budget";
+
+import { createRewardApproval, verifyRewardApproval, readRewardApproval, executeRewardApproval } from "@/lib/tiered-rewards/approval";
 
 type Row = Record<string, unknown>;
 
@@ -120,17 +122,23 @@ export async function POST(req: NextRequest) {
     const intent = rewardsPreviewIntent(preview);
     const feePerOperation = Math.round(100 * Math.max(1, config.feeMultiplier)) / 1e7;
     const safetyWarnings = validateMainnetRun({ ...intent, xlmAmount: intent.xlmAmount + intent.operationCount * feePerOperation, xlmSentLast24Hours: daily });
-    const token = createPreviewApproval(`tiered-rewards:${config.id}`, auth.userId ?? "local", rewardsPreviewDigest(preview));
+    const token = createRewardApproval(config.id, auth.userId ?? "local", rewardsPreviewDigest(preview));
     return NextResponse.json({ ...preview, previewToken: token ?? undefined, safetyWarnings });
   }
 
   if (body.mode === "run") {
+    const token = (body as { previewToken?: unknown }).previewToken;
+    const previous = await readRewardApproval(token, config.id, auth.userId ?? "local");
+    if (previous) {
+      if (!previous.outcome) return NextResponse.json({ error: "This approval is already executing or its outcome requires investigation. Inspect run history." }, { status: 409 });
+      return NextResponse.json(previous.outcome, { status: "error" in previous.outcome ? 409 : 200 });
+    }
     const preview = await calculatePreview(config, undefined, auth.userId ?? undefined);
     if ("error" in preview) return NextResponse.json(preview, { status: 400 });
     if (preview.blocked) return NextResponse.json({ error: preview.blockReasons.join("; ") }, { status: 400 });
-    if (!verifyPreviewApproval(
-      (body as { previewToken?: unknown }).previewToken,
-      `tiered-rewards:${config.id}`,
+    if (!verifyRewardApproval(
+      token,
+      config.id,
       auth.userId ?? "local",
       rewardsPreviewDigest(preview),
     )) {
@@ -138,41 +146,44 @@ export async function POST(req: NextRequest) {
     }
 
     const { runConfig } = await import("@/lib/tiered-rewards/runner");
-    const result = await runConfig(config, preview.assignments, auth.userId ?? undefined, preview.senderAddress);
-    if ("error" in result) return NextResponse.json(result, { status: 409 });
+    const result = await executeRewardApproval(token, config.id, auth.userId ?? "local", rewardsPreviewDigest(preview), async () => {
+      const result = await runConfig(config, preview.assignments, auth.userId ?? undefined, preview.senderAddress);
+      if ("error" in result) return result;
 
-    // Persist last_run_at after a successful run. This MUST be durable: if it silently fails,
-    // the scheduler will see a stale last_run_at and may re-run (and re-pay) this config on its
-    // next tick, so any failure here has to be loud (console.error with the config id) rather
-    // than fire-and-forget.
-    let lastRunAtWriteFailed = false;
-    if (isSupabaseOnly()) {
-      const sb = getSupabase();
-      if (sb && auth.userId && config.id) {
-        try {
-          const { error } = await sb.from("tiered_reward_configs")
-            .update({ last_run_at: Date.now() })
-            .eq("id", config.id)
-            .eq("user_id", auth.userId);
-          if (error) {
+      // Persist last_run_at after a successful run. This MUST be durable: if it silently fails,
+      // the scheduler will see a stale last_run_at and may re-run (and re-pay) this config on its
+      // next tick, so any failure here has to be loud (console.error with the config id) rather
+      // than fire-and-forget.
+      let lastRunAtWriteFailed = false;
+      if (isSupabaseOnly()) {
+        const sb = getSupabase();
+        if (sb && auth.userId && config.id) {
+          try {
+            const { error } = await sb.from("tiered_reward_configs")
+              .update({ last_run_at: Date.now() })
+              .eq("id", config.id)
+              .eq("user_id", auth.userId);
+            if (error) {
+              lastRunAtWriteFailed = true;
+              console.error("[tiered-rewards/run] last_run_at supabase update failed for config", config.id, ":", error);
+            }
+          } catch (e) {
             lastRunAtWriteFailed = true;
-            console.error("[tiered-rewards/run] last_run_at supabase update failed for config", config.id, ":", error);
+            console.error("[tiered-rewards/run] last_run_at supabase update threw for config", config.id, ":", e);
           }
+        }
+      } else {
+        try {
+          getDb().prepare("UPDATE tiered_reward_configs SET last_run_at = ? WHERE id = ?").run(Date.now(), config.id);
         } catch (e) {
           lastRunAtWriteFailed = true;
-          console.error("[tiered-rewards/run] last_run_at supabase update threw for config", config.id, ":", e);
+          console.error("[tiered-rewards/run] last_run_at sqlite update failed for config", config.id, ":", e);
         }
       }
-    } else {
-      try {
-        getDb().prepare("UPDATE tiered_reward_configs SET last_run_at = ? WHERE id = ?").run(Date.now(), config.id);
-      } catch (e) {
-        lastRunAtWriteFailed = true;
-        console.error("[tiered-rewards/run] last_run_at sqlite update failed for config", config.id, ":", e);
-      }
-    }
 
-    return NextResponse.json(lastRunAtWriteFailed ? { ...result, lastRunAtWriteFailed: true } : result);
+      return lastRunAtWriteFailed ? { ...result, lastRunAtWriteFailed: true } : result;
+    });
+    return NextResponse.json(result, { status: "error" in result ? 409 : 200 });
   }
 
   return NextResponse.json({ error: "Unknown mode" }, { status: 400 });

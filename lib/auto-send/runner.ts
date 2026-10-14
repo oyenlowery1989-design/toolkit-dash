@@ -8,6 +8,7 @@ import {
 } from "stellar-sdk";
 import type { AutoSendGroup, DestinationRunResult, GroupRunResult, GroupPreview } from "./types";
 import { getDb } from "@/lib/db";
+import { isLocalRestoreActive } from "@/lib/local-restore-lock";
 import { withAccountLock, isBadSeq } from "@/lib/stellar-submit";
 import { getErrorMessage } from "@/lib/stellar-helpers";
 import { acquireRunLease, releaseRunLease } from "@/lib/run-lease";
@@ -23,11 +24,13 @@ declare global {
 if (!global._autoSendExecutingGroups) global._autoSendExecutingGroups = new Set<string>();
 const executingGroups = global._autoSendExecutingGroups;
 
+export class AutoSendApprovalChangedError extends Error {}
+
 export class AutoSendRunInProgressError extends Error {
   readonly code = "AUTO_SEND_RUN_IN_PROGRESS";
 
-  constructor() {
-    super("This auto-send group is already running. Try again after the current run finishes.");
+  constructor(message = "This auto-send group is already running. Try again after the current run finishes.") {
+    super(message);
     this.name = "AutoSendRunInProgressError";
   }
 }
@@ -204,7 +207,8 @@ export async function previewGroup(group: AutoSendGroup): Promise<GroupPreview |
  *  Batch mode sends all destinations in a single transaction with optional group-level memo.
  *  Wrapped below in a per-account mutex so concurrent runs (manual + scheduler) can't race
  *  on the same account's sequence number. */
-export async function runGroup(group: AutoSendGroup): Promise<GroupRunResult> {
+export async function runGroup(group: AutoSendGroup, approvedPlan?: GroupPreview): Promise<GroupRunResult> {
+  if (isLocalRestoreActive()) throw new AutoSendRunInProgressError("A local restore is in progress. Try again after it finishes.");
   if (executingGroups.has(group.id)) throw new AutoSendRunInProgressError();
   executingGroups.add(group.id);
   let leaseToken: string | null = null;
@@ -216,16 +220,16 @@ export async function runGroup(group: AutoSendGroup): Promise<GroupRunResult> {
       keypair = Keypair.fromSecret(group.secretKey);
     } catch {
       // Invalid secret key — let runGroupInner produce the same error result; no account to lock.
-      return await runGroupInner(group);
+      return await runGroupInner(group, approvedPlan);
     }
-    return await withAccountLock(keypair.publicKey(), () => runGroupInner(group));
+    return await withAccountLock(keypair.publicKey(), () => runGroupInner(group, approvedPlan));
   } finally {
     if (leaseToken) await releaseRunLease("auto_send_run_leases", group.id, leaseToken);
     executingGroups.delete(group.id);
   }
 }
 
-async function runGroupInner(group: AutoSendGroup): Promise<GroupRunResult> {
+async function runGroupInner(group: AutoSendGroup, approvedPlan?: GroupPreview): Promise<GroupRunResult> {
   const ranAt = Date.now();
   const results: DestinationRunResult[] = [];
 
@@ -263,6 +267,11 @@ async function runGroupInner(group: AutoSendGroup): Promise<GroupRunResult> {
   }
 
   const walletAddress = keypair.publicKey();
+  if (approvedPlan && (approvedPlan.groupId !== group.id || approvedPlan.walletAddress !== walletAddress ||
+    approvedPlan.batchSend !== group.batchSend || approvedPlan.items.length !== group.destinations.length ||
+    approvedPlan.items.some((item, index) => item.destination !== group.destinations[index].destination))) {
+    throw new AutoSendApprovalChangedError("Approved payment plan no longer matches the group. Preview again.");
+  }
 
   if (group.destinations.length === 0) {
     return { groupId: group.id, walletAddress, ranAt, results: [] };
@@ -307,10 +316,16 @@ async function runGroupInner(group: AutoSendGroup): Promise<GroupRunResult> {
 
   // Flat 1 XLM fee budget for all modes
   const spendable = xlmBalance - (group.minReserve ?? DEFAULT_MIN_RESERVE) - FEE_BUDGET;
-  let amounts = calcAmounts(spendable, group.destinations);
+  const amounts = approvedPlan
+    ? new Map(group.destinations.map((dest, index) => [dest.id ?? dest.destination, approvedPlan.items[index].wouldSkip ? 0 : approvedPlan.items[index].amountXlm]))
+    : calcAmounts(spendable, group.destinations);
+
+  if (approvedPlan && [...amounts.values()].reduce((sum, amount) => sum + amount, 0) > Math.max(0, spendable) + 1e-7) {
+    throw new AutoSendApprovalChangedError("Balance fell below the approved payment plan and reserve. Preview again.");
+  }
 
   // Test mode: override all amounts to 1 stroop
-  if (group.testMode) {
+  if (group.testMode && !approvedPlan) {
     for (const [key] of amounts) {
       amounts.set(key, 0.0000001);
     }

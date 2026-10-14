@@ -37,7 +37,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
-  const { key, value } = body as { key?: unknown; value?: unknown };
+  const { key, value } = body as { key?: unknown; value?: unknown; };
 
   if (!key || typeof key !== "string" || !key.trim()) {
     return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
@@ -57,9 +57,9 @@ export async function POST(req: NextRequest) {
     const { error } = trimmedValue === ""
       ? await sb.from("app_state").delete().eq("user_id", userId!).eq("key", trimmedKey)
       : await sb.from("app_state").upsert(
-          { user_id: userId, key: trimmedKey, value: trimmedValue },
-          { onConflict: "user_id,key" },
-        );
+        { user_id: userId, key: trimmedKey, value: trimmedValue },
+        { onConflict: "user_id,key" },
+      );
     if (error) {
       console.error("[app-state] POST failed:", error);
       return NextResponse.json({ error: error.message }, { status: 500 });
@@ -67,29 +67,24 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true });
   }
 
-  try {
-    const db = getDb();
-    if (trimmedValue === "") {
-      db.prepare("DELETE FROM app_state WHERE key = ?").run(trimmedKey);
-    } else {
-      db.prepare(
-        "INSERT INTO app_state (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value"
-      ).run(trimmedKey, trimmedValue);
+  return getDb().transaction(() => {
+    try {
+      const db = getDb();
+      if (trimmedValue === "") {
+        db.prepare("DELETE FROM app_state WHERE key = ?").run(trimmedKey);
+      } else {
+        db.prepare(
+          "INSERT INTO app_state (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value"
+        ).run(trimmedKey, trimmedValue);
+      }
+    } catch {
+      return NextResponse.json({ error: "DB error" }, { status: 500 });
     }
-  } catch {
-    return NextResponse.json({ error: "DB error" }, { status: 500 });
-  }
 
-  syncToSupabase(() => {
-    const sb = getSupabase()!;
-    if (trimmedValue === "") {
-      return sb.from("app_state").delete().eq("user_id", userId!).eq("key", trimmedKey);
-    }
-    return sb.from("app_state").upsert(
-      { user_id: userId, key: trimmedKey, value: trimmedValue },
-      { onConflict: "user_id,key" },
-    );
-  });
+    syncToSupabase(trimmedValue === ''
+      ? { table: 'app_state', action: 'delete', match: { user_id: userId, key: trimmedKey } }
+      : { table: 'app_state', action: 'upsert', data: { user_id: userId, key: trimmedKey, value: trimmedValue }, onConflict: 'user_id,key' });
 
-  return NextResponse.json({ ok: true });
+    return NextResponse.json({ ok: true });
+  })();
 }

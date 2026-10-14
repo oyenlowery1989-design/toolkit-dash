@@ -92,7 +92,7 @@ export function FlowGraphTab() {
   const { entries: intermediaryEntries } = useKnownIntermediaries();
   const { entries: creatorEntries } = useKnownCreators();
   const { all: creatorChildren } = useCreatorChildren();
-  const { analyses } = useSavedAnalyses();
+  const { analyses, isLoaded: historyLoaded, loadingHistory, error: historyError, retry: retryHistory } = useSavedAnalyses();
 
   // ---- Filters state ----
   const networkFilter = "public";
@@ -261,6 +261,8 @@ export function FlowGraphTab() {
 
   return (
     <div className="space-y-4">
+      {(!historyLoaded || loadingHistory) && <p className="text-sm text-muted-foreground">Loading saved analysis history… Results include loaded snapshots until history completes.</p>}
+      {historyError && <div role="alert" className="text-sm text-destructive">Saved history is incomplete: {historyError} <Button size="sm" variant="outline" onClick={retryHistory}>Retry history</Button></div>}
       {/* Filters bar */}
       <Card>
         <CardContent className="pt-6 space-y-4">

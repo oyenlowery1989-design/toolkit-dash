@@ -16,7 +16,7 @@ vi.mock("@/lib/db", () => ({ getDb: () => ({ prepare: (sql: string) => ({
   all: () => [],
 }) }) }));
 vi.mock("@/lib/auto-send/runner", () => ({
-  AutoSendRunInProgressError: class extends Error {}, runGroup: vi.fn(), previewGroup: vi.fn(),
+  AutoSendApprovalChangedError: class extends Error {}, AutoSendRunInProgressError: class extends Error {}, runGroup: vi.fn(), previewGroup: vi.fn(),
 }));
 vi.mock("@/lib/auto-send/scheduler", () => ({ refreshScheduler: vi.fn() }));
 vi.mock("@/lib/auto-send/run-guard", () => ({

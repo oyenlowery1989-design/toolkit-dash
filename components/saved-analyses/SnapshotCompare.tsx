@@ -20,7 +20,7 @@ import { Button } from "@/components/ui/button";
 import { ShortAddress } from "@/components/shared/ShortAddress";
 import { formatXlm, formatUsdEstimate } from "@/lib/format";
 import { comparableGroups, diffSnapshots, type DestinationDeltaKind } from "@/lib/saved-analyses/diff";
-import type { SavedAnalysis } from "@/hooks/use-saved-analyses";
+import type { SavedAnalysisSummary } from "@/hooks/use-saved-analyses";
 import { useXlmUsdPrice } from "@/hooks/use-xlm-usd-price";
 
 export function DeltaBadge({ kind }: { kind: DestinationDeltaKind }) {
@@ -79,7 +79,7 @@ export function FieldDeltaCard({
   );
 }
 
-export function SnapshotCompare({ analyses }: { analyses: SavedAnalysis[] }) {
+export function SnapshotCompare({ analyses }: { analyses: SavedAnalysisSummary[] }) {
   const { price: xlmUsdPrice, ensure: ensureXlmUsdPrice } = useXlmUsdPrice();
   const [show, setShow] = useState(false);
   const groups = useMemo(() => comparableGroups(analyses), [analyses]);

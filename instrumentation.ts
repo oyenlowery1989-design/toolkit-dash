@@ -4,6 +4,8 @@
  */
 export async function register() {
   if (process.env.NEXT_RUNTIME === "nodejs") {
+    const { startSupabaseSyncWorker } = await import("./lib/supabase-server");
+    startSupabaseSyncWorker();
     const { startScheduler } = await import("./lib/auto-send/scheduler");
     startScheduler();
     const { startTieredRewardsScheduler } = await import("./lib/tiered-rewards/scheduler");

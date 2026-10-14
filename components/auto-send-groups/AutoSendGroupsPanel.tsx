@@ -308,7 +308,7 @@ function DestinationForm({
 
 // ── Add Group form ────────────────────────────────────────────────────────────
 
-function AddGroupForm({ onDone }: { onDone: () => void }) {
+function AddGroupForm({ onDone, schedulingAvailable }: { onDone: () => void; schedulingAvailable: boolean }) {
   const { createGroup } = useAutoSendGroups();
   const { settings } = useSettings();
   const [name, setName] = useState("");
@@ -331,7 +331,7 @@ function AddGroupForm({ onDone }: { onDone: () => void }) {
     }
     setKeyError(null);
     try {
-      await createGroup({ name: name.trim(), network, secretKey: secretKey.trim(), walletId: savedWallet?.id, intervalMinutes });
+      await createGroup({ name: name.trim(), network, secretKey: secretKey.trim(), walletId: savedWallet?.id, intervalMinutes: schedulingAvailable ? intervalMinutes : null });
       onDone();
     } catch {
       setKeyError("Could not save this group. Check the selected wallet and try again.");
@@ -385,7 +385,7 @@ function AddGroupForm({ onDone }: { onDone: () => void }) {
       <div>
         <p className="text-xs text-muted-foreground mb-1.5">Schedule</p>
         <div className="flex flex-wrap gap-2">
-          {INTERVAL_OPTIONS.map((opt) => (
+          {INTERVAL_OPTIONS.filter((opt) => schedulingAvailable || opt.minutes === null).map((opt) => (
             <Button
               key={String(opt.minutes)}
               type="button"
@@ -413,7 +413,7 @@ function AddGroupForm({ onDone }: { onDone: () => void }) {
 
 // ── Edit Group form (inline settings edit) ───────────────────────────────────
 
-function EditGroupForm({ group, onDone }: { group: { id: string; name: string; network: string; secretKey: string; hasKey?: boolean; intervalMinutes: number | null }; onDone: () => void }) {
+function EditGroupForm({ group, onDone, schedulingAvailable }: { schedulingAvailable: boolean; group: { id: string; name: string; network: string; secretKey: string; hasKey?: boolean; intervalMinutes: number | null }; onDone: () => void }) {
   const { updateGroup } = useAutoSendGroups();
   const [name, setName] = useState(group.name);
   const [network, setNetwork] = useState(group.network);
@@ -427,7 +427,7 @@ function EditGroupForm({ group, onDone }: { group: { id: string; name: string; n
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!name.trim() || !keyValid) return;
-    updateGroup(group.id, { name: name.trim(), network, secretKey: secretKey.trim(), walletId: savedWallet?.id, intervalMinutes });
+    updateGroup(group.id, { name: name.trim(), network, secretKey: secretKey.trim(), walletId: savedWallet?.id, intervalMinutes: schedulingAvailable ? intervalMinutes : null });
     onDone();
   }
 
@@ -475,7 +475,7 @@ function EditGroupForm({ group, onDone }: { group: { id: string; name: string; n
       <div>
         <p className="text-xs text-muted-foreground mb-1.5">Schedule</p>
         <div className="flex flex-wrap gap-2">
-          {INTERVAL_OPTIONS.map((opt) => (
+          {INTERVAL_OPTIONS.filter((opt) => schedulingAvailable || opt.minutes === null).map((opt) => (
             <Button
               key={String(opt.minutes)}
               type="button"
@@ -693,7 +693,7 @@ function RunHistory({ groupId, network, onReRun }: { groupId: string; network: s
 
 // ── Group card ────────────────────────────────────────────────────────────────
 
-function GroupCard({ groupId, runAllStatus }: { groupId: string; runAllStatus?: RunAllStatus }) {
+function GroupCard({ groupId, runAllStatus, schedulingAvailable }: { groupId: string; runAllStatus?: RunAllStatus; schedulingAvailable: boolean }) {
   const { groups, createGroup, updateGroup, deleteGroup, deleteDestination, upsertDestination } = useAutoSendGroups();
   const group = groups.find((g) => g.id === groupId);
   const [expanded, setExpanded] = useState(false);
@@ -819,7 +819,7 @@ function GroupCard({ groupId, runAllStatus }: { groupId: string; runAllStatus?: 
   const totalPct = destinations.filter((d) => !d.isRemainder).reduce((sum, d) => sum + d.percentage, 0);
   const hasRemainder = destinations.some((d) => d.isRemainder);
   const overBudget = totalPct > 100;
-  const nextRun = nextRunLabel(lastRun?.ranAt, group.intervalMinutes);
+  const nextRun = nextRunLabel(lastRun?.ranAt, schedulingAvailable ? group.intervalMinutes : null);
 
   async function handleCheck() {
     setChecking(true);
@@ -1057,7 +1057,7 @@ function GroupCard({ groupId, runAllStatus }: { groupId: string; runAllStatus?: 
             <span>{NETWORK_LABELS[group.network] ?? group.network}</span>
             <span>·</span>
             <Clock size={10} className="inline" />
-            <span>{intervalLabel(group.intervalMinutes)}</span>
+            <span>{intervalLabel(schedulingAvailable ? group.intervalMinutes : null)}</span>
             <span>·</span>
             {/* Batch/Separate toggle */}
             <Button
@@ -1255,7 +1255,7 @@ function GroupCard({ groupId, runAllStatus }: { groupId: string; runAllStatus?: 
 
           {/* Inline group editor */}
           {editingGroup && (
-            <EditGroupForm group={group} onDone={() => { setEditingGroup(false); setBalance(null); }} />
+            <EditGroupForm schedulingAvailable={schedulingAvailable} group={group} onDone={() => { setEditingGroup(false); setBalance(null); }} />
           )}
 
           {/* Preview error */}
@@ -1783,12 +1783,12 @@ export function AutoSendGroupsPanel() {
         </DialogContent>
       </Dialog>
 
-      {showNewGroup && <AddGroupForm onDone={() => setShowNewGroup(false)} />}
+      {showNewGroup && <AddGroupForm schedulingAvailable={!isServerless} onDone={() => setShowNewGroup(false)} />}
 
       {/* Overall stats bar */}
       {stats && (stats.totalRuns > 0 || stats.activeGroups > 0) && (
         <div className="flex flex-wrap gap-x-6 gap-y-1 px-4 py-2.5 rounded-lg border border-border bg-muted/30 text-xs text-muted-foreground">
-          {stats.activeGroups > 0 && (
+          {!isServerless && stats.activeGroups > 0 && (
             <span><span className="text-foreground/70 font-medium">{stats.activeGroups}</span> scheduled</span>
           )}
           {stats.totalRuns > 0 && (
@@ -1817,7 +1817,7 @@ export function AutoSendGroupsPanel() {
       ) : (
         <div className="flex flex-col gap-2">
           {groups.map((g) => (
-            <GroupCard key={g.id} groupId={g.id} runAllStatus={runAllStatus.get(g.id)} />
+            <GroupCard schedulingAvailable={!isServerless} key={g.id} groupId={g.id} runAllStatus={runAllStatus.get(g.id)} />
           ))}
         </div>
       )}

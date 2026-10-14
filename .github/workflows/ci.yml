@@ -40,6 +40,10 @@ jobs:
           psql postgresql://postgres:postgres@127.0.0.1:54322/postgres -v ON_ERROR_STOP=1 -f supabase-schema.sql
           psql postgresql://postgres:postgres@127.0.0.1:54322/postgres -v ON_ERROR_STOP=1 -f supabase-rls-migration.sql
       - run: supabase test db
+      - name: Atomic restore integration (boolean and integer flags)
+        run: |
+          psql postgresql://postgres:postgres@127.0.0.1:54322/postgres -v ON_ERROR_STOP=1 -f scripts/sql/atomic_restore.sql
+          psql postgresql://postgres:postgres@127.0.0.1:54322/postgres -v ON_ERROR_STOP=1 -v restore_integer_flags=1 -f scripts/sql/atomic_restore.sql
 
   browser-safety:
     runs-on: ubuntu-latest
@@ -53,3 +57,4 @@ jobs:
       - run: npm ci
       - run: npx playwright install --with-deps chromium
       - run: npm run test:e2e
+      - run: npm run test:e2e:session

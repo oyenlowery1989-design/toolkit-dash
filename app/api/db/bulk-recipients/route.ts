@@ -58,31 +58,33 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true });
   }
 
-  getDb()
-    .prepare(
-      `INSERT INTO bulk_recipients (id, name, network, addresses, assets_text, saved_at)
+  return getDb().transaction(() => {
+    getDb()
+      .prepare(
+        `INSERT INTO bulk_recipients (id, name, network, addresses, assets_text, saved_at)
        VALUES (?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET
          name = excluded.name,
          addresses = excluded.addresses,
          assets_text = excluded.assets_text,
          saved_at = excluded.saved_at`,
-    )
-    .run(b.id, b.name, b.network, JSON.stringify(b.addresses), b.assetsText ?? null, now);
+      )
+      .run(b.id, b.name, b.network, JSON.stringify(b.addresses), b.assetsText ?? null, now);
 
-  syncToSupabase(() =>
-    getSupabase()!.from("bulk_recipients").upsert({
-      user_id: userId,
-      id: b.id,
-      name: b.name,
-      network: b.network,
-      addresses: b.addresses,
-      assets_text: b.assetsText ?? null,
-      saved_at: now,
-    }),
-  );
+    syncToSupabase({
+      table: "bulk_recipients", action: 'upsert', data: {
+        user_id: userId,
+        id: b.id,
+        name: b.name,
+        network: b.network,
+        addresses: b.addresses,
+        assets_text: b.assetsText ?? null,
+        saved_at: now,
+      }
+    });
 
-  return NextResponse.json({ ok: true });
+    return NextResponse.json({ ok: true });
+  })();
 }
 
 export async function DELETE(req: NextRequest) {
@@ -106,11 +108,11 @@ export async function DELETE(req: NextRequest) {
     return NextResponse.json({ ok: true });
   }
 
-  getDb().prepare("DELETE FROM bulk_recipients WHERE id = ?").run(key);
+  return getDb().transaction(() => {
+    getDb().prepare("DELETE FROM bulk_recipients WHERE id = ?").run(key);
 
-  syncToSupabase(() =>
-    getSupabase()!.from("bulk_recipients").delete().eq("user_id", userId!).eq("id", key),
-  );
+    syncToSupabase({ table: "bulk_recipients", action: 'delete', match: { "user_id": userId!, "id": key } });
 
-  return NextResponse.json({ ok: true });
+    return NextResponse.json({ ok: true });
+  })();
 }

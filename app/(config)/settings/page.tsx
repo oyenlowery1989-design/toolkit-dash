@@ -35,6 +35,7 @@ interface DbStatus {
   supabaseOnly: boolean;
   localBackupEnabled: boolean;
   backupFailed: boolean;
+  backupPending?: number;
   provider: string;
 }
 
@@ -271,7 +272,9 @@ export default function SettingsPage() {
                     : dbStatus?.backupFailed
                     ? "Some local changes were not backed up. Keep your local database file and download a backup."
                     : dbStatus?.localBackupEnabled
-                    ? "Automatic backup of local writes is enabled"
+                    ? dbStatus.backupPending
+                      ? `${dbStatus.backupPending} local change(s) waiting for cloud backup; retries run automatically`
+                      : "Automatic backup of local writes is enabled"
                     : dbStatus?.supabaseConfigured
                     ? "Automatic backup is off — set SUPABASE_SYNC_USER_ID"
                     : "Not configured — add SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY to .env.local"}

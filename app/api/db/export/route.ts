@@ -1,3 +1,4 @@
+import { readBackupRunGuards, LOCAL_RUN_GUARDS_SQL } from "@/lib/backup-run-guards";
 /**
  * GET /api/db/export
  * Returns a user-data backup. Some server-only signing safety state is excluded;
@@ -8,6 +9,7 @@ import { getDb } from "@/lib/db";
 import { getSupabase, isSupabaseOnly, requireAuth } from "@/lib/supabase-server";
 import { readSavedAnalysisRows } from "@/lib/saved-analyses/server";
 import { readAllChildRows, readAllUserRows } from "@/lib/supabase-read-all";
+import { streamJson } from "@/lib/json-stream";
 
 type SupabaseRead = { data: Record<string, unknown>[] | null; error?: { message: string } | null };
 
@@ -93,7 +95,6 @@ export async function GET(req: NextRequest) {
       personReads as SupabaseRead[], ["person_addresses", "person_relationships"],
     );
     const tieredConfigIds = (tieredRewardConfigs ?? []).map((config: Record<string, unknown>) => config.id as string);
-    const rewardGuardIds = tieredConfigIds.map((id) => `reward-guard:${id}`);
     const tieredReads = await Promise.all([
       tieredConfigIds.length > 0
         ? readAllChildRows(sb, "tiered_reward_tiers", "config_id", tieredConfigIds)
@@ -101,9 +102,7 @@ export async function GET(req: NextRequest) {
       tieredConfigIds.length > 0
         ? readAllChildRows(sb, "tiered_reward_run_log", "config_id", tieredConfigIds)
         : Promise.resolve({ data: [], error: null }),
-      rewardGuardIds.length > 0
-        ? readAllChildRows(sb, "tiered_reward_run_leases", "resource_id", rewardGuardIds)
-        : Promise.resolve({ data: [], error: null }),
+      readBackupRunGuards(sb, uid, tieredConfigIds),
     ]);
     const [tieredRewardTiers, tieredRewardRunLog, tieredRewardRunLeases] = unwrapReads(
       tieredReads as SupabaseRead[], ["tiered_reward_tiers", "tiered_reward_run_log", "tiered_reward_run_leases"],
@@ -116,7 +115,7 @@ export async function GET(req: NextRequest) {
       [tieredRewardAssetsRead as SupabaseRead], ["tiered_reward_assets"],
     );
 
-    return NextResponse.json({
+    return streamJson({
       exportedAt: Date.now(),
       source: "supabase",
       signingSafetyStateExcluded: true,
@@ -156,7 +155,7 @@ export async function GET(req: NextRequest) {
 
   // Export from SQLite
   const db = getDb();
-  return NextResponse.json({
+  return streamJson({
     exportedAt: Date.now(),
     source: "sqlite",
     signingSafetyStateExcluded: true,
@@ -186,7 +185,7 @@ export async function GET(req: NextRequest) {
     tiered_reward_tiers: db.prepare("SELECT * FROM tiered_reward_tiers").all(),
     tiered_reward_assets: db.prepare("SELECT * FROM tiered_reward_assets").all(),
     tiered_reward_run_log: db.prepare("SELECT * FROM tiered_reward_run_log").all(),
-    tiered_reward_run_leases: db.prepare("SELECT * FROM tiered_reward_run_leases WHERE resource_id LIKE 'reward-guard:%'").all(),
+    tiered_reward_run_leases: db.prepare(LOCAL_RUN_GUARDS_SQL).all(),
     tracer_watchlist: db.prepare("SELECT * FROM tracer_watchlist").all(),
     tracer_watch_events: db.prepare("SELECT * FROM tracer_watch_events").all(),
     key_scan_state: db.prepare("SELECT * FROM key_scan_state").all(),

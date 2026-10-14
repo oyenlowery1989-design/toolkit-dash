@@ -3,6 +3,7 @@ export type TxStatus =
   | "building"
   | "signing"
   | "submitting"
+  | "uncertain"
   | "success"
   | "error";
 

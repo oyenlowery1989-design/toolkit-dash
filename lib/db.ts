@@ -1,3 +1,4 @@
+import { isLocalDataBlocked, LocalRestoreBusyError } from "@/lib/local-restore-lock";
 /**
  * SQLite database singleton for Stellar Toolkit.
  * The DB file lives at <project-root>/stellar-toolkit.db.
@@ -208,6 +209,15 @@ function initDb(): Database.Database {
     CREATE TABLE IF NOT EXISTS local_backup_failure (
       user_id        TEXT PRIMARY KEY,
       last_failed_at INTEGER NOT NULL
+    );
+
+    -- Local-only outbox; kept in the same transaction as each SQLite mutation.
+    CREATE TABLE IF NOT EXISTS local_backup_queue (
+      id              INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id         TEXT NOT NULL,
+      operations_json TEXT NOT NULL,
+      created_at      INTEGER NOT NULL,
+      last_failed_at  INTEGER
     );
 
     -- Server-only signing safety state. A single budget row serializes all
@@ -731,9 +741,37 @@ function initDb(): Database.Database {
  */
 export const CURRENT_SCHEMA_VERSION = 2;
 
+const WRITE_GUARD = Symbol.for("stellar.local-write-guard");
+
+/** Guard this connection's executions, including statements prepared before maintenance starts. */
+function guardLocalWrites(db: Database.Database): void {
+  if (Reflect.get(db, WRITE_GUARD)) return;
+  const prepare = db.prepare.bind(db);
+  db.prepare = ((sql: string) => {
+    const statement = prepare(sql);
+    if (!statement.readonly) {
+      for (const method of ["run", "get", "all", "iterate"] as const) {
+        const execute = statement[method];
+        Object.defineProperty(statement, method, { value: (...args: unknown[]) => {
+          if (isLocalDataBlocked()) throw new LocalRestoreBusyError();
+          return Reflect.apply(execute, statement, args);
+        } });
+      }
+    }
+    return statement;
+  }) as typeof db.prepare;
+  const exec = db.exec.bind(db);
+  db.exec = (sql: string) => {
+    if (isLocalDataBlocked()) throw new LocalRestoreBusyError();
+    return exec(sql);
+  };
+  Object.defineProperty(db, WRITE_GUARD, { value: true });
+}
+
 export function getDb(): Database.Database {
   if (!global._stellarDb) {
     global._stellarDb = initDb();
   }
+  guardLocalWrites(global._stellarDb);
   return global._stellarDb;
 }

@@ -1,5 +1,5 @@
 import type { AssetGroup, GroupMemberRole } from "@/lib/asset-groups/types";
-import type { SavedAnalysis } from "@/hooks/use-saved-analyses";
+import type { SavedAnalysisSummary } from "@/hooks/use-saved-analyses";
 import type { CreatorChild } from "@/lib/intermediary-tracer/types";
 
 export type OperatorTier = "confirmed" | "strong" | "moderate" | "weak" | "hidden";
@@ -27,7 +27,7 @@ export interface OperatorMatch {
 
 export interface FingerprintInput {
   groups: AssetGroup[];
-  analyses: SavedAnalysis[];
+  analyses: SavedAnalysisSummary[];
   creatorChildren: CreatorChild[];
   minScore?: number;         // default MIN_SCORE_DEFAULT
 }
@@ -94,6 +94,6 @@ export interface GraphInput {
   knownIntermediaries: { address: string; name: string }[];
   knownCreators: { address: string; name: string }[];
   creatorChildren: CreatorChild[];
-  analyses: SavedAnalysis[];
+  analyses: SavedAnalysisSummary[];
   filters?: GraphFilters;
 }

@@ -33,7 +33,7 @@ export async function GET(req: NextRequest) {
 
   const row = getDb()
     .prepare("SELECT rows_json, interrupted, updated_at FROM bulk_scan_state WHERE id = ?")
-    .get(localId(scanKey)) as { rows_json: string; interrupted: number; updated_at: number } | undefined;
+    .get(localId(scanKey)) as { rows_json: string; interrupted: number; updated_at: number; } | undefined;
   if (!row) return NextResponse.json(null);
   return NextResponse.json({
     rowsJson: row.rows_json,
@@ -48,7 +48,7 @@ export async function POST(req: NextRequest) {
   const { userId } = auth;
   const scanKey = getScanKey(req);
 
-  let body: { rowsJson?: unknown; interrupted?: unknown };
+  let body: { rowsJson?: unknown; interrupted?: unknown; };
   try {
     body = await req.json();
   } catch {
@@ -73,26 +73,23 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true });
   }
 
-  getDb()
-    .prepare(
-      `INSERT INTO bulk_scan_state (id, scan_key, rows_json, interrupted, updated_at)
+  return getDb().transaction(() => {
+    getDb()
+      .prepare(
+        `INSERT INTO bulk_scan_state (id, scan_key, rows_json, interrupted, updated_at)
        VALUES (?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET
          scan_key = excluded.scan_key,
          rows_json = excluded.rows_json,
          interrupted = excluded.interrupted,
          updated_at = excluded.updated_at`,
-    )
-    .run(localId(scanKey), scanKey, rowsJson, interrupted ? 1 : 0, now);
+      )
+      .run(localId(scanKey), scanKey, rowsJson, interrupted ? 1 : 0, now);
 
-  syncToSupabase(() =>
-    getSupabase()!.from("bulk_scan_state").upsert(
-      { user_id: userId, scan_key: scanKey, rows_json: rowsJson, interrupted, updated_at: now },
-      { onConflict: "user_id,scan_key" },
-    ),
-  );
+    syncToSupabase({ table: "bulk_scan_state", action: 'upsert', data: { user_id: userId, scan_key: scanKey, rows_json: rowsJson, interrupted, updated_at: now }, onConflict: "user_id,scan_key" });
 
-  return NextResponse.json({ ok: true });
+    return NextResponse.json({ ok: true });
+  })();
 }
 
 export async function DELETE(req: NextRequest) {
@@ -114,11 +111,11 @@ export async function DELETE(req: NextRequest) {
     return NextResponse.json({ ok: true });
   }
 
-  getDb().prepare("DELETE FROM bulk_scan_state WHERE id = ?").run(localId(scanKey));
+  return getDb().transaction(() => {
+    getDb().prepare("DELETE FROM bulk_scan_state WHERE id = ?").run(localId(scanKey));
 
-  syncToSupabase(() =>
-    getSupabase()!.from("bulk_scan_state").delete().eq("user_id", userId!).eq("scan_key", scanKey),
-  );
+    syncToSupabase({ table: "bulk_scan_state", action: 'delete', match: { "user_id": userId!, "scan_key": scanKey } });
 
-  return NextResponse.json({ ok: true });
+    return NextResponse.json({ ok: true });
+  })();
 }

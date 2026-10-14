@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
 import { checkSupabaseRowOwnership, getSupabase, isSupabaseOnly, syncToSupabase, requireAuth } from "@/lib/supabase-server";
+import { readAllChildRows, readAllUserRows } from "@/lib/supabase-read-all";
 import type { AssetGroup, GroupMember } from "@/lib/asset-groups/types";
 
 type GroupRow = Record<string, unknown>;
@@ -55,15 +56,13 @@ export async function GET(req: NextRequest) {
 
   if (isSupabaseOnly()) {
     const sb = getSupabase()!;
-    const { data: groups } = await sb
-      .from("asset_groups")
-      .select("*")
-      .eq("user_id", userId!)
-      .order("updated_at", { ascending: false });
-    const groupIds = (groups ?? []).map((g) => g.id as string);
-    const { data: allMembers } = groupIds.length > 0
-      ? await sb.from("asset_group_members").select("*").in("group_id", groupIds).order("added_at", { ascending: true })
-      : { data: [] };
+    const { data: groups, error } = await readAllUserRows(sb, "asset_groups", userId!);
+    if (error) return NextResponse.json({ error: error.message }, { status: 502 });
+    groups!.sort((a, b) => Number(b.updated_at) - Number(a.updated_at));
+    const groupIds = groups!.map(g => g.id as string);
+    const { data: allMembers, error: membersError } = await readAllChildRows(sb, "asset_group_members", "group_id", groupIds);
+    if (membersError) return NextResponse.json({ error: membersError.message }, { status: 502 });
+    allMembers!.sort((a, b) => Number(a.added_at) - Number(b.added_at));
     return NextResponse.json(buildGroupsFromRows(groups ?? [], allMembers ?? []));
   }
 
@@ -112,31 +111,24 @@ export async function POST(req: NextRequest) {
       }
 
       try {
-        db.prepare(
-          `INSERT INTO asset_groups (id, name, asset_code, issuer, network, notes, domain, telegram_channel, telegram_link, person_id, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-           ON CONFLICT(id) DO UPDATE SET
-             name       = excluded.name,
-             asset_code = excluded.asset_code,
-             issuer     = excluded.issuer,
-             network    = excluded.network,
-             notes      = excluded.notes,
-             updated_at = excluded.updated_at`,
-        ).run(id, nameTrimmed, assetCodeNorm, issuerNorm, networkNorm, notes ?? null, null, null, null, null, now, now);
+        db.transaction(() => {
+          db.prepare(
+            `INSERT INTO asset_groups (id, name, asset_code, issuer, network, notes, domain, telegram_channel, telegram_link, person_id, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(id) DO UPDATE SET
+               name       = excluded.name,
+               asset_code = excluded.asset_code,
+               issuer     = excluded.issuer,
+               network    = excluded.network,
+               notes      = excluded.notes,
+               updated_at = excluded.updated_at`,
+          ).run(id, nameTrimmed, assetCodeNorm, issuerNorm, networkNorm, notes ?? null, null, null, null, null, now, now);
 
-        syncToSupabase(async () => {
-          await getSupabase()!.from("asset_groups").upsert({
-            id,
-            user_id: userId,
-            name: nameTrimmed,
-            asset_code: assetCodeNorm,
-            issuer: issuerNorm,
-            network: networkNorm,
-            notes: notes ?? null,
-            created_at: now,
-            updated_at: now,
-          }).throwOnError();
-        });
+          syncToSupabase({ table: "asset_groups", action: "upsert", data: {
+            id, name: nameTrimmed, asset_code: assetCodeNorm, issuer: issuerNorm,
+            network: networkNorm, notes: notes ?? null, created_at: now, updated_at: now,
+          } });
+        })();
 
         return NextResponse.json({ ok: true });
       } catch (error) {
@@ -257,16 +249,25 @@ export async function POST(req: NextRequest) {
     const memberId = (db.prepare("SELECT id FROM asset_group_members WHERE group_id = ? AND address = ?")
       .get(groupId, address) as { id: string } | undefined)?.id ?? id;
     try {
-      db.prepare(
-        `INSERT INTO asset_group_members (id, group_id, address, role, label, notes, home_domain, added_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(group_id, address) DO UPDATE SET
-           role        = excluded.role,
-           label       = excluded.label,
-           notes       = excluded.notes,
-           home_domain = excluded.home_domain`,
-      ).run(memberId, groupId, address, role, label ?? null, notes ?? null, homeDomain ?? null, now);
-      db.prepare("UPDATE asset_groups SET updated_at = ? WHERE id = ?").run(now, groupId);
+      db.transaction(() => {
+        db.prepare(
+          `INSERT INTO asset_group_members (id, group_id, address, role, label, notes, home_domain, added_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(group_id, address) DO UPDATE SET
+             role        = excluded.role,
+             label       = excluded.label,
+             notes       = excluded.notes,
+             home_domain = excluded.home_domain`,
+        ).run(memberId, groupId, address, role, label ?? null, notes ?? null, homeDomain ?? null, now);
+        db.prepare("UPDATE asset_groups SET updated_at = ? WHERE id = ?").run(now, groupId);
+        syncToSupabase([
+          { table: "asset_group_members", action: "upsert", data: {
+            id: memberId, group_id: groupId, address, role, label: label ?? null,
+            notes: notes ?? null, home_domain: homeDomain ?? null, added_at: now,
+          }, onConflict: "group_id,address", preserveExisting: ["id", "added_at"] },
+          { table: "asset_groups", action: "update", data: { updated_at: now }, match: { id: groupId } },
+        ]);
+      })();
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       if (message.toLowerCase().includes("foreign key")) {
@@ -274,26 +275,6 @@ export async function POST(req: NextRequest) {
       }
       throw error;
     }
-
-    syncToSupabase(async () => {
-      const sb = getSupabase()!;
-      const { data: existing } = await sb.from("asset_group_members")
-        .select("id,added_at").eq("group_id", groupId).eq("address", address).maybeSingle().throwOnError();
-      await sb.from("asset_group_members").upsert(
-        {
-          id: existing?.id ?? memberId,
-          group_id: groupId,
-          address,
-          role,
-          label: label ?? null,
-          notes: notes ?? null,
-          home_domain: homeDomain ?? null,
-          added_at: existing?.added_at ?? now,
-        },
-        { onConflict: "group_id,address" },
-      ).throwOnError();
-      await sb.from("asset_groups").update({ updated_at: now }).eq("id", groupId).eq("user_id", userId!).throwOnError();
-    });
 
     return NextResponse.json({ ok: true, id: memberId });
   }
@@ -344,39 +325,40 @@ export async function PATCH(req: NextRequest) {
       return NextResponse.json({ ok: true });
     }
 
-    getDb()
-      .prepare(
-        `UPDATE asset_groups SET
-           name             = COALESCE(?, name),
-           notes            = COALESCE(?, notes),
-           asset_code       = COALESCE(?, asset_code),
-           issuer           = COALESCE(?, issuer),
-           network          = COALESCE(?, network),
-           domain           = COALESCE(?, domain),
-           telegram_channel = COALESCE(?, telegram_channel),
-           telegram_link    = COALESCE(?, telegram_link),
-           person_id        = COALESCE(?, person_id),
-           updated_at       = ?
-         WHERE id = ?`,
-      )
-      .run(
-        name ?? null,
-        notes ?? null,
-        assetCode ?? null,
-        issuer ?? null,
-        network ?? null,
-        domain ?? null,
-        telegramChannel ?? null,
-        telegramLink ?? null,
-        personId ?? null,
-        now,
-        id,
-      );
-    if (clearPersonId) {
-      getDb().prepare("UPDATE asset_groups SET person_id = NULL WHERE id = ?").run(id);
-    }
+    const db = getDb();
+    db.transaction(() => {
+      db
+        .prepare(
+          `UPDATE asset_groups SET
+             name             = COALESCE(?, name),
+             notes            = COALESCE(?, notes),
+             asset_code       = COALESCE(?, asset_code),
+             issuer           = COALESCE(?, issuer),
+             network          = COALESCE(?, network),
+             domain           = COALESCE(?, domain),
+             telegram_channel = COALESCE(?, telegram_channel),
+             telegram_link    = COALESCE(?, telegram_link),
+             person_id        = COALESCE(?, person_id),
+             updated_at       = ?
+           WHERE id = ?`,
+        )
+        .run(
+          name ?? null,
+          notes ?? null,
+          assetCode ?? null,
+          issuer ?? null,
+          network ?? null,
+          domain ?? null,
+          telegramChannel ?? null,
+          telegramLink ?? null,
+          personId ?? null,
+          now,
+          id,
+        );
+      if (clearPersonId) {
+        db.prepare("UPDATE asset_groups SET person_id = NULL WHERE id = ?").run(id);
+      }
 
-    syncToSupabase(async () => {
       const patch: Record<string, unknown> = { updated_at: now };
       if (name !== undefined) patch.name = name;
       if (notes !== undefined) patch.notes = notes;
@@ -388,8 +370,8 @@ export async function PATCH(req: NextRequest) {
       if (telegramLink !== undefined) patch.telegram_link = telegramLink;
       if (clearPersonId) patch.person_id = null;
       else if (personId !== undefined) patch.person_id = personId;
-      await getSupabase()!.from("asset_groups").update(patch).eq("id", id).eq("user_id", userId!).throwOnError();
-    });
+      syncToSupabase({ table: "asset_groups", action: "update", data: patch, match: { id } });
+    })();
 
     return NextResponse.json({ ok: true });
   }
@@ -435,31 +417,29 @@ export async function PATCH(req: NextRequest) {
     }
 
     const db = getDb();
-    db.prepare(
-      `UPDATE asset_group_members SET
-         label       = COALESCE(?, label),
-         notes       = COALESCE(?, notes),
-         role        = COALESCE(?, role),
-         home_domain = COALESCE(?, home_domain)
-       WHERE id = ?`,
-    ).run(label ?? null, notes ?? null, role ?? null, homeDomain ?? null, id);
-    if (groupId) {
-      db.prepare("UPDATE asset_groups SET updated_at = ? WHERE id = ?").run(now, groupId);
-    }
+    db.transaction(() => {
+      const member = db.prepare("SELECT group_id, address FROM asset_group_members WHERE id = ?").get(id) as
+        { group_id: string; address: string } | undefined;
+      db.prepare(
+        `UPDATE asset_group_members SET
+           label       = COALESCE(?, label),
+           notes       = COALESCE(?, notes),
+           role        = COALESCE(?, role),
+           home_domain = COALESCE(?, home_domain)
+         WHERE id = ?`,
+      ).run(label ?? null, notes ?? null, role ?? null, homeDomain ?? null, id);
+      if (groupId) {
+        db.prepare("UPDATE asset_groups SET updated_at = ? WHERE id = ?").run(now, groupId);
+      }
 
-    syncToSupabase(async () => {
       const patch: Record<string, unknown> = {};
       if (label !== undefined) patch.label = label;
       if (notes !== undefined) patch.notes = notes;
       if (role !== undefined) patch.role = role;
       if (homeDomain !== undefined) patch.home_domain = homeDomain;
-      if (Object.keys(patch).length > 0) {
-        await getSupabase()!.from("asset_group_members").update(patch).eq("id", id).throwOnError();
-      }
-      if (groupId) {
-        await getSupabase()!.from("asset_groups").update({ updated_at: now }).eq("id", groupId).eq("user_id", userId!).throwOnError();
-      }
-    });
+      if (member && Object.keys(patch).length > 0) syncToSupabase({ table: "asset_group_members", action: "update", data: patch, match: member });
+      if (groupId) syncToSupabase({ table: "asset_groups", action: "update", data: { updated_at: now }, match: { id: groupId } });
+    })();
 
     return NextResponse.json({ ok: true });
   }
@@ -503,25 +483,18 @@ export async function DELETE(req: NextRequest) {
   }
 
   const db = getDb();
-  if (type === "group") {
-    db.prepare("DELETE FROM asset_groups WHERE id = ?").run(key);
-  } else if (type === "member") {
-    db.prepare("DELETE FROM asset_group_members WHERE id = ?").run(key);
-  }
-
-  syncToSupabase(async () => {
-    const sb = getSupabase()!;
+  db.transaction(() => {
+    const member = type === "member" ? db.prepare("SELECT group_id, address FROM asset_group_members WHERE id = ?").get(key) as
+      { group_id: string; address: string } | undefined : undefined;
     if (type === "group") {
-      return sb.from("asset_groups").delete().eq("id", key).eq("user_id", userId!);
-    } else {
-      // asset_group_members has no user_id — scope via parent group ownership
-      const { data: member } = await sb.from("asset_group_members").select("group_id").eq("id", key).maybeSingle().throwOnError();
-      if (!member) return;
-      const { data: parentGroup } = await sb.from("asset_groups").select("id").eq("id", member.group_id).eq("user_id", userId!).maybeSingle().throwOnError();
-      if (!parentGroup) return; // caller doesn't own the parent group — abort
-      return sb.from("asset_group_members").delete().eq("id", key);
+      db.prepare("DELETE FROM asset_groups WHERE id = ?").run(key);
+    } else if (type === "member") {
+      db.prepare("DELETE FROM asset_group_members WHERE id = ?").run(key);
     }
-  });
+
+    if (type === "group") syncToSupabase({ table: "asset_groups", action: "delete", match: { id: key } });
+    else if (member) syncToSupabase({ table: "asset_group_members", action: "delete", match: member });
+  })();
 
   return NextResponse.json({ ok: true });
 }

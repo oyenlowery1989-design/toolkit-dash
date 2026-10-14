@@ -1,3 +1,4 @@
+import { isLocalRestoreActive } from "@/lib/local-restore-lock";
 /**
  * Auto-Send Group scheduler.
  * Uses node-cron to schedule enabled groups server-side.
@@ -191,6 +192,7 @@ async function scheduleAll(): Promise<void> {
     if (!group.intervalMinutes) continue;
     const expr = minutesToCronExpression(group.intervalMinutes);
     const task = cron.schedule(expr, async () => {
+      if (isLocalRestoreActive()) return;
       if (_runningGroups.has(group.id)) {
         console.warn(`[auto-send] Group "${group.name}" still running — skipping tick`);
         return;

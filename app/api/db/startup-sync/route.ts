@@ -1,3 +1,4 @@
+import { normalizeApprovalGuardToken, readBackupRunGuards } from "@/lib/backup-run-guards";
 /**
  * POST /api/db/startup-sync
  * Merges Supabase data into local SQLite on app startup.
@@ -6,6 +7,7 @@
  */
 import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
+import { LocalRestoreBusyError, withLocalRestoreLock } from "@/lib/local-restore-lock";
 import {
   getSupabase,
   isSupabaseConfigured,
@@ -16,6 +18,7 @@ import {
 import { encryptImportedStoredSecret } from "@/lib/secret-storage";
 import { readSavedAnalysisRows } from "@/lib/saved-analyses/server";
 import { readAllChildRows, readAllUserRows } from "@/lib/supabase-read-all";
+import { drainLocalBackup } from "@/lib/local-backup-queue";
 
 export async function POST(req: NextRequest) {
   const auth = await requireAuth(req);
@@ -40,9 +43,15 @@ export async function POST(req: NextRequest) {
     });
   }
 
+  try {
   const sb = getSupabase()!;
   const db = getDb();
+  await drainLocalBackup(sb, userId);
+  if (db.prepare("SELECT 1 FROM local_backup_queue WHERE user_id = ? LIMIT 1").get(userId)) {
+    return NextResponse.json({ error: "Local changes are still waiting for cloud backup; retry after the backup recovers" }, { status: 409 });
+  }
 
+  return await withLocalRestoreLock(async () => {
   const parentReads = await Promise.all([
     readAllUserRows(sb, "address_book", userId),
     readAllUserRows(sb, "known_intermediaries", userId),
@@ -118,9 +127,23 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: tieredRewardAssetsError.message }, { status: 502 });
   }
 
+  const guards = await readBackupRunGuards(sb, userId, tieredRewardConfigIds);
+  if (guards.error) return NextResponse.json({ error: guards.error.message }, { status: 502 });
+  guards.data = guards.data!.map(row => row.resource_id === `payment-guard:${userId}`
+    ? { ...row, resource_id: "payment-guard:local" } : row);
+  for (const row of guards.data) {
+    const existing = db.prepare("SELECT lease_token FROM tiered_reward_run_leases WHERE resource_id = ?").get(row.resource_id) as { lease_token: string } | undefined;
+    if (existing && normalizeApprovalGuardToken(row.resource_id as string, existing.lease_token, userId) !==
+        normalizeApprovalGuardToken(row.resource_id as string, row.lease_token as string, userId)) return NextResponse.json({ error: "A local run guard differs; reconcile it before syncing" }, { status: 409 });
+  }
+
   let merged = 0;
 
   db.transaction(() => {
+    for (const row of guards.data!) {
+      merged += db.prepare("INSERT OR IGNORE INTO tiered_reward_run_leases (resource_id, lease_token, expires_at) VALUES (?, ?, ?)")
+        .run(row.resource_id, row.lease_token, row.expires_at).changes;
+    }
     for (const r of addressBook ?? []) {
       const result = db.prepare(
         "INSERT OR IGNORE INTO address_book (public_key, label, notes, color, created_at) VALUES (?, ?, ?, ?, ?)"
@@ -229,13 +252,13 @@ export async function POST(req: NextRequest) {
     for (const r of autoSendGroups ?? []) {
       const result = db.prepare(
         "INSERT OR IGNORE INTO auto_send_groups (id, name, network, secret_key, interval_minutes, enabled, batch_send, batch_memo, min_reserve, min_sender_threshold, preview_only, last_failure_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
-      ).run(r.id, r.name, "public", encryptImportedStoredSecret(r.secret_key), r.interval_minutes, r.enabled, r.batch_send, r.batch_memo, r.min_reserve, r.min_sender_threshold, r.preview_only, r.last_failure_at, r.created_at);
+      ).run(r.id, r.name, "public", encryptImportedStoredSecret(r.secret_key), r.interval_minutes, Number(r.enabled), Number(r.batch_send), r.batch_memo, r.min_reserve, r.min_sender_threshold, Number(r.preview_only), r.last_failure_at, r.created_at);
       merged += result.changes;
     }
     for (const r of autoSendDestinations ?? []) {
       const result = db.prepare(
         "INSERT OR IGNORE INTO auto_send_destinations (id, group_id, destination, percentage, is_remainder, is_paused, label, memo, min_threshold, max_cap, position) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
-      ).run(r.id, r.group_id, r.destination, r.percentage, r.is_remainder, r.is_paused, r.label, r.memo, r.min_threshold, r.max_cap, r.position);
+      ).run(r.id, r.group_id, r.destination, r.percentage, Number(r.is_remainder), Number(r.is_paused), r.label, r.memo, r.min_threshold, r.max_cap, r.position);
       merged += result.changes;
     }
     for (const r of autoSendRunLog ?? []) {
@@ -257,7 +280,7 @@ export async function POST(req: NextRequest) {
     for (const r of bulkScanState ?? []) {
       const result = db.prepare(
         "INSERT OR IGNORE INTO bulk_scan_state (id, scan_key, rows_json, interrupted, updated_at) VALUES (?, ?, ?, ?, ?)"
-      ).run(`local:${r.scan_key}`, r.scan_key, r.rows_json, r.interrupted, r.updated_at);
+      ).run(`local:${r.scan_key}`, r.scan_key, r.rows_json, Number(r.interrupted), r.updated_at);
       merged += result.changes;
     }
     // Tiered rewards — configs before tiers before assets
@@ -265,7 +288,7 @@ export async function POST(req: NextRequest) {
       const excludeAddresses = JSON.stringify(r.exclude_addresses ?? []);
       const result = db.prepare(
         "INSERT OR IGNORE INTO tiered_reward_configs (id, name, asset_code, asset_issuer, network, secret_key, interval_minutes, enabled, min_reserve, min_sender_threshold, preview_only, batch_send, memo, fee_multiplier, exclude_addresses, last_run_at, last_failure_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
-      ).run(r.id, r.name, r.asset_code, r.asset_issuer, "public", encryptImportedStoredSecret(r.secret_key), r.interval_minutes, r.enabled, r.min_reserve, r.min_sender_threshold, r.preview_only, r.batch_send, r.memo, r.fee_multiplier, excludeAddresses, r.last_run_at, r.last_failure_at, r.created_at);
+      ).run(r.id, r.name, r.asset_code, r.asset_issuer, "public", encryptImportedStoredSecret(r.secret_key), r.interval_minutes, Number(r.enabled), r.min_reserve, r.min_sender_threshold, Number(r.preview_only), Number(r.batch_send), r.memo, r.fee_multiplier, excludeAddresses, r.last_run_at, r.last_failure_at, r.created_at);
       merged += result.changes;
     }
     for (const r of tieredRewardTiers ?? []) {
@@ -289,4 +312,10 @@ export async function POST(req: NextRequest) {
   })();
 
   return NextResponse.json({ ok: true, merged });
+  });
+  } catch (error) {
+    if (error instanceof LocalRestoreBusyError) return NextResponse.json({ error: error.message }, { status: 409 });
+    throw error;
+  }
+
 }
