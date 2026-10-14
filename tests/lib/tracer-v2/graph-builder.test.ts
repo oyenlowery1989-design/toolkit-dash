@@ -86,6 +86,24 @@ const emptyInput: GraphInput = {
 };
 
 describe("buildGraph", () => {
+  it("shows no nodes when every node-kind filter is switched off", () => {
+    const { nodes, edges } = buildGraph({ ...emptyInput, groups: [grp("one", "public", [["GA", "issuer"]])], filters: { kinds: [] } });
+    expect(nodes).toEqual([]);
+    expect(edges).toEqual([]);
+  });
+  it("does not mix historical testnet evidence into a public-network graph for the same address", () => {
+    const publicGroup = grp("public", "public", [["GISS", "issuer"], ["GPUB", "distributor"]]);
+    const testnetGroup = grp("testnet", "testnet", [["GISS", "issuer"], ["GTEST", "distributor"]]);
+    const { nodes, edges } = buildGraph({
+      ...emptyInput,
+      groups: [testnetGroup, publicGroup],
+      creatorChildren: [child("GISS", "GOLD", "testnet")],
+      filters: { network: "public" },
+    });
+    expect(nodes.map((node) => node.id)).toEqual(expect.arrayContaining(["GISS", "GPUB"]));
+    expect(nodes.some((node) => node.id === "GTEST" || node.id === "GOLD")).toBe(false);
+    expect(edges.some((edge) => edge.source === "GTEST" || edge.target === "GOLD")).toBe(false);
+  });
   it("dedups an address that is BOTH a known intermediary and a group member into one node with both kinds", () => {
     const group = grp("1", "public", [["GI1", "intermediary"]]);
     const { nodes } = buildGraph({

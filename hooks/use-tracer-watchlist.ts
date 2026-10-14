@@ -38,7 +38,10 @@ export function useTracerWatchlist() {
         createdAt: now,
       };
       _cache.set([optimistic, ..._cache.get()]);
-      await dbPost(ENDPOINT, { id, ...entry }).catch(() => _cache.reload(ENDPOINT));
+      await dbPost(ENDPOINT, { id, ...entry }).catch((error) => {
+        void _cache.reload(ENDPOINT);
+        throw error;
+      });
       return id;
     },
     [],

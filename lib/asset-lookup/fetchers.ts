@@ -533,13 +533,7 @@ async function scanTradePair(
     });
     if (cursor) params.set("cursor", cursor);
 
-    let data: any;
-    try {
-      data = await fetchJson(`${horizonBase}/trades?${params}`, signal);
-    } catch (e) {
-      if (e instanceof DOMException && e.name === "AbortError") throw e;
-      break;
-    }
+    const data: any = await fetchJson(`${horizonBase}/trades?${params}`, signal);
     const records: Record<string, unknown>[] = data._embedded?.records ?? [];
 
     for (const r of records) {
@@ -581,13 +575,7 @@ async function scanTradePair(
     });
     if (cursor) params.set("cursor", cursor);
 
-    let data: any;
-    try {
-      data = await fetchJson(`${horizonBase}/trades?${params}`, signal);
-    } catch (e) {
-      if (e instanceof DOMException && e.name === "AbortError") throw e;
-      break;
-    }
+    const data: any = await fetchJson(`${horizonBase}/trades?${params}`, signal);
     const records: Record<string, unknown>[] = data._embedded?.records ?? [];
 
     for (const r of records) {
@@ -649,13 +637,7 @@ async function scanAccountTrades(
       order: "asc",
     });
     if (cursor) params.set("cursor", cursor);
-    let data: any;
-    try {
-      data = await fetchJson(`${horizonBase}/trades?${params}`, signal);
-    } catch (e) {
-      if (e instanceof DOMException && e.name === "AbortError") throw e;
-      break;
-    }
+    const data: any = await fetchJson(`${horizonBase}/trades?${params}`, signal);
     const records: Record<string, unknown>[] = data._embedded?.records ?? [];
 
     for (const r of records) {
@@ -691,32 +673,22 @@ async function fetchOpenOfferAmount(
     assetCode.length <= 4 ? "credit_alphanum4" : "credit_alphanum12";
   let total = 0;
   let cursor: string | undefined;
-  try {
-    while (!signal.aborted) {
-      const params = new URLSearchParams({
-        seller: address,
-        selling_asset_type: assetType,
-        selling_asset_code: assetCode,
-        selling_asset_issuer: issuerAddress,
-        limit: "200",
-      });
-      if (cursor) params.set("cursor", cursor);
-      let data: any;
-      try {
-        data = await fetchJson(`${horizonBase}/offers?${params}`, signal);
-      } catch (e) {
-        if (e instanceof DOMException && e.name === "AbortError") throw e;
-        break;
-      }
-      const records: Record<string, unknown>[] = data._embedded?.records ?? [];
-      for (const r of records) {
-        total += parseFloat((r.amount as string) ?? "0");
-      }
-      if (records.length < 200) break;
-      cursor = records[records.length - 1].paging_token as string;
+  while (!signal.aborted) {
+    const params = new URLSearchParams({
+      seller: address,
+      selling_asset_type: assetType,
+      selling_asset_code: assetCode,
+      selling_asset_issuer: issuerAddress,
+      limit: "200",
+    });
+    if (cursor) params.set("cursor", cursor);
+    const data: any = await fetchJson(`${horizonBase}/offers?${params}`, signal);
+    const records: Record<string, unknown>[] = data._embedded?.records ?? [];
+    for (const r of records) {
+      total += parseFloat((r.amount as string) ?? "0");
     }
-  } catch {
-    // best-effort, return whatever we have
+    if (records.length < 200) break;
+    cursor = records[records.length - 1].paging_token as string;
   }
   return total;
 }
@@ -742,14 +714,13 @@ export async function fetchAssetXlmTrades(
 
   // Per-distrib: scan each account's trades directly — accurate, no direction ambiguity.
   // Open offers: fetch in parallel alongside account scans.
-  // Use allSettled so one failing account doesn't wipe out results for all the others.
-  const [accountSettled, openOfferSettled] = await Promise.all([
-    Promise.allSettled(
+  const [accountResults, openOfferAmounts] = await Promise.all([
+    Promise.all(
       trackedAddresses.map((addr) =>
         scanAccountTrades(horizonBase, addr, assetCode, issuerAddress, signal),
       ),
     ),
-    Promise.allSettled(
+    Promise.all(
       trackedAddresses.map((addr) =>
         fetchOpenOfferAmount(
           horizonBase,
@@ -761,21 +732,6 @@ export async function fetchAssetXlmTrades(
       ),
     ),
   ]);
-
-  const accountResults = accountSettled.map((result, i) => {
-    if (result.status === "fulfilled") return result.value;
-    console.warn(
-      `scanAccountTrades failed for ${trackedAddresses[i]}: ${String(result.reason)}`,
-    );
-    return { assetSold: 0, xlmReceived: 0, tradeCount: 0, rawTrades: [] };
-  });
-  const openOfferAmounts = openOfferSettled.map((result, i) => {
-    if (result.status === "fulfilled") return result.value;
-    console.warn(
-      `fetchOpenOfferAmount failed for ${trackedAddresses[i]}: ${String(result.reason)}`,
-    );
-    return 0;
-  });
 
   const byAccount: AccountTradeSummary[] = [];
   for (let i = 0; i < trackedAddresses.length; i++) {

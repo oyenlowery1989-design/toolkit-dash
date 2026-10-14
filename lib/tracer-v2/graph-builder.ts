@@ -26,7 +26,10 @@ function pushEdge(edges: GraphEdge[], source: string, target: string, kind: Grap
 }
 
 export function buildGraph(input: GraphInput): GraphData {
-  const { groups, knownIntermediaries, knownCreators, creatorChildren, analyses, filters } = input;
+  const { knownIntermediaries, knownCreators, filters } = input;
+  const groups = filters?.network ? input.groups.filter((group) => group.network === filters.network) : input.groups;
+  const creatorChildren = filters?.network ? input.creatorChildren.filter((child) => child.network === filters.network) : input.creatorChildren;
+  const analyses = filters?.network ? input.analyses.filter((analysis) => analysis.network === filters.network) : input.analyses;
 
   const nodes = new Map<string, GraphNode>();
   const edges: GraphEdge[] = [];
@@ -139,7 +142,7 @@ function applyFilters(
     edges = filterEdgesBySurvivingNodes(edges, keep);
   }
 
-  if (filters.kinds && filters.kinds.length > 0) {
+  if (filters.kinds) {
     const kindsFilter = new Set(filters.kinds);
     const keep = new Set(nodes.filter((n) => n.kinds.some((k) => kindsFilter.has(k))).map((n) => n.id));
     nodes = nodes.filter((n) => keep.has(n.id));

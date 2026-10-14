@@ -49,6 +49,7 @@ export function usePaymentsController() {
   const [pathsFetchedAt, setPathsFetchedAt] = useState<number | null>(null);
   const [isFindingPaths, setIsFindingPaths] = useState(false);
   const [pathError, setPathError] = useState<string | null>(null);
+  const pathRequestRef = useRef(0);
 
   // -- Claimable balance fields
   const [claimAssetKey, setClaimAssetKey] = useState("native");
@@ -76,6 +77,9 @@ export function usePaymentsController() {
   const { settings } = useSettings();
   const network = settings.network;
   const { server: horizonServer, url: horizonUrl } = useHorizonServer();
+  const pathInputs = JSON.stringify([horizonUrl, pathMode, srcIsNative, srcAssetCode, srcAssetIssuer, destIsNative, destAssetCode, destAssetIssuer, pathDest, destAmount, exactSendAmount]);
+  const pathInputsRef = useRef(pathInputs);
+  pathInputsRef.current = pathInputs;
 
   // -- Address book
   const { entries: addressBookEntries, setEntries: setAddressBookEntries } = useAddressBook();
@@ -406,6 +410,9 @@ export function usePaymentsController() {
   // ---------------------------------------------------------------------------
 
   const handleFindPaths = useCallback(async () => {
+    const request = ++pathRequestRef.current;
+    const inputs = pathInputsRef.current;
+    setIsFindingPaths(false);
     setPaths([]);
     setSelectedPathIndex(null);
     setPathError(null);
@@ -472,13 +479,14 @@ export function usePaymentsController() {
         path: r.path ?? [],
       }));
 
+      if (request !== pathRequestRef.current || inputs !== pathInputsRef.current) return;
       setPaths(mapped);
       setPathsFetchedAt(Date.now());
       if (mapped.length === 0) setPathError("No paths found for this pair and amount.");
     } catch (e) {
-      setPathError(getErrorMessage(e));
+      if (request === pathRequestRef.current && inputs === pathInputsRef.current) setPathError(getErrorMessage(e));
     } finally {
-      setIsFindingPaths(false);
+      if (request === pathRequestRef.current && inputs === pathInputsRef.current) setIsFindingPaths(false);
     }
   }, [
     horizonServer, pathDest, pathMode,
@@ -491,11 +499,14 @@ export function usePaymentsController() {
   // changes — otherwise a stale route (computed for old inputs) could be submitted
   // alongside newly-edited assets/amounts/destination.
   useEffect(() => {
+    pathRequestRef.current++;
     setPaths([]);
     setSelectedPathIndex(null);
     setPathError(null);
     setPathsFetchedAt(null);
+    setIsFindingPaths(false);
   }, [
+    horizonUrl,
     pathMode,
     srcIsNative, srcAssetCode, srcAssetIssuer,
     destIsNative, destAssetCode, destAssetIssuer,

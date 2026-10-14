@@ -12,11 +12,12 @@ export async function GET(req: NextRequest) {
   const { userId } = auth;
 
   if (isSupabaseOnly()) {
-    const { data } = await getSupabase()!
+    const { data, error } = await getSupabase()!
       .from("wallet_folders")
       .select("id, name, position")
       .eq("user_id", userId!)
       .order("position", { ascending: true });
+    if (error) return NextResponse.json({ error: "Could not load wallet folders" }, { status: 502 });
     return NextResponse.json((data ?? []).map(mapRow));
   }
   const db = getDb();

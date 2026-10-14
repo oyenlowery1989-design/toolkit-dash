@@ -220,7 +220,8 @@ export function useAssetGroups() {
       groupId: string,
       member: Omit<GroupMember, "id" | "groupId" | "addedAt">,
     ) => {
-      const id = `mem-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+      const id = _cache.get().find((g) => g.id === groupId)?.members.find((m) => m.address === member.address)?.id
+        ?? `mem-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
       const now = Date.now();
       const newMember: GroupMember = { ...member, id, groupId, addedAt: now };
       _cache.set(
@@ -240,9 +241,14 @@ export function useAssetGroups() {
       );
       const pending = _pendingGroupCreates.get(groupId) ?? Promise.resolve(groupId);
       pending
-        .then((realGroupId) =>
-          dbPost(ENDPOINT, { type: "member", id, groupId: realGroupId, ...member }),
-        )
+        .then(async (realGroupId) => {
+          const res = await dbPost(ENDPOINT, { type: "member", id, groupId: realGroupId, ...member }) as { id?: string };
+          if (res.id && res.id !== id) _cache.set(_cache.get().map((g) =>
+            g.id === realGroupId
+              ? { ...g, members: g.members.map((m) => m.address === member.address ? { ...m, id: res.id! } : m) }
+              : g,
+          ));
+        })
         .catch(() => _cache.reload(ENDPOINT));
     },
     [],

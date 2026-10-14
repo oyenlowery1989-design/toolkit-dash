@@ -84,7 +84,7 @@ describe("bulk payment recovery journal", () => {
     mocks.lookup.mockRejectedValueOnce(new Error("Not found"));
     expect((await post({ ...checkpoint, version: 2, results: [{ batchIndex: 0, count: 1, status: "failed", txHash: hash }] }, 1)).status).toBe(409);
     expect((await DELETE(req("DELETE"))).status).toBe(409);
-    expect((await GET(req("GET"))).json()).resolves.toMatchObject({ results: [{ status: "uncertain", txHash: hash }] });
+    await expect((await GET(req("GET"))).json()).resolves.toMatchObject({ results: [{ status: "uncertain", txHash: hash }] });
   });
 
   it("retains a hash when Horizon indexing lags, then permits later confirmation", async () => {

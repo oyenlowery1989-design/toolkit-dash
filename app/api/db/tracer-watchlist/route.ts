@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { StrKey } from "stellar-sdk";
 import { getDb } from "@/lib/db";
 import { isSupabaseOnly, requireAuth } from "@/lib/supabase-server";
 import type { WatchlistEntry } from "@/lib/tracer-v2/types";
@@ -6,7 +7,7 @@ import type { WatchlistEntry } from "@/lib/tracer-v2/types";
 // Tracer v2 Watchlist — local-only feature. The poller (lib/tracer-v2/watcher.ts)
 // only runs on a persistent Node process, which doesn't exist on Vercel serverless.
 // So unlike other DB-backed modules, this one does NOT dual-write to Supabase —
-// when isSupabaseOnly() is true the feature is simply disabled (GET -> [], writes -> no-op).
+// when isSupabaseOnly() is true the feature is disabled.
 
 function mapRow(r: Record<string, unknown>): WatchlistEntry {
   return {
@@ -41,15 +42,20 @@ export async function POST(req: NextRequest) {
 
   let b: any;
   try { b = await req.json(); } catch { return NextResponse.json({ error: "Invalid JSON" }, { status: 400 }); }
-  if (!b.address || typeof b.address !== "string") {
-    return NextResponse.json({ error: "address required" }, { status: 400 });
+  if (typeof b.address !== "string" || !StrKey.isValidEd25519PublicKey(b.address.trim())) {
+    return NextResponse.json({ error: "Valid Stellar address required" }, { status: 400 });
   }
 
-  if (isSupabaseOnly()) return NextResponse.json({ ok: true });
+  if (isSupabaseOnly()) return NextResponse.json({ error: "Watchlist is unavailable in this deployment" }, { status: 503 });
 
   const id = b.id ?? crypto.randomUUID();
   const now = Date.now();
-  getDb()
+  const db = getDb();
+  const address = b.address.trim();
+  const duplicate = db.prepare("SELECT id FROM tracer_watchlist WHERE address = ? AND network = 'public' AND id != ?")
+    .get(address, id);
+  if (duplicate) return NextResponse.json({ error: "Address is already watched" }, { status: 409 });
+  db
     .prepare(
       `INSERT INTO tracer_watchlist (id, address, label, network, enabled, created_at)
        VALUES (?, ?, ?, ?, ?, ?)
@@ -59,7 +65,7 @@ export async function POST(req: NextRequest) {
          network = excluded.network,
          enabled = excluded.enabled`,
     )
-    .run(id, b.address, b.label ?? "", "public", b.enabled === false ? 0 : 1, now);
+    .run(id, address, b.label ?? "", "public", b.enabled === false ? 0 : 1, now);
 
   return NextResponse.json({ ok: true, id });
 }
@@ -73,7 +79,7 @@ export async function PATCH(req: NextRequest) {
   try { b = await req.json(); } catch { return NextResponse.json({ error: "Invalid JSON" }, { status: 400 }); }
   if (!b.id) return NextResponse.json({ error: "id required" }, { status: 400 });
 
-  if (isSupabaseOnly()) return NextResponse.json({ ok: true });
+  if (isSupabaseOnly()) return NextResponse.json({ error: "Watchlist is unavailable in this deployment" }, { status: 503 });
 
   const fields: string[] = [];
   const values: unknown[] = [];
@@ -97,7 +103,7 @@ export async function DELETE(req: NextRequest) {
   let key: string;
   try { ({ key } = await req.json()); } catch { return NextResponse.json({ error: "Invalid JSON" }, { status: 400 }); }
 
-  if (isSupabaseOnly()) return NextResponse.json({ ok: true });
+  if (isSupabaseOnly()) return NextResponse.json({ error: "Watchlist is unavailable in this deployment" }, { status: 503 });
 
   const db = getDb();
   db.prepare("DELETE FROM tracer_watch_events WHERE watch_id = ?").run(key);

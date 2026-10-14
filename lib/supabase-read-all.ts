@@ -14,6 +14,8 @@ const ORDER_COLUMNS: Record<string, string> = {
   known_creators: "address",
   app_state: "key",
   bulk_scan_state: "scan_key",
+  bulk_payment_journal: "user_id",
+  tiered_reward_run_leases: "resource_id",
 };
 
 export async function readPages(
@@ -59,7 +61,7 @@ export async function readAllChildRows(
   for (let i = 0; i < parentIds.length; i += ID_BATCH_SIZE) {
     const ids = parentIds.slice(i, i + ID_BATCH_SIZE);
     const result = await readPages((from, to) => sb.from(table).select("*", { count: "exact" })
-      .in(parentColumn, ids).order("id").range(from, to));
+      .in(parentColumn, ids).order(ORDER_COLUMNS[table] ?? "id").range(from, to));
     if (result.error) return result;
     rows.push(...result.data!);
   }

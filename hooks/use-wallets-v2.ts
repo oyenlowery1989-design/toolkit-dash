@@ -27,7 +27,8 @@ const WALLETS_TOUCH_KEY = "wallets_v2_updated_at";
 
 function touchWalletsCache() {
   if (typeof window !== "undefined") {
-    localStorage.setItem(WALLETS_TOUCH_KEY, String(Date.now()));
+    try { localStorage.setItem(WALLETS_TOUCH_KEY, String(Date.now())); }
+    catch { /* Storage can be disabled; the database write must still run. */ }
   }
 }
 
@@ -68,9 +69,12 @@ export function useWalletsV2() {
       const position = _cache.get().filter((w) => w.folderId === folderId).length;
       const entry: WalletEntry = { id, folderId, name, publicKey, secretKey, position };
       _cache.set([..._cache.get(), entry]);
-      touchWalletsCache();
-      dbPost(ENDPOINT, entry).catch(() => _cache.reload(ENDPOINT));
-      return id;
+      return dbPost(ENDPOINT, entry)
+        .then(() => { touchWalletsCache(); return id; })
+        .catch((error) => {
+          void _cache.reload(ENDPOINT);
+          throw error;
+        });
     },
     []
   );
@@ -87,8 +91,12 @@ export function useWalletsV2() {
 
   const removeWallet = useCallback((id: string) => {
     _cache.set(_cache.get().filter((w) => w.id !== id));
-    touchWalletsCache();
-    dbDelete(ENDPOINT, id).catch(() => _cache.reload(ENDPOINT));
+    return dbDelete(ENDPOINT, id)
+      .then(() => { touchWalletsCache(); })
+      .catch((error) => {
+        void _cache.reload(ENDPOINT);
+        throw error;
+      });
   }, []);
 
   return { wallets, isLoaded: _cache.isLoaded(), addWallet, renameWallet, moveWallet, removeWallet };

@@ -122,6 +122,15 @@ export async function POST(req: NextRequest) {
       ? await readAllChildRows(sb, "tiered_reward_run_leases", "resource_id", rewardGuardIds)
       : { data: [], error: null };
     const [tieredRewardRunLeases] = unwrapReads([rewardGuardRead as SupabaseRead], ["tiered_reward_run_leases"]);
+    const remoteJournal = bulkPaymentJournal[0];
+    if (remoteJournal) {
+      const localJournal = db.prepare("SELECT run_id, version, payload_json FROM bulk_payment_journal WHERE user_id = 'local'")
+        .get() as { run_id: string; version: number; payload_json: string } | undefined;
+      if (localJournal && (localJournal.run_id !== remoteJournal.run_id ||
+          localJournal.version !== remoteJournal.version || localJournal.payload_json !== remoteJournal.payload_json)) {
+        return NextResponse.json({ error: "Local payment journal differs; reconcile it before restoring" }, { status: 409 });
+      }
+    }
     for (const row of tieredRewardRunLeases) {
       const existing = db.prepare("SELECT lease_token FROM tiered_reward_run_leases WHERE resource_id = ?").get(row.resource_id) as { lease_token: string } | undefined;
       if (existing && existing.lease_token !== row.lease_token) {

@@ -73,6 +73,7 @@ export async function runBulkTrace(
           signal,
           onLog,
         );
+        if (signal.aborted) continue;
         row =
           result === null
             ? { address: addr, status: "not-found" }

@@ -318,10 +318,19 @@ export function WalletBalancesPanel() {
     // and fetches its balance on its own; no need for a second, unguarded
     // direct fetch here that would race the bulk effect for the same key.
     setBalances((prev) => ({ ...prev, [publicKey]: "loading" }));
-    addWallet(newFolderId, newName.trim(), publicKey, newSecretKey.trim());
-
-    resetForm();
-    setAddLoading(false);
+    try {
+      await addWallet(newFolderId, newName.trim(), publicKey, newSecretKey.trim());
+      resetForm();
+    } catch {
+      setAddError("Could not confirm the wallet was saved. Keep your key and retry after checking the wallet list.");
+      setBalances((prev) => {
+        const next = { ...prev };
+        delete next[publicKey];
+        return next;
+      });
+    } finally {
+      setAddLoading(false);
+    }
   }
 
   function resetForm() {

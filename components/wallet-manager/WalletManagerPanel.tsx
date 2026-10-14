@@ -41,6 +41,7 @@ function AddWalletForm({ folderId, onDone, prefillPub }: { folderId: string; onD
   const [pubInput, setPubInput] = useState(prefillPub ?? "");
   const [showSecret, setShowSecret] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
 
   // Derive current pub for live warnings
   let currentPub: string | null = null;
@@ -54,9 +55,12 @@ function AddWalletForm({ folderId, onDone, prefillPub }: { folderId: string; onD
     ? groups.flatMap((g) => g.members.filter((m) => m.address === currentPub).map((m) => ({ group: g, member: m })))
     : [];
 
-  function handleSubmit() {
+  async function handleSubmit() {
+    if (saving) return;
     setErr(null);
     if (!name.trim()) { setErr("Name is required."); return; }
+    let publicKey: string;
+    let signingKey = "";
     if (watchOnly) {
       if (!StrKey.isValidEd25519PublicKey(pubInput.trim())) { setErr("Invalid public key."); return; }
       const existing = wallets.find((w) => w.publicKey === pubInput.trim());
@@ -65,7 +69,7 @@ function AddWalletForm({ folderId, onDone, prefillPub }: { folderId: string; onD
         setErr(`Already saved as "${existing.name}"${folder ? ` in folder "${folder.name}"` : ""}.`);
         return;
       }
-      addWallet(folderId, name.trim(), pubInput.trim(), "");
+      publicKey = pubInput.trim();
     } else {
       let pub: string;
       try { pub = Keypair.fromSecret(secret.trim()).publicKey(); }
@@ -76,7 +80,17 @@ function AddWalletForm({ folderId, onDone, prefillPub }: { folderId: string; onD
         setErr(`Already saved as "${existing.name}"${folder ? ` in folder "${folder.name}"` : ""}.`);
         return;
       }
-      addWallet(folderId, name.trim(), pub, secret.trim());
+      publicKey = pub;
+      signingKey = secret.trim();
+    }
+    setSaving(true);
+    try {
+      await addWallet(folderId, name.trim(), publicKey, signingKey);
+    } catch {
+      setErr("Could not confirm the wallet was saved. Keep your key and retry after checking the wallet list.");
+      return;
+    } finally {
+      setSaving(false);
     }
     toast.success("Wallet added");
     setName(""); setSecret(""); setPubInput(""); setErr(null);
@@ -174,7 +188,7 @@ function AddWalletForm({ folderId, onDone, prefillPub }: { folderId: string; onD
       )}
       {err && <p className="text-xs text-destructive">{err}</p>}
       <div className="flex gap-2">
-        <Button size="sm" onClick={handleSubmit}>Add</Button>
+        <Button size="sm" onClick={handleSubmit} disabled={saving}>{saving ? "Saving…" : "Add"}</Button>
         <Button size="sm" variant="ghost" onClick={onDone}>Cancel</Button>
       </div>
     </div>
@@ -339,10 +353,14 @@ function WalletRow({ wallet, allFolders }: { wallet: WalletEntry; allFolders: Wa
             size="icon"
             variant="ghost"
             className="h-7 w-7 text-destructive/70 hover:text-destructive"
-            onClick={() => {
+            onClick={async () => {
               if (window.confirm(`Delete wallet "${wallet.name}"? This cannot be undone.`)) {
-                removeWallet(wallet.id);
-                toast.success("Wallet deleted");
+                try {
+                  await removeWallet(wallet.id);
+                  toast.success("Wallet deleted");
+                } catch {
+                  toast.error("Could not delete wallet. Please retry.");
+                }
               }
             }}
             title="Delete"

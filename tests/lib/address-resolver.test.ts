@@ -114,6 +114,18 @@ describe("resolveAddress", () => {
       .toHaveLength(2);
   });
 
+  it("refreshes group and person lookups when cache snapshots are replaced", () => {
+    const groups = [makeGroup(ADDR_A, "issuer", "Old")];
+    const persons = [makePerson(ADDR_B, "Old person")];
+    expect(findAddressGroupMemberships(ADDR_A, groups)[0].member.label).toBe("Old");
+    expect(resolveAddress(ADDR_A, [], [], [], [], persons).source).toBe("none");
+
+    const updatedGroups = [{ ...groups[0], members: [{ ...groups[0].members[0], label: "New" }] }];
+    const updatedPersons = [{ ...persons[0], addresses: [{ ...persons[0].addresses[0], address: ADDR_A }] }];
+    expect(findAddressGroupMemberships(ADDR_A, updatedGroups)[0].member.label).toBe("New");
+    expect(resolveAddress(ADDR_A, [], [], [], [], updatedPersons).name).toBe("Old person");
+  });
+
   it('returns source: "creator" with badge "CREATOR" and green badgeClass', () => {
     const book = [makeBookEntry(ADDR_A, "Book Label")];
     const groups = [makeGroup(ADDR_A, "issuer", "Group Label")];

@@ -129,6 +129,7 @@ export function AddressBalancesPanel() {
   const [lockedFilter, setLockedFilter] = useState<"all" | "locked" | "unlocked">("all");
   const [sortOrder, setSortOrder] = useState<"none" | "desc" | "asc">("none");
   const abortRef = useRef<AbortController | null>(null);
+  const scanVersionRef = useRef(0);
   const scanState = useBulkScanState<AddressRow>(`${SCAN_KEY}:${settings.network}`);
   const loadScanState = scanState.load;
   const { price: xlmUsdPrice, ensure: ensureXlmUsdPrice } = useXlmUsdPrice();
@@ -162,8 +163,13 @@ export function AddressBalancesPanel() {
 
   useEffect(() => {
     let cancelled = false;
+    const version = ++scanVersionRef.current;
+    abortRef.current?.abort();
+    setRunning(false);
+    setRows([]);
+    setInterrupted(false);
     loadScanState().then((persisted) => {
-      if (cancelled || !persisted || persisted.rows.length === 0) return;
+      if (cancelled || version !== scanVersionRef.current || !persisted || persisted.rows.length === 0) return;
       const wasInterrupted = persisted.rows.some(
         (r) => r.status === "pending" || r.status === "loading",
       );
@@ -221,6 +227,7 @@ export function AddressBalancesPanel() {
         : null,
     );
     setInterrupted(false);
+    scanVersionRef.current++;
     abortRef.current?.abort();
     abortRef.current = new AbortController();
     const signal = abortRef.current.signal;
@@ -262,6 +269,7 @@ export function AddressBalancesPanel() {
   // textarea — same rows, fresh balance/locked status.
   const handleRecheckAll = async () => {
     if (rows.length === 0 || running) return;
+    scanVersionRef.current++;
     setInterrupted(false);
     abortRef.current?.abort();
     abortRef.current = new AbortController();
@@ -289,6 +297,7 @@ export function AddressBalancesPanel() {
   // account or if you suspect its balance just changed.
   const handleRecheckRow = async (address: string) => {
     if (running) return;
+    scanVersionRef.current++;
     const index = rows.findIndex((r) => r.address === address);
     if (index === -1) return;
     const horizonUrl = resolveHorizonUrl(settings);
@@ -305,6 +314,7 @@ export function AddressBalancesPanel() {
   };
 
   const handleCancel = () => {
+    scanVersionRef.current++;
     abortRef.current?.abort();
     setRunning(false);
     setRows((prev) => {
@@ -319,6 +329,7 @@ export function AddressBalancesPanel() {
   };
 
   const handleClear = () => {
+    scanVersionRef.current++;
     abortRef.current?.abort();
     setRunning(false);
     setRows([]);
@@ -362,14 +373,6 @@ export function AddressBalancesPanel() {
           const bv = b.status === "done" && b.total !== undefined ? b.total : -1;
           return sortOrder === "desc" ? bv - av : av - bv;
         });
-
-  // Watchdog: if running but all rows reached a terminal state, stop the spinner.
-  useEffect(() => {
-    if (running && rows.length > 0 && pendingCount === 0) {
-      abortRef.current?.abort();
-      setRunning(false);
-    }
-  }, [running, rows.length, pendingCount]);
 
   return (
     <div className="space-y-6">
@@ -583,15 +586,17 @@ export function AddressBalancesPanel() {
                     <span className="flex items-center gap-1.5">
                       <StatusBadge status={row.status} />
                       {(row.status === "done" || row.status === "unfunded" || row.status === "error") && (
-                        <button
+                        <Button
                           type="button"
+                          variant="ghost"
+                          size="icon"
                           onClick={() => handleRecheckRow(row.address)}
                           disabled={running}
                           title="Recheck this address"
-                          className="text-muted-foreground/50 hover:text-foreground transition-colors disabled:opacity-30"
+                          className="h-5 w-5 text-muted-foreground/50 hover:text-foreground"
                         >
                           <RefreshCw className="h-3 w-3" />
-                        </button>
+                        </Button>
                       )}
                     </span>
                     {row.status === "error" && row.error && (

@@ -42,4 +42,14 @@ describe("Asset Manager signing client", () => {
     const changed = new TransactionBuilder(new Account(signer.publicKey(), "2"), { fee: "100", networkPassphrase: Networks.PUBLIC }).addOperation(Operation.setOptions({ setFlags: 1 })).setTimeout(30).build();
     await expect(signAssetManagerTransaction(changed, "MASKED", savedSigner)).rejects.toThrow("Invalid saved-wallet");
   });
+
+  it("stops a batch after a failed submission so later offers cannot be sent blindly", async () => {
+    vi.spyOn(Horizon.Server.prototype, "loadAccount").mockImplementation(async publicKey => new Account(publicKey, "1") as never);
+    vi.spyOn(Horizon.Server.prototype, "fetchBaseFee").mockResolvedValue(100);
+    submit.mockReset().mockRejectedValue(new Error("Horizon unavailable"));
+    const results = await createBatchOffers({ horizonUrl: "https://horizon.stellar.org", secretKey: signer.secret(), assetCode: "wUSDC", issuerAddress: issuer, side: "sell", mode: "repeat", count: 3, amount: "1", priceFrom: "0.5", network: "public" });
+    expect(results).toHaveLength(1);
+    expect(results[0].error).toContain("Horizon unavailable");
+    expect(submit).toHaveBeenCalledOnce();
+  });
 });

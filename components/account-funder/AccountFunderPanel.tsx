@@ -93,6 +93,15 @@ interface GeneratedAccount {
   error?: string; // Horizon result code if failed (e.g. "op_already_exists")
 }
 
+export function matchesChildrenBackup(csv: string, accounts: Pick<GeneratedAccount, "publicKey" | "secretKey">[]): boolean {
+  const lines = csv.trim().split(/\r?\n/);
+  const backedUp = lines.slice(1).map((line) => line.split(","));
+  return lines[0] === "public_key,secret_key,status" &&
+    backedUp.length === accounts.length &&
+    backedUp.every(([publicKey, secretKey], index) =>
+      publicKey === accounts[index].publicKey && secretKey === accounts[index].secretKey);
+}
+
 // ---------------------------------------------------------------------------
 // Sub-components
 // ---------------------------------------------------------------------------
@@ -529,7 +538,9 @@ export function AccountFunderPanel() {
   // ── Step 2: Children state ──────────────────────────────────────────────
   const [count, setCount] = useState("10");
   const [accounts, setAccounts] = useState<GeneratedAccount[]>([]);
+  const childrenGenerationRef = useRef(0);
   const [revealAll, setRevealAll] = useState(false);
+  const [childrenBackupVerified, setChildrenBackupVerified] = useState(false);
 
   // ── Step 3: Funding state ───────────────────────────────────────────────
   const [xlmEach, setXlmEach] = useState("3");
@@ -736,7 +747,9 @@ export function AccountFunderPanel() {
       const kp = Keypair.random(); // cryptographically random, runs in browser
       return { publicKey: kp.publicKey(), secretKey: kp.secret(), status: "pending" };
     });
+    childrenGenerationRef.current++;
     setAccounts(generated);
+    setChildrenBackupVerified(false);
     setRevealAll(false);
   }
 
@@ -777,6 +790,7 @@ export function AccountFunderPanel() {
   async function handleDirectFund() {
     if (isDirectFunding) return;
     if (!accounts.length) { toast.error("Generate children first."); return; }
+    if (!childrenBackupVerified) { toast.error("Download and verify the children backup before funding."); return; }
     if (!hasParent) { toast.error("Select or generate a parent account."); return; }
 
     const amount = parseFloat(xlmEach);
@@ -886,6 +900,7 @@ export function AccountFunderPanel() {
   async function handleSponsoredCreate() {
     if (isSponsoring) return;
     if (!accounts.length) { toast.error("Generate children first."); return; }
+    if (!childrenBackupVerified) { toast.error("Download and verify the children backup before creating accounts."); return; }
     if (!hasParent) { toast.error("Select or generate a parent account."); return; }
 
     let parentKeypair: Keypair | null = null;
@@ -1171,6 +1186,23 @@ export function AccountFunderPanel() {
     a.download = "accounts.csv";
     a.click();
     URL.revokeObjectURL(url);
+  }
+
+  async function handleVerifyChildrenBackup(file?: File) {
+    if (!file) return;
+    const generation = childrenGenerationRef.current;
+    try {
+      const csv = await file.text();
+      if (generation !== childrenGenerationRef.current) return;
+      const matches = matchesChildrenBackup(csv, accounts);
+      setChildrenBackupVerified(matches);
+      toast[matches ? "success" : "error"](matches
+        ? "Children backup verified. Keep the CSV safe before funding."
+        : "Backup does not match the current children. Download a fresh CSV and verify it.");
+    } catch {
+      setChildrenBackupVerified(false);
+      toast.error("Could not read the children backup.");
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -1506,18 +1538,25 @@ export function AccountFunderPanel() {
       {/* Children list — shown after generation                             */}
       {/* ================================================================== */}
       {hasChildren && (
-        <AccountList
-          accounts={accounts}
-          revealAll={revealAll}
-          onToggleReveal={() => setRevealAll((v) => !v)}
-          onCopyOne={handleCopyOne}
-          onCopyAll={handleCopyAll}
-          onDownloadCSV={handleDownloadCSV}
-          copiedKey={copiedKey}
-          copiedAll={copiedAll}
-          labelPrefix="Child"
-          network={settings.network}
-        />
+        <div className="space-y-3">
+          <AccountList
+            accounts={accounts}
+            revealAll={revealAll}
+            onToggleReveal={() => setRevealAll((v) => !v)}
+            onCopyOne={handleCopyOne}
+            onCopyAll={handleCopyAll}
+            onDownloadCSV={handleDownloadCSV}
+            copiedKey={copiedKey}
+            copiedAll={copiedAll}
+            labelPrefix="Child"
+            network={settings.network}
+          />
+          <div className="space-y-2 rounded-md border p-3 text-sm">
+            <Label htmlFor="children-backup">Verify your downloaded children CSV before funding</Label>
+            <Input key={accounts[0].publicKey} id="children-backup" type="file" accept=".csv,text/csv" onChange={(e) => { void handleVerifyChildrenBackup(e.target.files?.[0]); }} />
+            <p className="text-xs text-muted-foreground">{childrenBackupVerified ? "Backup verified for these children." : "Download the CSV above, then select it here to verify every child key."}</p>
+          </div>
+        </div>
       )}
 
       {/* ================================================================== */}
@@ -1599,7 +1638,7 @@ export function AccountFunderPanel() {
               {!isDirectFunding ? (
                 <Button
                   onClick={handleDirectFund}
-                  disabled={!hasParent || !hasChildren || directParentInsufficient}
+                  disabled={!hasParent || !hasChildren || !childrenBackupVerified || directParentInsufficient}
                   className="gap-2"
                 >
                   <UserPlus className="h-4 w-4" />
@@ -1672,7 +1711,7 @@ export function AccountFunderPanel() {
               {!isSponsoring ? (
                 <Button
                   onClick={handleSponsoredCreate}
-                  disabled={!hasParent || !hasChildren || sponsoredParentInsufficient}
+                  disabled={!hasParent || !hasChildren || !childrenBackupVerified || sponsoredParentInsufficient}
                   className="gap-2"
                 >
                   <Shield className="h-4 w-4" />

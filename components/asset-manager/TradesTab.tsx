@@ -64,6 +64,7 @@ export function TradesTab({ assetCode, issuer }: Props) {
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
+  const loadRequestRef = useRef(0);
 
   // Create form
   const [amount, setAmount] = useState("");
@@ -89,6 +90,7 @@ export function TradesTab({ assetCode, issuer }: Props) {
   const [batchRunning, setBatchRunning] = useState(false);
   const [batchResults, setBatchResults] = useState<BatchOfferResult[]>([]);
   const [batchDone, setBatchDone] = useState(0);
+  const [batchError, setBatchError] = useState<string | null>(null);
   const batchAbortRef = useRef<AbortController | null>(null);
 
   const explorerBase =
@@ -99,42 +101,54 @@ export function TradesTab({ assetCode, issuer }: Props) {
         : null;
 
   async function handleBatch() {
-    if (!canSign) return;
+    if (!canSign || batchRunning) return;
     const n = Math.min(50, Math.max(1, parseInt(batchCount) || 1));
     const confirmed = window.confirm(
       `Place ${n} ${batchSide.toUpperCase()} offer(s) for ${assetCode}, ${batchAmount} ${assetCode} each, price ${batchPriceFrom}${batchMode === "ladder" ? ` → ${batchPriceTo}` : ""} XLM per ${assetCode}?`
     );
     if (!confirmed) return;
-    batchAbortRef.current?.abort();
-    batchAbortRef.current = new AbortController();
+    const identity = loadRequestRef.current;
+    const controller = new AbortController();
+    batchAbortRef.current = controller;
     setBatchResults([]);
     setBatchDone(0);
+    setBatchError(null);
     setBatchRunning(true);
-    await createBatchOffers({
-      horizonUrl,
-      secretKey: effectiveSecretKey,
-      savedSigner,
-      assetCode,
-      issuerAddress: issuer,
-      side: batchSide,
-      mode: batchMode,
-      count: n,
-      amount: batchAmount,
-      priceFrom: batchPriceFrom,
-      priceTo: batchMode === "ladder" ? batchPriceTo : undefined,
-      network: settings.network,
-      signal: batchAbortRef.current.signal,
-      onProgress: (done, _total, last) => {
-        setBatchDone(done);
-        setBatchResults((prev) => [...prev, last]);
-      },
-    });
-    setBatchRunning(false);
+    try {
+      await createBatchOffers({
+        horizonUrl,
+        secretKey: effectiveSecretKey,
+        savedSigner,
+        assetCode,
+        issuerAddress: issuer,
+        side: batchSide,
+        mode: batchMode,
+        count: n,
+        amount: batchAmount,
+        priceFrom: batchPriceFrom,
+        priceTo: batchMode === "ladder" ? batchPriceTo : undefined,
+        network: settings.network,
+        signal: controller.signal,
+        onProgress: (done, _total, last) => {
+          if (identity !== loadRequestRef.current) return;
+          setBatchDone(done);
+          setBatchResults((prev) => [...prev, last]);
+        },
+      });
+    } catch (error) {
+      if (!controller.signal.aborted && identity === loadRequestRef.current) {
+        setBatchError(error instanceof Error ? error.message : String(error));
+      }
+    } finally {
+      if (batchAbortRef.current === controller) {
+        batchAbortRef.current = null;
+        setBatchRunning(false);
+      }
+    }
   }
 
   function handleBatchStop() {
     batchAbortRef.current?.abort();
-    setBatchRunning(false);
   }
 
   const canBatch =
@@ -155,17 +169,20 @@ export function TradesTab({ assetCode, issuer }: Props) {
   })();
 
   async function handleLoad() {
+    if (!signerPublicKey) return;
+    const request = ++loadRequestRef.current;
     setLoading(true);
     setLoadError(null);
     setDeleteResults({});
     try {
       const result = await fetchMyOffers(horizonUrl, signerPublicKey, assetCode, issuer);
+      if (request !== loadRequestRef.current) return;
       setOffers(result);
       setLoaded(true);
     } catch (e) {
-      setLoadError(e instanceof Error ? e.message : String(e));
+      if (request === loadRequestRef.current) setLoadError(e instanceof Error ? e.message : String(e));
     } finally {
-      setLoading(false);
+      if (request === loadRequestRef.current) setLoading(false);
     }
   }
 
@@ -175,6 +192,7 @@ export function TradesTab({ assetCode, issuer }: Props) {
       `Place a SELL offer: ${parseFloat(amount).toLocaleString()} ${assetCode} for ${(parseFloat(amount) * parseFloat(price)).toLocaleString(undefined, { maximumFractionDigits: 7 })} XLM total (price ${price} XLM per ${assetCode})?`
     );
     if (!confirmed) return;
+    const identity = loadRequestRef.current;
     setCreating(true);
     setCreateError(null);
     setCreateHash(null);
@@ -189,14 +207,21 @@ export function TradesTab({ assetCode, issuer }: Props) {
         settings.network,
         savedSigner,
       );
+      if (identity !== loadRequestRef.current) return;
       setCreateHash(hash);
       setAmount("");
       setPrice("");
       // Reload offers
-      const updated = await fetchMyOffers(horizonUrl, signerPublicKey, assetCode, issuer);
-      setOffers(updated);
+      try {
+        const updated = await fetchMyOffers(horizonUrl, signerPublicKey, assetCode, issuer);
+        if (identity !== loadRequestRef.current) return;
+        setOffers(updated);
+        setLoaded(true);
+      } catch {
+        if (identity === loadRequestRef.current) setLoadError("Offer was placed, but the open-offers list could not be refreshed. Use Refresh to check it.");
+      }
     } catch (e) {
-      setCreateError(e instanceof Error ? e.message : String(e));
+      if (identity === loadRequestRef.current) setCreateError(e instanceof Error ? e.message : String(e));
     } finally {
       setCreating(false);
     }
@@ -208,6 +233,7 @@ export function TradesTab({ assetCode, issuer }: Props) {
       `Cancel offer #${offer.id} (${offer.side === "sell" ? "SELL" : "BUY"}, ${offer.amount} ${assetCode} @ ${offer.price} XLM)?`
     );
     if (!confirmed) return;
+    const identity = loadRequestRef.current;
     setDeletingId(offer.id);
     try {
       const hash = await deleteOffer(
@@ -221,13 +247,17 @@ export function TradesTab({ assetCode, issuer }: Props) {
         settings.network,
         savedSigner,
       );
-      setDeleteResults((prev) => ({ ...prev, [offer.id]: { hash } }));
-      setOffers((prev) => prev.filter((o) => o.id !== offer.id));
+      if (identity === loadRequestRef.current) {
+        setDeleteResults((prev) => ({ ...prev, [offer.id]: { hash } }));
+        setOffers((prev) => prev.filter((o) => o.id !== offer.id));
+      }
     } catch (e) {
-      setDeleteResults((prev) => ({
-        ...prev,
-        [offer.id]: { error: e instanceof Error ? e.message : String(e) },
-      }));
+      if (identity === loadRequestRef.current) {
+        setDeleteResults((prev) => ({
+          ...prev,
+          [offer.id]: { error: e instanceof Error ? e.message : String(e) },
+        }));
+      }
     } finally {
       setDeletingId(null);
     }
@@ -244,10 +274,17 @@ export function TradesTab({ assetCode, issuer }: Props) {
   // handleDelete from firing a cancel for the previous asset's offer id/price
   // against the newly-selected assetCode/issuer.
   useEffect(() => {
+    loadRequestRef.current++;
     setOffers([]);
     setLoaded(false);
+    setLoading(false);
     setLoadError(null);
     setDeleteResults({});
+    setCreateError(null);
+    setCreateHash(null);
+    setBatchResults([]);
+    setBatchDone(0);
+    setBatchError(null);
     batchAbortRef.current?.abort();
   }, [assetCode, issuer, signerPublicKey]);
 
@@ -363,7 +400,7 @@ export function TradesTab({ assetCode, issuer }: Props) {
             </p>
           )}
 
-          {!effectiveSecretKey && (
+          {!canSign && (
             <p className="text-xs text-muted-foreground">
               Enter the distributor secret key above to place offers.
             </p>
@@ -585,6 +622,8 @@ export function TradesTab({ assetCode, issuer }: Props) {
                 </Button>
               )}
             </div>
+
+            {batchError && <p className="text-sm text-destructive">{batchError}</p>}
 
             {/* Batch progress */}
             {batchResults.length > 0 && (

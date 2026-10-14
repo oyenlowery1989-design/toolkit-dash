@@ -102,6 +102,14 @@ describe("SavedAnalysesPanel ad payments", () => {
 });
 
 describe("rerunAnalysis", () => {
+  it("refuses legacy non-Mainnet snapshots before fetching or saving", async () => {
+    const save = vi.fn();
+    mocks.fetchAssetXlmProceeds.mockClear();
+    await expect(rerunAnalysis(analysis({ network: "testnet" }), settings(), save, new AbortController().signal))
+      .rejects.toThrow("no longer available");
+    expect(mocks.fetchAssetXlmProceeds).not.toHaveBeenCalled();
+    expect(save).not.toHaveBeenCalled();
+  });
   it("fetches and saves a fresh result with the selected analysis metadata", async () => {
     const selected = analysis({ assetCode: "ONLY", issuer: "GONLY", distribAddresses: ["GA", "GB"], notes: "note", tags: ["tag"] }); const fresh = result({ assetCode: "ONLY", issuer: "GONLY" }); const save = vi.fn(); mocks.fetchAssetXlmProceeds.mockResolvedValueOnce(fresh);
     await rerunAnalysis(selected, settings(), save, new AbortController().signal);

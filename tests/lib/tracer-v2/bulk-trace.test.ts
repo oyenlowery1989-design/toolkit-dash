@@ -52,6 +52,18 @@ describe("runBulkTrace", () => {
     expect(out.every(r => r.status !== "done")).toBe(true);
   });
 
+  it("does not overwrite a cancelled row when an in-flight trace resolves late", async () => {
+    const ac = new AbortController();
+    const statuses: string[] = [];
+    const traceFn = vi.fn(async () => {
+      ac.abort();
+      return fakeResult("GA");
+    }) as any;
+    const out = await runBulkTrace({ ...base, signal: ac.signal, addresses: ["GA"], onResult: row => statuses.push(row.status), traceFn });
+    expect(statuses).toEqual(["pending"]);
+    expect(out[0].status).toBe("pending");
+  });
+
   it("respects the concurrency cap", async () => {
     let active = 0, peak = 0;
     const traceFn = vi.fn(async (_h, a: string) => {

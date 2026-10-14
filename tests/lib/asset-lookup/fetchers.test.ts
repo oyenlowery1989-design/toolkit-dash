@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { inferDistribLite } from "@/lib/asset-lookup/fetchers";
+import { fetchAssetXlmTrades, inferDistribLite } from "@/lib/asset-lookup/fetchers";
 
 const HORIZON = "https://horizon.example.com";
 const ISSUER = "GISSUER";
@@ -52,5 +52,33 @@ describe("inferDistribLite", () => {
         new AbortController().signal,
       ),
     ).rejects.toThrow("Horizon request failed (400)");
+  });
+});
+
+describe("fetchAssetXlmTrades", () => {
+  it("rejects when a later trade page fails instead of returning partial totals", async () => {
+    const records = Array.from({ length: 200 }, (_, i) => ({
+      id: String(i), paging_token: String(i), base_amount: "1", counter_amount: "2",
+    }));
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(Response.json({ _embedded: { records } }))
+      .mockResolvedValueOnce(new Response("unavailable", { status: 400 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(fetchAssetXlmTrades(HORIZON, "TOKEN", ISSUER, [], new AbortController().signal))
+      .rejects.toThrow("Horizon request failed (400)");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("rejects when a tracked account trade page fails", async () => {
+    const empty = () => Response.json({ _embedded: { records: [] } });
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce(empty())
+      .mockResolvedValueOnce(empty())
+      .mockResolvedValueOnce(new Response("unavailable", { status: 400 }))
+      .mockResolvedValueOnce(empty()));
+
+    await expect(fetchAssetXlmTrades(HORIZON, "TOKEN", ISSUER, ["GACCOUNT"], new AbortController().signal))
+      .rejects.toThrow("Horizon request failed (400)");
   });
 });

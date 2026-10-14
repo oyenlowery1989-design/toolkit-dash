@@ -49,29 +49,32 @@ export async function pollWatch(
     return { events: [], nextCursor: latest?.paging_token ?? "0" };
   }
 
-  const url = buildOperationsUrl(horizonBase, address, {
-    order: "asc",
-    limit: "200",
-    type: "create_account",
-    cursor,
-  });
-  const page = await fetchPage(url);
-  const records: any[] = page?._embedded?.records ?? [];
-
   const events: PollResult["events"] = [];
   let nextCursor = cursor;
-  for (const record of records) {
-    if (record.funder === address) {
-      events.push({
-        eventType: "create_account",
-        accountCreated: record.account,
-        funder: record.funder,
-        amount: record.starting_balance,
-        txHash: record.transaction_hash,
-        ledgerTime: record.created_at,
-      });
+  for (let pageNumber = 0; pageNumber < 10; pageNumber++) {
+    const previousCursor = nextCursor;
+    const url = buildOperationsUrl(horizonBase, address, {
+      order: "asc",
+      limit: "200",
+      type: "create_account",
+      cursor: nextCursor,
+    });
+    const page = await fetchPage(url);
+    const records: any[] = page?._embedded?.records ?? [];
+    for (const record of records) {
+      if (record.funder === address) {
+        events.push({
+          eventType: "create_account",
+          accountCreated: record.account,
+          funder: record.funder,
+          amount: record.starting_balance,
+          txHash: record.transaction_hash,
+          ledgerTime: record.created_at,
+        });
+      }
+      nextCursor = record.paging_token ?? nextCursor;
     }
-    nextCursor = record.paging_token ?? nextCursor;
+    if (records.length < 200 || nextCursor === previousCursor) break;
   }
   return { events, nextCursor };
 }

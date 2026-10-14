@@ -84,6 +84,17 @@ it("stops before broadcasting when the durable checkpoint fails", async () => {
   expect(updates).toHaveBeenLastCalledWith(expect.objectContaining({ batchIndex: 1, status: "failed", error: expect.stringContaining("Not submitted") }));
 });
 
+it("does not broadcast when Stop occurs while saving the checkpoint", async () => {
+  const abort = new AbortController();
+  const updates = vi.fn();
+  await runBulkPayments({ horizonUrl: "https://horizon.stellar.org", network: "public", secretKey: signer.secret(),
+    recipients: [destination], memo: "", signal: abort.signal, onBatchUpdate: updates,
+    onBeforeSubmit: async () => { await Promise.resolve(); abort.abort(); },
+  });
+  expect(mocks.submitTransaction).not.toHaveBeenCalled();
+  expect(updates).toHaveBeenLastCalledWith(expect.objectContaining({ status: "failed", error: "Aborted — not submitted" }));
+});
+
 it("keeps tx_bad_seq unresolved until its original hash is checked on the ledger", async () => {
   mocks.submitTransaction.mockRejectedValue({ response: { status: 400, data: { extras: { result_codes: { transaction: "tx_bad_seq" } } } } });
   const updates = vi.fn();

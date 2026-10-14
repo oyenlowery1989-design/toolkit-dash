@@ -415,14 +415,25 @@ export async function fetchMyOffers(
 ): Promise<MyOffer[]> {
   const server = new Horizon.Server(horizonUrl);
   const asset = new Asset(assetCode, issuerAddress);
+  async function allPages(builder: ReturnType<typeof server.offers>): Promise<Record<string, unknown>[]> {
+    let page = await builder.limit(200).call();
+    const records: Record<string, unknown>[] = [];
+    while (true) {
+      records.push(...page.records as unknown as Record<string, unknown>[]);
+      if (page.records.length < 200) return records;
+      page = await page.next();
+    }
+  }
 
-  const [sellPage, buyPage] = await Promise.all([
-    server.offers().seller(sellerAddress).selling(asset).limit(200).call(),
-    server.offers().seller(sellerAddress).buying(asset).limit(200).call(),
+  const [sellRows, buyRows] = await Promise.all([
+    allPages(server.offers().seller(sellerAddress).selling(asset)),
+    allPages(server.offers().seller(sellerAddress).buying(asset)),
   ]);
 
-  const sells = (sellPage.records as unknown as Record<string, unknown>[]).map((r) => parseOffer(r, "sell"));
-  const buys = (buyPage.records as unknown as Record<string, unknown>[]).map((r) => parseOffer(r, "buy"));
+  const sells = sellRows.filter((r) => (r.buying as { asset_type?: string })?.asset_type === "native")
+    .map((r) => parseOffer(r, "sell"));
+  const buys = buyRows.filter((r) => (r.selling as { asset_type?: string })?.asset_type === "native")
+    .map((r) => parseOffer(r, "buy"));
 
   return [...sells, ...buys].sort((a, b) => b.lastModifiedLedger - a.lastModifiedLedger);
 }
@@ -576,6 +587,7 @@ export async function createBatchOffers(options: {
         };
         results.push(entry);
         onProgress?.(i + 1, count, entry);
+        break;
       }
     }
 

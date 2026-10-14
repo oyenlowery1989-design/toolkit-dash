@@ -76,6 +76,15 @@ it("treats tx_bad_seq without ledger evidence as unresolved", async () => {
   expect(JSON.parse(storage.row!.lease_token).transactions[0].status).toBe("prepared");
 });
 
+it("reconciles a definitively rejected transaction even when Horizon has no record", async () => {
+  const guard = await claimRewardRun("config");
+  const tx = transaction();
+  const error = { response: { data: { extras: { result_codes: { transaction: "tx_failed" } } } } };
+  await expect(guard.submit(server(vi.fn().mockRejectedValue(error), vi.fn().mockRejectedValue(new Error("missing"))), tx)).rejects.toBe(error);
+  const inspected = await inspectRewardRun("config", server(vi.fn(), vi.fn().mockRejectedValue(new Error("missing"))), Networks.PUBLIC);
+  expect(inspected).toMatchObject({ ready: true, transactions: [{ hash: tx.hash().toString("hex"), successful: false }] });
+});
+
 it("fails closed before broadcasting when Supabase cannot journal the transaction", async () => {
   const guard = await claimRewardRun("config");
   storage.failUpdate = true;

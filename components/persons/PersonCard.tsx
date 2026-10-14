@@ -51,11 +51,11 @@ export function PersonCard({ person }: { person: Person }) {
   function save() {
     updatePerson(person.id, {
       name: nameVal.trim() || person.name,
-      role: roleVal.trim() || undefined,
-      notes: notesVal.trim() || undefined,
-      telegramUsername: telegramVal.trim() || undefined,
-      telegramChannel: telegramChannelVal.trim() || undefined,
-      telegramLink: telegramLinkVal.trim() || undefined,
+      role: roleVal.trim(),
+      notes: notesVal.trim(),
+      telegramUsername: telegramVal.trim(),
+      telegramChannel: telegramChannelVal.trim(),
+      telegramLink: telegramLinkVal.trim(),
     });
     setEditing(false);
   }

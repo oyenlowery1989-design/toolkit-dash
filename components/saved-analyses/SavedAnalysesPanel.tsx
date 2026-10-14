@@ -143,6 +143,9 @@ export async function rerunAnalysis(
   saveAnalysis: SaveAnalysisFn,
   signal: AbortSignal,
 ): Promise<void> {
+  if (analysis.network !== "public") {
+    throw new Error("This saved analysis uses a network that is no longer available for re-runs.");
+  }
   const horizonUrl = resolveHorizonUrl({
     network: analysis.network as Network,
     localHorizonUrl: settings.localHorizonUrl,

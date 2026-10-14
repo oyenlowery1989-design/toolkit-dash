@@ -41,18 +41,43 @@ const BADGE: Record<string, string> = {
   PERSON:       "bg-pink-400/15   border-pink-400/40   text-pink-400",
 };
 
+const groupIndex = new WeakMap<AssetGroup[], Map<string, AddressGroupMembership[]>>();
+const personIndex = new WeakMap<Person[], Map<string, Person>>();
+
+function indexedGroups(groups: AssetGroup[]) {
+  let index = groupIndex.get(groups);
+  if (!index) {
+    index = new Map();
+    for (const group of groups) for (const member of group.members) {
+      const memberships = index.get(member.address) ?? [];
+      memberships.push({ group, member });
+      index.set(member.address, memberships);
+    }
+    groupIndex.set(groups, index);
+  }
+  return index;
+}
+
+function indexedPersons(persons: Person[]) {
+  let index = personIndex.get(persons);
+  if (!index) {
+    index = new Map();
+    for (const person of persons) for (const entry of person.addresses) {
+      if (!index.has(entry.address)) index.set(entry.address, person);
+    }
+    personIndex.set(persons, index);
+  }
+  return index;
+}
+
 /** Returns every group membership for an address, optionally on one network. */
 export function findAddressGroupMemberships(
   address: string,
   groups: AssetGroup[],
   network?: string,
 ): AddressGroupMembership[] {
-  return groups.flatMap((group) => {
-    if (network && group.network !== network) return [];
-    return group.members
-      .filter((member) => member.address === address)
-      .map((member) => ({ group, member }));
-  });
+  const memberships = indexedGroups(groups).get(address) ?? [];
+  return network ? memberships.filter(({ group }) => group.network === network) : memberships;
 }
 
 export function resolveAddress(
@@ -65,7 +90,7 @@ export function resolveAddress(
   network?: string,
 ): ResolvedAddress {
   // 0. Person — most specific fact available: a named human/entity owns this address
-  const person = persons.find((p) => p.addresses.some((a) => a.address === address));
+  const person = indexedPersons(persons).get(address);
   if (person) return {
     name: person.name,
     source: "person",

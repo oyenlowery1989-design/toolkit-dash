@@ -28,11 +28,12 @@ export async function GET(req: NextRequest) {
   const { userId } = auth;
 
   if (isSupabaseOnly()) {
-    const { data } = await getSupabase()!
+    const { data, error } = await getSupabase()!
       .from("wallets")
       .select("id, folder_id, name, public_key, secret_key, position")
       .eq("user_id", userId!)
       .order("position", { ascending: true });
+    if (error) return NextResponse.json({ error: "Could not load wallets" }, { status: 502 });
     return NextResponse.json((data ?? []).map(mapRow));
   }
   const db = getDb();

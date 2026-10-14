@@ -206,6 +206,7 @@ export async function POST(req: NextRequest) {
           { status: 409 },
         );
       }
+      if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
       return NextResponse.json({ ok: true });
     }
   }
@@ -225,16 +226,20 @@ export async function POST(req: NextRequest) {
       if (!ownerGroup) {
         return NextResponse.json({ ok: false, error: "Not authorized" }, { status: 403 });
       }
+      const { data: existing, error: lookupError } = await sb.from("asset_group_members")
+        .select("id,added_at").eq("group_id", groupId).eq("address", address).maybeSingle();
+      if (lookupError) return NextResponse.json({ ok: false, error: lookupError.message }, { status: 500 });
+      const memberId = existing?.id ?? id;
       const { error } = await sb.from("asset_group_members").upsert(
         {
-          id,
+          id: memberId,
           group_id: groupId,
           address,
           role,
           label: label ?? null,
           notes: notes ?? null,
           home_domain: homeDomain ?? null,
-          added_at: now,
+          added_at: existing?.added_at ?? now,
         },
         { onConflict: "group_id,address" },
       );
@@ -245,10 +250,12 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
       }
       await sb.from("asset_groups").update({ updated_at: now }).eq("id", groupId).eq("user_id", userId!);
-      return NextResponse.json({ ok: true });
+      return NextResponse.json({ ok: true, id: memberId });
     }
 
     const db = getDb();
+    const memberId = (db.prepare("SELECT id FROM asset_group_members WHERE group_id = ? AND address = ?")
+      .get(groupId, address) as { id: string } | undefined)?.id ?? id;
     try {
       db.prepare(
         `INSERT INTO asset_group_members (id, group_id, address, role, label, notes, home_domain, added_at)
@@ -258,7 +265,7 @@ export async function POST(req: NextRequest) {
            label       = excluded.label,
            notes       = excluded.notes,
            home_domain = excluded.home_domain`,
-      ).run(id, groupId, address, role, label ?? null, notes ?? null, homeDomain ?? null, now);
+      ).run(memberId, groupId, address, role, label ?? null, notes ?? null, homeDomain ?? null, now);
       db.prepare("UPDATE asset_groups SET updated_at = ? WHERE id = ?").run(now, groupId);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -270,23 +277,25 @@ export async function POST(req: NextRequest) {
 
     syncToSupabase(async () => {
       const sb = getSupabase()!;
+      const { data: existing } = await sb.from("asset_group_members")
+        .select("id,added_at").eq("group_id", groupId).eq("address", address).maybeSingle().throwOnError();
       await sb.from("asset_group_members").upsert(
         {
-          id,
+          id: existing?.id ?? memberId,
           group_id: groupId,
           address,
           role,
           label: label ?? null,
           notes: notes ?? null,
           home_domain: homeDomain ?? null,
-          added_at: now,
+          added_at: existing?.added_at ?? now,
         },
         { onConflict: "group_id,address" },
       ).throwOnError();
       await sb.from("asset_groups").update({ updated_at: now }).eq("id", groupId).eq("user_id", userId!).throwOnError();
     });
 
-    return NextResponse.json({ ok: true });
+    return NextResponse.json({ ok: true, id: memberId });
   }
 
   return NextResponse.json({ error: "unknown type" }, { status: 400 });

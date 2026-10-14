@@ -94,12 +94,13 @@ const authorization = { Authorization: `Bearer ${token}` };
 const before = await requestJson(`${baseUrl}/api/db/export`, { headers: authorization });
 const tables = exportedTables(before);
 const beforeCounts = counts(before, tables);
+const beforeFingerprint = fingerprint(before, tables);
 console.log(JSON.stringify({
   stage: "export-validated",
   source: before.source,
   tables: tables.length,
   counts: beforeCounts,
-  fingerprint: fingerprint(before, tables),
+  fingerprint: beforeFingerprint,
 }));
 
 if (process.env.DRILL_CONFIRM_DISPOSABLE !== "DISPOSABLE") {
@@ -123,6 +124,11 @@ if (after.source !== before.source) {
   throw new Error(`Export source changed during the drill: ${before.source} -> ${after.source}`);
 }
 const afterCounts = counts(after, tables);
+const afterFingerprint = fingerprint(after, tables);
+if ((restoreSource === "local" ? "sqlite" : "supabase") === before.source &&
+    beforeFingerprint !== afterFingerprint) {
+  throw new Error("Post-restore content changed during a same-source drill");
+}
 const regressions = tables.filter((table) => afterCounts[table] < beforeCounts[table]);
 if (regressions.length > 0) {
   throw new Error(`Post-restore export lost rows in: ${regressions.join(", ")}`);
@@ -141,9 +147,11 @@ if (restoreSource === "supabase") {
 }
 
 console.log(JSON.stringify({
-  stage: "restore-validated",
+  stage: (restoreSource === "local" ? "sqlite" : "supabase") === before.source
+    ? "source-unchanged-target-unverified" : "restore-counts-checked",
   source: after.source,
   tables: tables.length,
   counts: afterCounts,
-  fingerprint: fingerprint(after, tables),
+  fingerprint: afterFingerprint,
+  targetContentVerified: false,
 }));

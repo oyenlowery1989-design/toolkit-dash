@@ -71,12 +71,18 @@ export function useKeyScan() {
   }, [refresh]);
 
   useEffect(() => {
+    let active = true;
     const interval = data.state?.running ? RUNNING_POLL_MS : IDLE_POLL_MS;
-    timerRef.current = setTimeout(refresh, interval);
+    const poll = async () => {
+      await refresh();
+      if (active) timerRef.current = setTimeout(poll, interval);
+    };
+    timerRef.current = setTimeout(poll, interval);
     return () => {
+      active = false;
       if (timerRef.current) clearTimeout(timerRef.current);
     };
-  }, [data, refresh]);
+  }, [data.state?.running, refresh]);
 
   const start = useCallback(
     async (opts?: KeyScanControlOpts) => {

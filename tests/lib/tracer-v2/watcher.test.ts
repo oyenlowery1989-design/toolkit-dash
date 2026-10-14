@@ -73,4 +73,15 @@ describe("pollWatch", () => {
     expect(result.events).toEqual([]);
     expect(result.nextCursor).toBe("3000");
   });
+
+  it("pages through a burst larger than Horizon's 200-operation page", async () => {
+    const firstPage = Array.from({ length: 200 }, (_, index) => ({ paging_token: String(index + 1), funder: "GOTHER" }));
+    const fetchPage = vi.fn(async (url: string) => url.includes("cursor=0")
+      ? page(firstPage)
+      : page([{ paging_token: "201", funder: ADDR, account: "GNEW" }]));
+    const result = await pollWatch(fetchPage, HORIZON, ADDR, "0");
+    expect(fetchPage).toHaveBeenCalledTimes(2);
+    expect(result.nextCursor).toBe("201");
+    expect(result.events.map((event) => event.accountCreated)).toEqual(["GNEW"]);
+  });
 });

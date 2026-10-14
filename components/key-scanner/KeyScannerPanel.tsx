@@ -20,6 +20,7 @@ import {
 import { useKeyScan } from "@/hooks/use-key-scan";
 import { HitsTable } from "./HitsTable";
 import type { KeyScanTailEntry } from "@/lib/key-scanner/types";
+import { toast } from "sonner";
 
 function StatCard({ label, value, accent }: { label: string; value: React.ReactNode; accent?: string }) {
   return (
@@ -106,6 +107,10 @@ export function KeyScannerPanel() {
   const [now, setNow] = useState(0);
   const prevSampleRef = useRef<{ count: number; at: number } | null>(null);
   const configDebounceRef = useRef<{ timer: ReturnType<typeof setTimeout>; patch: Record<string, unknown> } | null>(null);
+
+  useEffect(() => () => {
+    if (configDebounceRef.current) clearTimeout(configDebounceRef.current.timer);
+  }, []);
   const persistedRunning = state?.running;
   const persistedPacedRps = state?.pacedRps;
   const persistedConcurrency = state?.concurrency;
@@ -144,8 +149,8 @@ export function KeyScannerPanel() {
     if (configDebounceRef.current) clearTimeout(configDebounceRef.current.timer);
     const merged = { ...(configDebounceRef.current?.patch ?? {}), ...patch };
     const timer = setTimeout(() => {
-      configure(merged);
       configDebounceRef.current = null;
+      configure(merged).catch((error) => toast.error(error instanceof Error ? error.message : "Could not save scanner settings"));
     }, 500);
     configDebounceRef.current = { timer, patch: merged };
   };
@@ -268,7 +273,7 @@ export function KeyScannerPanel() {
                   checked={resumeOnBoot}
                   onCheckedChange={(v) => {
                     setResumeOnBoot(v);
-                    configure({ resumeOnBoot: v });
+                    configure({ resumeOnBoot: v }).catch((error) => toast.error(error instanceof Error ? error.message : "Could not save scanner settings"));
                   }}
                 />
                 <span className="text-xs text-muted-foreground">Auto-continue after a server restart</span>
@@ -285,12 +290,12 @@ export function KeyScannerPanel() {
 
           <div className="flex gap-3">
             {!running ? (
-              <Button onClick={() => start({ pacedRps, concurrency, resumeOnBoot })} className="flex-1">
+              <Button onClick={() => start({ pacedRps, concurrency, resumeOnBoot }).catch((error) => toast.error(error instanceof Error ? error.message : "Could not start scanner"))} className="flex-1">
                 <Play className="mr-2 h-4 w-4" />
                 Start
               </Button>
             ) : (
-              <Button onClick={() => stop()} variant="destructive" className="flex-1">
+              <Button onClick={() => stop().catch((error) => toast.error(error instanceof Error ? error.message : "Could not stop scanner"))} variant="destructive" className="flex-1">
                 <Square className="mr-2 h-4 w-4" />
                 Stop
               </Button>

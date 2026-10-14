@@ -27,6 +27,7 @@ export interface PathPaymentInput {
 
 export function addSendOperations(builder: TransactionBuilder, legs: PaymentLeg[], offers: PaymentOffer[]): number[] {
   const cancelCounts: number[] = [];
+  const cancelledOffers = new Set<string>();
   for (const leg of legs) {
     let cancelCount = 0;
     // If removing trustline, cancel any open offers for this asset first —
@@ -39,6 +40,7 @@ export function addSendOperations(builder: TransactionBuilder, legs: PaymentLeg[
         return selling.asset_type !== "native" && selling.asset_code === code && selling.asset_issuer === issuer;
       });
       for (const o of sellOffersToCancel) {
+        if (cancelledOffers.has(o.id)) continue;
         const buyingAsset = (o as any).buying.asset_type === "native"
           ? Asset.native()
           : new Asset((o as any).buying.asset_code, (o as any).buying.asset_issuer);
@@ -52,12 +54,14 @@ export function addSendOperations(builder: TransactionBuilder, legs: PaymentLeg[
           }),
         );
         cancelCount++;
+        cancelledOffers.add(o.id);
       }
       const buyOffersToCancel = offers.filter((o: any) => {
         const buying = o.buying;
         return buying.asset_type !== "native" && buying.asset_code === code && buying.asset_issuer === issuer;
       });
       for (const o of buyOffersToCancel) {
+        if (cancelledOffers.has(o.id)) continue;
         const sellingAsset = (o as any).selling.asset_type === "native"
           ? Asset.native()
           : new Asset((o as any).selling.asset_code, (o as any).selling.asset_issuer);
@@ -71,6 +75,7 @@ export function addSendOperations(builder: TransactionBuilder, legs: PaymentLeg[
           }),
         );
         cancelCount++;
+        cancelledOffers.add(o.id);
       }
     }
     cancelCounts.push(cancelCount);

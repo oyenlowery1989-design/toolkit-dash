@@ -186,7 +186,11 @@ export function FlowGraphTab() {
   // ---- Cross-group operator fingerprint overlay ----
   const groupById = useMemo(() => new Map(groups.map((g) => [g.id, g])), [groups]);
   const fingerprintMatches = useMemo(
-    () => computeFingerprints({ groups, analyses, creatorChildren }),
+    () => computeFingerprints({
+      groups: groups.filter((group) => group.network === networkFilter),
+      analyses: analyses.filter((analysis) => analysis.network === networkFilter),
+      creatorChildren: creatorChildren.filter((child) => child.network === networkFilter),
+    }),
     [groups, analyses, creatorChildren],
   );
   const operatorLinks = useMemo(() => {

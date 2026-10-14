@@ -199,6 +199,10 @@ export async function runBulkPayments({
           return;
         }
       }
+      if (signal.aborted) {
+        onBatchUpdate({ batchIndex: i, count: batch.length, status: "failed", error: "Aborted — not submitted" });
+        continue;
+      }
       onBatchUpdate({ batchIndex: i, count: batch.length, status: "sending", txHash: precomputedHash, signedXdr });
       submitting = true;
       const response = await submitMainnetTransaction(tx);

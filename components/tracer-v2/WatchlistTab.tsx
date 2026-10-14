@@ -39,6 +39,7 @@ export function WatchlistTab() {
   const [addError, setAddError] = useState<string | null>(null);
   const [pickerId, setPickerId] = useState("");
   const [disabled, setDisabled] = useState(false);
+  const [adding, setAdding] = useState(false);
 
   useEffect(() => {
     waitForAuth().then(() =>
@@ -54,7 +55,8 @@ export function WatchlistTab() {
   const alreadyWatched = (addr: string) =>
     entries.some((e) => e.address === addr && e.network === settings.network);
 
-  const handleAdd = () => {
+  const handleAdd = async () => {
+    if (disabled || adding) return;
     const trimmed = address.trim();
     if (!StrKey.isValidEd25519PublicKey(trimmed)) {
       setAddError("Enter a valid Stellar address (G...)");
@@ -65,16 +67,31 @@ export function WatchlistTab() {
       return;
     }
     setAddError(null);
-    addWatch({ address: trimmed, label: label.trim(), network: settings.network });
-    setAddress("");
-    setLabel("");
+    setAdding(true);
+    try {
+      await addWatch({ address: trimmed, label: label.trim(), network: settings.network });
+      setAddress("");
+      setLabel("");
+    } catch {
+      setAddError("Could not save this watch. Please retry.");
+    } finally {
+      setAdding(false);
+    }
   };
 
-  const handleAddFromPicker = () => {
+  const handleAddFromPicker = async () => {
+    if (disabled || adding) return;
     const picked = knownIntermediaries.find((k) => k.address === pickerId);
-    if (!picked) return;
-    addWatch({ address: picked.address, label: picked.name, network: settings.network });
-    setPickerId("");
+    if (!picked || alreadyWatched(picked.address)) return;
+    setAdding(true);
+    try {
+      await addWatch({ address: picked.address, label: picked.name, network: settings.network });
+      setPickerId("");
+    } catch {
+      setAddError("Could not save this watch. Please retry.");
+    } finally {
+      setAdding(false);
+    }
   };
 
   if (!isLoaded) {
@@ -119,7 +136,7 @@ export function WatchlistTab() {
               onChange={(e) => setLabel(e.target.value)}
               className="sm:w-56"
             />
-            <Button onClick={handleAdd} disabled={!address.trim()}>
+            <Button onClick={handleAdd} disabled={disabled || adding || !address.trim()}>
               Add
             </Button>
           </div>
@@ -140,7 +157,7 @@ export function WatchlistTab() {
                   ))}
                 </SelectContent>
               </Select>
-              <Button variant="outline" onClick={handleAddFromPicker} disabled={!pickerId}>
+              <Button variant="outline" onClick={handleAddFromPicker} disabled={disabled || adding || !pickerId}>
                 Add Selected
               </Button>
             </div>
@@ -180,6 +197,7 @@ export function WatchlistTab() {
                       <td className="py-2 pr-4">
                         <Switch
                           checked={w.enabled}
+                          disabled={disabled}
                           onCheckedChange={(checked) => updateWatch(w.id, { enabled: checked })}
                         />
                       </td>
@@ -192,6 +210,7 @@ export function WatchlistTab() {
                           size="icon"
                           className="h-8 w-8 text-destructive hover:text-destructive"
                           onClick={() => removeWatch(w.id)}
+                          disabled={disabled}
                           aria-label="Remove watch"
                         >
                           <Trash2 className="h-4 w-4" />

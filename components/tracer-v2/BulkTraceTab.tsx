@@ -202,7 +202,7 @@ export function BulkTraceTab() {
         setError(e instanceof Error ? e.message : String(e));
       }
     } finally {
-      setRunning(false);
+      if (abortRef.current === controller) setRunning(false);
     }
   };
 

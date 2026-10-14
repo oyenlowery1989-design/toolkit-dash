@@ -89,7 +89,8 @@ export function usePersons() {
 
   const addPersonAddress = useCallback(
     (personId: string, entry: { address: string; label?: string }) => {
-      const id = `pa-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+      const id = _cache.get().find((p) => p.id === personId)?.addresses.find((a) => a.address === entry.address)?.id
+        ?? `pa-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
       const now = Date.now();
       const newAddress: PersonAddress = { id, personId, address: entry.address, label: entry.label, addedAt: now };
       _cache.set(
@@ -103,7 +104,16 @@ export function usePersons() {
           return { ...p, addresses, updatedAt: now };
         }),
       );
-      dbPost(ENDPOINT, { type: "address", id, personId, ...entry }).catch(() => _cache.reload(ENDPOINT));
+      dbPost(ENDPOINT, { type: "address", id, personId, ...entry })
+        .then((response) => {
+          const res = response as { id?: string };
+          if (res.id && res.id !== id) _cache.set(_cache.get().map((p) =>
+            p.id === personId
+              ? { ...p, addresses: p.addresses.map((a) => a.address === entry.address ? { ...a, id: res.id! } : a) }
+              : p,
+          ));
+        })
+        .catch(() => _cache.reload(ENDPOINT));
     },
     [],
   );

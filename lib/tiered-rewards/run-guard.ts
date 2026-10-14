@@ -43,7 +43,7 @@ export async function inspectRewardRun(configId: string, server: Horizon.Server,
       const result = await server.transactions().transaction(tx.hash).call();
       if (typeof result.successful === "boolean") successful = result.successful;
     } catch { /* A missing or unavailable Horizon record is never proof of rejection. */ }
-    return { hash: tx.hash, successful: successful ?? null };
+    return { hash: tx.hash, successful: successful ?? (tx.status === "rejected" ? false : null) };
   }));
   return { raw, transactions, ready: transactions.every((tx) => tx.successful !== null) };
 }

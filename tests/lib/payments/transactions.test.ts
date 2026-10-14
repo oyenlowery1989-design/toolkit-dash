@@ -42,3 +42,13 @@ describe("Payments recovery builders", () => {
     expect(op.line.issuer).toBe(input.destAssetIssuer);
   });
 });
+
+it("cancels each offer only once when multiple legs remove trustlines", () => {
+  const input = fixtures[1].input;
+  const leg = { ...input.legs[0], removeTrustline: true };
+  const offer = { id: "1", price: "1", selling: { asset_type: "credit_alphanum4", asset_code: leg.assetKey.split(":")[0], asset_issuer: leg.assetKey.split(":")[1] }, buying: { asset_type: "native" } };
+  const builder = new TransactionBuilder(new Account(input.publicKey, "1"), { fee: "100", networkPassphrase: Networks.PUBLIC });
+  expect(addSendOperations(builder, [leg, leg], [offer])).toEqual([1, 0]);
+  const tx = builder.setTimeout(30).build();
+  expect(tx.operations.filter((op) => op.type === "manageSellOffer")).toHaveLength(1);
+});

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAuth } from "@/lib/supabase-server";
+import { isSupabaseOnly, requireAuth } from "@/lib/supabase-server";
 import { startKeyScanLoopRun, stopKeyScanLoopRun, updateKeyScanConfig, getKeyScanState } from "@/lib/key-scanner/loop";
 
 // POST — Body: { action: "start" | "stop" | "configure", network?, pacedRps?, concurrency?, resumeOnBoot? }
@@ -9,7 +9,7 @@ export async function POST(req: NextRequest) {
   const auth = await requireAuth(req);
   if (!auth.ok) return auth.response;
 
-  if (process.env.VERCEL) {
+  if (process.env.VERCEL || isSupabaseOnly()) {
     return NextResponse.json(
       { ok: false, error: "Key Scanner requires a persistent server process — not available on Vercel." },
       { status: 400 },

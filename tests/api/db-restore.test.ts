@@ -67,7 +67,7 @@ afterEach(() => {
   vi.resetModules();
 });
 
-it("does not replace a local unresolved bulk payment journal during restore", async () => {
+it("rejects a different cloud journal without changing a local unresolved run", async () => {
   testDir = mkdtempSync(path.join(tmpdir(), "stellar-restore-test-"));
   vi.stubEnv("SQLITE_DB_PATH", path.join(testDir, "test.db"));
   const { getDb } = await import("@/lib/db");
@@ -82,9 +82,27 @@ it("does not replace a local unresolved bulk payment journal during restore", as
   const response = await POST(new NextRequest("http://localhost/api/db/restore", {
     method: "POST", body: JSON.stringify({ source: "supabase" }),
   }));
-  expect(response.status).toBe(200);
+  expect(response.status).toBe(409);
   expect(db.prepare("SELECT run_id, version, payload_json FROM bulk_payment_journal WHERE user_id = 'local'").get())
     .toEqual({ run_id: "local-run", version: 3, payload_json: localPayload });
+});
+
+it("accepts an identical cloud payment journal", async () => {
+  testDir = mkdtempSync(path.join(tmpdir(), "stellar-restore-test-"));
+  vi.stubEnv("SQLITE_DB_PATH", path.join(testDir, "test.db"));
+  const { getDb } = await import("@/lib/db");
+  const db = getDb();
+  const payload = JSON.stringify({ runId: "same-run", results: [] });
+  db.prepare("INSERT INTO bulk_payment_journal (user_id, run_id, version, payload_json, updated_at) VALUES (?, ?, ?, ?, ?)")
+    .run("local", "same-run", 2, payload, 1);
+  source.rows.bulk_payment_journal = [{ user_id: "test-user", run_id: "same-run", version: 2, payload_json: payload, updated_at: 1 }];
+  const { POST } = await import("@/app/api/db/restore/route");
+  const response = await POST(new NextRequest("http://localhost/api/db/restore", {
+    method: "POST", body: JSON.stringify({ source: "supabase" }),
+  }));
+  expect(response.status).toBe(200);
+  expect(db.prepare("SELECT run_id, version, payload_json FROM bulk_payment_journal WHERE user_id = 'local'").get())
+    .toEqual({ run_id: "same-run", version: 2, payload_json: payload });
 });
 
 it("exports only owned Tiered Rewards guards and restores them without replacing a local guard", async () => {

@@ -218,8 +218,12 @@ export async function POST(req: NextRequest) {
       if (!ownerPerson) {
         return NextResponse.json({ ok: false, error: "Not authorized" }, { status: 403 });
       }
+      const { data: existing, error: lookupError } = await sb.from("person_addresses")
+        .select("id,added_at").eq("person_id", personId).eq("address", address).maybeSingle();
+      if (lookupError) return NextResponse.json({ ok: false, error: lookupError.message }, { status: 500 });
+      const addressId = existing?.id ?? id;
       const { error } = await sb.from("person_addresses").upsert(
-        { id, person_id: personId, address, label: label ?? null, added_at: now },
+        { id: addressId, person_id: personId, address, label: label ?? null, added_at: existing?.added_at ?? now },
         { onConflict: "person_id,address" },
       );
       if (error) {
@@ -227,17 +231,19 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
       }
       await sb.from("persons").update({ updated_at: now }).eq("id", personId).eq("user_id", userId!);
-      return NextResponse.json({ ok: true });
+      return NextResponse.json({ ok: true, id: addressId });
     }
 
     const db = getDb();
+    const addressId = (db.prepare("SELECT id FROM person_addresses WHERE person_id = ? AND address = ?")
+      .get(personId, address) as { id: string } | undefined)?.id ?? id;
     try {
       db.prepare(
         `INSERT INTO person_addresses (id, person_id, address, label, added_at)
          VALUES (?, ?, ?, ?, ?)
          ON CONFLICT(person_id, address) DO UPDATE SET
            label = excluded.label`,
-      ).run(id, personId, address, label ?? null, now);
+      ).run(addressId, personId, address, label ?? null, now);
       db.prepare("UPDATE persons SET updated_at = ? WHERE id = ?").run(now, personId);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -249,14 +255,16 @@ export async function POST(req: NextRequest) {
 
     syncToSupabase(async () => {
       const sb = getSupabase()!;
+      const { data: existing } = await sb.from("person_addresses")
+        .select("id,added_at").eq("person_id", personId).eq("address", address).maybeSingle().throwOnError();
       await sb.from("person_addresses").upsert(
-        { id, person_id: personId, address, label: label ?? null, added_at: now },
+        { id: existing?.id ?? addressId, person_id: personId, address, label: label ?? null, added_at: existing?.added_at ?? now },
         { onConflict: "person_id,address" },
       ).throwOnError();
       await sb.from("persons").update({ updated_at: now }).eq("id", personId).eq("user_id", userId!).throwOnError();
     });
 
-    return NextResponse.json({ ok: true });
+    return NextResponse.json({ ok: true, id: addressId });
   }
 
   if (body.type === "relationship") {
@@ -332,42 +340,25 @@ export async function PATCH(req: NextRequest) {
   }
 
   const { id, name, role, notes, telegramChannel, telegramLink, telegramUsername } = body;
+  const patch: Record<string, unknown> = { updated_at: now };
+  if (name !== undefined) patch.name = name;
+  if (role !== undefined) patch.role = role || null;
+  if (notes !== undefined) patch.notes = notes || null;
+  if (telegramChannel !== undefined) patch.telegram_channel = telegramChannel || null;
+  if (telegramLink !== undefined) patch.telegram_link = telegramLink || null;
+  if (telegramUsername !== undefined) patch.telegram_username = telegramUsername || null;
 
   if (isSupabaseOnly()) {
-    const patch: Record<string, unknown> = { updated_at: now };
-    if (name !== undefined) patch.name = name;
-    if (role !== undefined) patch.role = role;
-    if (notes !== undefined) patch.notes = notes;
-    if (telegramChannel !== undefined) patch.telegram_channel = telegramChannel;
-    if (telegramLink !== undefined) patch.telegram_link = telegramLink;
-    if (telegramUsername !== undefined) patch.telegram_username = telegramUsername;
     const { error } = await getSupabase()!.from("persons").update(patch).eq("id", id).eq("user_id", userId!);
     if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
     return NextResponse.json({ ok: true });
   }
 
-  getDb()
-    .prepare(
-      `UPDATE persons SET
-         name              = COALESCE(?, name),
-         role              = COALESCE(?, role),
-         notes             = COALESCE(?, notes),
-         telegram_channel  = COALESCE(?, telegram_channel),
-         telegram_link     = COALESCE(?, telegram_link),
-         telegram_username = COALESCE(?, telegram_username),
-         updated_at        = ?
-       WHERE id = ?`,
-    )
-    .run(name ?? null, role ?? null, notes ?? null, telegramChannel ?? null, telegramLink ?? null, telegramUsername ?? null, now, id);
+  const fields = Object.entries(patch);
+  getDb().prepare(`UPDATE persons SET ${fields.map(([key]) => `${key} = ?`).join(", ")} WHERE id = ?`)
+    .run(...fields.map(([, value]) => value), id);
 
   syncToSupabase(async () => {
-    const patch: Record<string, unknown> = { updated_at: now };
-    if (name !== undefined) patch.name = name;
-    if (role !== undefined) patch.role = role;
-    if (notes !== undefined) patch.notes = notes;
-    if (telegramChannel !== undefined) patch.telegram_channel = telegramChannel;
-    if (telegramLink !== undefined) patch.telegram_link = telegramLink;
-    if (telegramUsername !== undefined) patch.telegram_username = telegramUsername;
     await getSupabase()!.from("persons").update(patch).eq("id", id).eq("user_id", userId!).throwOnError();
   });
 

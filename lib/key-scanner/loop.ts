@@ -1,5 +1,6 @@
 import type { CheckResult, KeyScanNetwork, KeyScanState, KeyScanTailEntry } from "./types";
 import { generateKeypair, checkAccount } from "./engine";
+import { getDb } from "@/lib/db";
 
 type ExistsResult = Extract<CheckResult, { status: "exists" }>;
 
@@ -28,6 +29,7 @@ interface KeyScanLoopSingleton {
   dirty: boolean;
   checkpointTimer: ReturnType<typeof setTimeout> | null;
   workerGeneration: number;
+  activeWorkers: Set<string>;
 }
 
 const TAIL_CAP = 50;
@@ -62,6 +64,7 @@ function getSingleton(): KeyScanLoopSingleton {
       dirty: false,
       checkpointTimer: null,
       workerGeneration: 0,
+      activeWorkers: new Set(),
     };
   }
   return global._keyScanLoop;
@@ -73,7 +76,6 @@ function pushTail(s: KeyScanLoopSingleton, entry: KeyScanTailEntry) {
 }
 
 function ensureRow(): void {
-  const { getDb } = require("@/lib/db") as typeof import("@/lib/db");
   const db = getDb();
   db.prepare(
     `INSERT OR IGNORE INTO key_scan_state (id, network, running, resume_on_boot, paced_rps, concurrency, total_generated, total_not_found, total_found, total_errors, recent_tail_json, started_at, last_activity_at, last_error)
@@ -82,13 +84,11 @@ function ensureRow(): void {
 }
 
 function loadRow(): Record<string, unknown> {
-  const { getDb } = require("@/lib/db") as typeof import("@/lib/db");
   ensureRow();
   return getDb().prepare("SELECT * FROM key_scan_state WHERE id = 'local'").get() as Record<string, unknown>;
 }
 
 function checkpoint(s: KeyScanLoopSingleton): void {
-  const { getDb } = require("@/lib/db") as typeof import("@/lib/db");
   ensureRow();
   getDb()
     .prepare(
@@ -133,7 +133,6 @@ function flushCheckpoint(s: KeyScanLoopSingleton): void {
 }
 
 function insertHit(s: KeyScanLoopSingleton, publicKey: string, secretKey: string, result: ExistsResult): void {
-  const { getDb } = require("@/lib/db") as typeof import("@/lib/db");
   const xlm = result.balances.find((b) => b.asset_type === "native")?.balance;
   getDb()
     .prepare(
@@ -171,7 +170,6 @@ function writeFallbackHit(publicKey: string, secretKey: string): void {
 export function recordHitPurged(): void {
   const s = getSingleton();
   s.totalFound = Math.max(0, s.totalFound - 1);
-  const { getDb } = require("@/lib/db") as typeof import("@/lib/db");
   ensureRow();
   getDb().prepare("UPDATE key_scan_state SET total_found = MAX(0, total_found - 1) WHERE id = 'local'").run();
 }
@@ -190,6 +188,7 @@ async function worker(s: KeyScanLoopSingleton, index: number, generation: number
       await acquireSlot(s);
       const { publicKey, secretKey } = generateKeypair();
       const result = await checkAccount(HORIZON_BASE, publicKey, signal);
+      if (signal.aborted || !s.running || s.workerGeneration !== generation) break;
       s.lastActivityAt = Date.now();
 
       if (result.status === "exists") {
@@ -244,7 +243,15 @@ function spawnWorkers(s: KeyScanLoopSingleton, fromIndex = 0): void {
   const generation = s.workerGeneration;
   const signal = s.abortController!.signal;
   for (let i = fromIndex; i < s.concurrency; i++) {
-    worker(s, i, generation, signal).catch((err) => console.error("[key-scanner] worker crashed:", err));
+    const workerId = `${generation}:${i}`;
+    if (s.activeWorkers.has(workerId)) continue;
+    s.activeWorkers.add(workerId);
+    worker(s, i, generation, signal)
+      .catch((err) => console.error("[key-scanner] worker crashed:", err))
+      .finally(() => {
+        s.activeWorkers.delete(workerId);
+        if (s.running && s.workerGeneration === generation && i < s.concurrency) spawnWorkers(s, i);
+      });
   }
 }
 
@@ -279,7 +286,6 @@ export function updateKeyScanConfig(patch: { pacedRps?: number; concurrency?: nu
     s.concurrency = Math.min(MAX_CONCURRENCY, Math.max(1, Math.floor(patch.concurrency)));
   }
   if (patch.resumeOnBoot !== undefined) {
-    const { getDb } = require("@/lib/db") as typeof import("@/lib/db");
     ensureRow();
     getDb().prepare("UPDATE key_scan_state SET resume_on_boot = ? WHERE id = 'local'").run(patch.resumeOnBoot ? 1 : 0);
   }
@@ -315,7 +321,7 @@ export function getKeyScanState(): KeyScanState {
 
 /** Starts the key-scanner. No-op on Vercel (no persistent process) and idempotent per boot. */
 export function startKeyScanLoop(): void {
-  if (process.env.VERCEL) return;
+  if (process.env.VERCEL || process.env.DB_PROVIDER === "supabase") return;
   if (global._keyScanStarted) return; // already resumed this boot (HMR/race guard)
   global._keyScanStarted = true;
 
