@@ -122,6 +122,19 @@ function mergeEffect(into: string, amount: string) {
 afterEach(() => vi.restoreAllMocks());
 
 describe("fetchAssetXlmProceeds", () => {
+  it("counts DEX sale proceeds without any payment operations", async () => {
+    stubHorizon({ trades: [dexTrade()] });
+
+    const result = await fetchAssetXlmProceeds(
+      HORIZON, ASSET_CODE, ISSUER, [ACCOUNT], new AbortController().signal,
+    );
+
+    expect(result.totalAssetSold).toBe(100);
+    expect(result.totalXlmProceeds).toBe(50);
+    expect(result.dexTradeCount).toBe(1);
+    expect(result.totalOutgoingXlm).toBe(0);
+  });
+
   it("does not mix case-distinct asset codes from the same issuer", async () => {
     stubHorizon({
       trades: [dexTrade()],

@@ -326,14 +326,10 @@ export async function inferDistributionAddresses(
 /**
  * Infer the most likely distribution address(es) for an asset.
  *
- * Strategy: scan all outgoing payments of this asset from the issuer account.
- * The distribution address is definitively whoever received the most asset
- * from the issuer — top holders are buyers/holders, not necessarily the
- * distribution address (they could have acquired tokens on the DEX).
+ * Rank outgoing issuer-payment recipients and actual claimants of balances
+ * those recipients created. Eligibility alone is not evidence of ownership.
  *
- * Uses /payments endpoint (payment ops only, faster than /operations).
- *
- * Returns up to 5 candidates sorted by total received, highest first.
+ * Returns up to 5 candidates ranked by receipts minus confirmed forwarding.
  */
 export async function inferDistribLite(
   horizonUrl: string,
@@ -342,49 +338,108 @@ export async function inferDistribLite(
   signal: AbortSignal,
 ): Promise<{ address: string; score: number; reason: string }[]> {
   const horizonBase = horizonUrl.replace(/\/$/, "");
-  const paymentTotals = new Map<string, { amount: number; count: number }>();
-  let cursor: string | undefined;
+  const paymentTotals = new Map<string, { amount: number; count: number; claims: number; forwarded: number }>();
+  const paymentCursors = new Map<string, string>();
 
-  while (!signal.aborted) {
-    const params = new URLSearchParams({ limit: "200", order: "asc" });
-    if (cursor) params.set("cursor", cursor);
-    const data = (await fetchJson(
-      `${horizonBase}/accounts/${encodeURIComponent(issuer)}/payments?${params}`,
-      signal,
-    )) as { _embedded?: { records?: Record<string, unknown>[] } };
-    const records = data._embedded?.records ?? [];
+  async function* pages(path: string, cursor?: string) {
+    for (let pageIndex = 0; pageIndex < 100; pageIndex++) {
+      signal.throwIfAborted();
+      const params = new URLSearchParams({ limit: "200", order: "asc" });
+      if (cursor) params.set("cursor", cursor);
+      const data = await fetchJson(`${horizonBase}${path}?${params}`, signal);
+      const records = data._embedded?.records as Record<string, unknown>[] | undefined;
+      if (!Array.isArray(records)) throw new Error("Horizon history response is missing records");
+      yield records;
+      if (records.length < 200) return;
+      const nextCursor = records[records.length - 1].paging_token;
+      if (typeof nextCursor !== "string" || nextCursor === cursor) {
+        throw new Error("Horizon history pagination did not advance");
+      }
+      cursor = nextCursor;
+    }
+    throw new Error(`Horizon inference history exceeds 100 pages: ${path}`);
+  }
 
+  for await (const records of pages(`/accounts/${encodeURIComponent(issuer)}/payments`)) {
     for (const op of records) {
       const isPaymentType =
         op.type === "payment" ||
         op.type === "path_payment_strict_send" ||
         op.type === "path_payment_strict_receive";
       if (!isPaymentType) continue;
+      if (op.transaction_successful === false) continue;
       // Must be outgoing and for this specific asset
       if (op.from !== issuer) continue;
       if (op.asset_code !== assetCode || op.asset_issuer !== issuer) continue;
       const to = op.to as string | undefined;
       if (!to || to === issuer) continue;
       const amount = parseFloat((op.amount as string) ?? "0");
-      const existing = paymentTotals.get(to) ?? { amount: 0, count: 0 };
+      if (!Number.isFinite(amount) || amount <= 0) continue;
+      if (!paymentCursors.has(to) && typeof op.paging_token === "string") {
+        paymentCursors.set(to, op.paging_token);
+      }
+      const existing = paymentTotals.get(to) ?? { amount: 0, count: 0, claims: 0, forwarded: 0 };
       paymentTotals.set(to, {
         amount: existing.amount + amount,
         count: existing.count + 1,
+        claims: existing.claims,
+        forwarded: existing.forwarded,
       });
     }
-
-    if (records.length < 200) break;
-    cursor = records[records.length - 1].paging_token as string;
   }
 
+  const seenBalances = new Set<string>();
+  // shortcut: one claimable-balance hop; use a graph walk for longer distribution chains.
+  for (const creator of [...paymentTotals.keys()]) {
+    for await (const records of pages(`/accounts/${encodeURIComponent(creator)}/operations`, paymentCursors.get(creator))) {
+      for (const op of records) {
+        if (op.type !== "create_claimable_balance" || op.source_account !== creator ||
+          op.transaction_successful !== true || op.asset !== `${assetCode}:${issuer}`) continue;
+        const amount = parseFloat(String(op.amount ?? "0"));
+        if (!Number.isFinite(amount) || amount <= 0) continue;
+        if (typeof op.id !== "string") throw new Error("Claimable-balance creation is missing its operation ID");
+        let balanceId: string | undefined;
+        for await (const effects of pages(`/operations/${encodeURIComponent(op.id)}/effects`)) {
+          const created = effects.find(effect => effect.type === "claimable_balance_created" &&
+            effect.asset === op.asset && effect.account === creator && parseFloat(String(effect.amount)) === amount);
+          if (typeof created?.balance_id === "string") balanceId = created.balance_id;
+        }
+        if (!balanceId) throw new Error("Claimable-balance creation history is missing its balance ID");
+        if (seenBalances.has(balanceId)) continue;
+        seenBalances.add(balanceId);
+        let claimed = false;
+        for await (const claims of pages(`/claimable_balances/${encodeURIComponent(balanceId)}/operations`)) {
+          for (const claim of claims) {
+            if (claim.type !== "claim_claimable_balance" || claim.balance_id !== balanceId ||
+              claim.transaction_successful !== true || typeof claim.claimant !== "string" ||
+              claim.source_account !== claim.claimant) continue;
+            const address = claim.claimant;
+            claimed = true;
+            if (address === creator || address === issuer) break;
+            const existing = paymentTotals.get(address) ?? { amount: 0, count: 0, claims: 0, forwarded: 0 };
+            paymentTotals.set(address, { ...existing, amount: existing.amount + amount, claims: existing.claims + 1 });
+            paymentTotals.get(creator)!.forwarded += amount;
+            break;
+          }
+          if (claimed) break;
+        }
+      }
+    }
+  }
+  signal.throwIfAborted();
+
   const ranked = [...paymentTotals.entries()]
-    .sort((a, b) => b[1].amount - a[1].amount)
+    .filter(([, info]) => info.amount > info.forwarded)
+    .sort((a, b) => Math.max(0, b[1].amount - b[1].forwarded) - Math.max(0, a[1].amount - a[1].forwarded) || b[1].claims - a[1].claims)
     .slice(0, 5);
 
   return ranked.map(([address, info], i) => ({
     address,
     score: ranked.length - i,
-    reason: `Received ${Number(info.amount).toLocaleString()} ${assetCode} from issuer across ${info.count} payment${info.count !== 1 ? "s" : ""}`,
+    reason: (info.claims > 0
+      ? `Received ${Number(info.amount).toLocaleString()} ${assetCode} via ${info.claims} claimed claimable balance${info.claims !== 1 ? "s" : ""} from issuer-payment recipients${info.count ? ` and ${info.count} issuer payment${info.count !== 1 ? "s" : ""}` : ""}`
+      : `Received ${Number(info.amount).toLocaleString()} ${assetCode} from issuer across ${info.count} payment${info.count !== 1 ? "s" : ""}`) +
+      (info.forwarded ? `; forwarded ${Number(info.forwarded).toLocaleString()} via claimed claimable balances` : ""),
   }));
 }
 
