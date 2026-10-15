@@ -29,6 +29,7 @@ import {
   X,
 } from "lucide-react";
 import { useSettings, resolveHorizonUrl, NETWORK_LABELS, type Network } from "@/lib/settings";
+import { TopHolders } from "./TopHolders";
 import { useProceedsHistory } from "./useProceedsHistory";
 import { getErrorMessage } from "@/lib/stellar-helpers";
 import { ShortAddress } from "@/components/shared/ShortAddress";
@@ -367,7 +368,8 @@ export function AssetSalesTab() {
   const prefilledRef = useRef(false);
   const pendingAutorunRef = useRef(false);
 
-  const singlePair = parseAssetPairs(assetsText).length === 1;
+  const parsedPairs = parseAssetPairs(assetsText);
+  const singlePair = parsedPairs.length === 1;
 
   useEffect(() => {
     requestNotificationPermission();
@@ -447,7 +449,6 @@ export function AssetSalesTab() {
   };
 
   const handleRun = async () => {
-    if (!historyReady) return;
     const pairs = parseAssetPairs(assetsText);
     if (pairs.length === 0) {
       setParseError("No valid CODE:ISSUER pairs found. Enter one per line.");
@@ -548,10 +549,9 @@ export function AssetSalesTab() {
             saleEvidenceIds: result.proceedsLedger.filter(entry => entry.account === attribution.account && entry.successful).map(entry => entry.id),
           }));
 
-          // Prior saves of this exact asset — used to skip a redundant save
-          // when nothing actually changed, and to render the diff below.
+          // Incomplete history cannot safely suppress a new save or provide a comparison.
           const key = assetKey({ assetCode, issuer, network: settings.network });
-          const priorMatches = savedAnalyses
+          const priorMatches = (historyReady ? savedAnalyses : [])
             .filter((a) => assetKey(a) === key)
             .sort((a, b) => b.timestamp - a.timestamp);
           const priorSave: PriorSaveInfo | null = priorMatches.length
@@ -619,12 +619,12 @@ export function AssetSalesTab() {
 
   // Fire a pending autorun once the deep-linked text has actually landed in state.
   useEffect(() => {
-    if (pendingAutorunRef.current && assetsText && historyReady && (groupsLoaded || (singlePair && overrideAccountsText.trim()))) {
+    if (pendingAutorunRef.current && assetsText && (groupsLoaded || (singlePair && overrideAccountsText.trim()))) {
       pendingAutorunRef.current = false;
       handleRun();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [assetsText, historyReady, groupsLoaded, overrideAccountsText, singlePair]);
+  }, [assetsText, groupsLoaded, overrideAccountsText, singlePair]);
 
   const handleCancel = () => {
     abortRef.current?.abort();
@@ -809,6 +809,13 @@ export function AssetSalesTab() {
                 onChange={(e) => setOverrideAccountsText(e.target.value)}
                 disabled={running}
               />
+              <TopHolders
+                key={JSON.stringify([settings.network, resolveHorizonUrl(settings), parsedPairs[0].assetCode, parsedPairs[0].issuer])}
+                assetCode={parsedPairs[0].assetCode} issuer={parsedPairs[0].issuer}
+                horizonUrl={resolveHorizonUrl(settings)} network={settings.network}
+                disabled={running} selectedAccounts={parseAddresses(overrideAccountsText)}
+                onUseHolder={address => setOverrideAccountsText(previous => parseAddresses(previous).includes(address) ? previous : [previous.trim(), address].filter(Boolean).join("\n"))}
+              />
             </div>
           )}
 
@@ -830,7 +837,7 @@ export function AssetSalesTab() {
           </div>
         </CardContent>
         <CardFooter className="flex gap-2 flex-wrap">
-          <Button onClick={handleRun} disabled={running || !historyReady || (!groupsLoaded && !(singlePair && overrideAccountsText.trim()))}>
+          <Button onClick={handleRun} disabled={running || (!groupsLoaded && !(singlePair && overrideAccountsText.trim()))}>
             {running ? (
               <Loader2 className="mr-2 h-4 w-4 animate-spin" />
             ) : (
@@ -864,8 +871,8 @@ export function AssetSalesTab() {
       </Card>
 
       {!groupsLoaded && <p className="text-sm text-muted-foreground">Loading saved distributors before automatic selection…</p>}
-      {(!historyLoaded || loadingHistory) && <p className="text-sm text-muted-foreground">Loading saved history for comparison…</p>}
-      {historyError && <div role="alert" className="text-sm text-destructive">{historyError} <Button size="sm" variant="outline" onClick={retryHistory}>Retry history</Button></div>}
+      {!historyError && (!historyLoaded || loadingHistory) && <p className="text-sm text-muted-foreground">Saved history is loading. You can run the analysis without comparison.</p>}
+      {historyError && <div role="alert" className="text-sm text-destructive">History comparison unavailable. You can still run the analysis. {historyError} <Button size="sm" variant="outline" onClick={retryHistory}>Retry history</Button></div>}
       {/* Running progress */}
       {running && (
         <div className="flex items-center gap-3 rounded-lg border border-border bg-muted/40 px-4 py-3">

@@ -2,13 +2,17 @@ import { expect, test } from "@playwright/test";
 const issuer = "GANJULEAUA7FO4G4VADKZGZ4R7BIRWFQWFCWD6D7W5UDV2D4TJ3CPYTQ";
 const exchange = "GABFQIK63R2NETJM7T673EAMZN4RJLLGP3OFUEJU5SZVTGWUKULZJNL6";
 const sellers = ["GBHWTASVVCTOEIPWDJ7QFVKCP5XN3VRSQLD2ZARWO2GTH54GDQ4BI3EH", "GBVIJOWPN3YJUWFO6ZRDHLQOK24DQLV2VUXJ7FVSDRFNKKD5F3DDXGOS"];
-for (const mode of ["automatic", "saved", "manual", "historical lookup"] as const) {
+for (const mode of ["automatic", "saved", "manual", "historical lookup", "pending history", "failed history", "paginated history", "autorun pending history"] as const) {
   test(`${mode} selection scans every chosen seller and preserves provenance`, async ({ page }) => {
     const horizonUrls: URL[] = [];
     const writes: Array<{ url: string; body: Record<string, unknown> }> = [];
     let releaseGroups!: () => void;
     const groupGate = new Promise<void>(resolve => { releaseGroups = resolve; });
-    const groups = (mode === "saved" || mode === "historical lookup") ? [{ id: "saved-group", name: "Saved sellers", assetCode: "Token", issuer, network: "public", createdAt: 1, updatedAt: 1,
+    const historyMode = mode.includes("history");
+    let historyPending = false;
+    let releaseHistory!: () => void;
+    const historyGate = new Promise<void>(resolve => { releaseHistory = resolve; });
+    const groups = (mode === "saved" || mode === "historical lookup" || historyMode) ? [{ id: "saved-group", name: "Saved sellers", assetCode: "Token", issuer, network: "public", createdAt: 1, updatedAt: 1,
       members: sellers.map((address, i) => ({ id: String(i), groupId: "saved-group", address, role: "distributor", addedAt: 1 })) }] : [];
     await page.route("**/api/db/**", async route => {
       const url = new URL(route.request().url());
@@ -16,6 +20,15 @@ for (const mode of ["automatic", "saved", "manual", "historical lookup"] as cons
         const body = route.request().postDataJSON() as Record<string, unknown>;
         writes.push({ url: url.pathname, body });
         await route.fulfill({ json: { ok: true } }); return;
+      }
+      if (url.pathname === "/api/db/saved-analyses" && historyMode) {
+        if (mode === "failed history") { await route.fulfill({ status: 500, json: { error: "History unavailable" } }); return; }
+        if (mode === "paginated history" && !url.searchParams.has("beforeId")) {
+          await route.fulfill({ json: [{ id: "older", timestamp: 1, assetCode: "Other", issuer, network: "public", nextCursor: { timestamp: 1, id: "older" } }] }); return;
+        }
+        historyPending = true;
+        await historyGate;
+        await route.fulfill({ json: [] }); return;
       }
       if (url.pathname === "/api/db/groups") {
         if (mode === "saved") await groupGate;
@@ -46,7 +59,7 @@ for (const mode of ["automatic", "saved", "manual", "historical lookup"] as cons
       if (url.pathname.endsWith("/payments") || url.pathname.endsWith("/operations")) { await route.fulfill({ json: { _embedded: { records: [] } } });return; }
       await route.fulfill({ json: { home_domain: "", balances: [{ asset_type: "native", balance: "11" }] } });
     });
-    await page.goto(mode === "historical lookup" ? "/asset-lookup" : "/asset-sales");
+    await page.goto(mode === "historical lookup" ? "/asset-lookup" : mode === "autorun pending history" ? `/asset-sales?bulkAssets=${encodeURIComponent(`Token:${issuer}`)}&autorun=1` : "/asset-sales");
     if (mode === "historical lookup") {
       await page.locator("#asset-code").fill("Token");
       await page.locator("#issuer").fill(issuer);
@@ -58,7 +71,9 @@ for (const mode of ["automatic", "saved", "manual", "historical lookup"] as cons
       releaseGroups();
     }
     const runButton = page.getByRole("button", { name: mode === "historical lookup" ? "Distribution Sales" : "Run Analysis", exact: true });
-    await runButton.click();
+    if (mode === "failed history") await expect(page.getByText(/History comparison unavailable/)).toBeVisible();
+    else if (historyMode) await expect.poll(() => historyPending).toBe(true);
+    if (mode !== "autorun pending history") await runButton.click();
     if (mode === "historical lookup") await expect(page.getByText("Distribution Sales — XLM Proceeds", { exact: true })).toBeVisible();
     if (mode !== "historical lookup") await expect(page.getByText("1 done · 0 failed")).toBeVisible();
     await expect(page.getByText("Confirmed asset → XLM seller", { exact: false })).toHaveCount(2);
@@ -76,6 +91,7 @@ for (const mode of ["automatic", "saved", "manual", "historical lookup"] as cons
     expect(result.totalXlmProceeds).toBe(7);
     expect(result.sellerAttributions.every(a => a.source === (mode === "automatic" ? "inferred" : mode === "manual" ? "manual" : "saved") && a.confirmedSeller)).toBe(true);
     expect(horizonUrls.some(u => u.pathname === `/accounts/${issuer}/payments`)).toBe(mode === "automatic");
+    releaseHistory();
     expect(new Set(horizonUrls.filter(u => u.pathname === "/trades").map(u => u.searchParams.get("account_id")))).toEqual(new Set(sellers));
   });
 }
