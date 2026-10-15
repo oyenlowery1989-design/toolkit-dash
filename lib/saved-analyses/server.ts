@@ -39,7 +39,8 @@ export async function readSavedAnalysisRows(userId: string, limit?: number): Pro
 }
 
 /** A page is bounded by both row count and encoded bytes, without discarding history. */
-export const SAVED_ANALYSES_PAGE_SIZE = 20;
+// Bound the database payload too: full snapshots are read before summaries are built.
+export const SAVED_ANALYSES_PAGE_SIZE = 5;
 export const SAVED_ANALYSES_PAGE_BYTES = 1_000_000;
 
 export function mapSavedAnalysisRow(r: Record<string, unknown>) {

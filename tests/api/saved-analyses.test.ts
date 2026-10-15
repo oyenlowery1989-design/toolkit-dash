@@ -19,7 +19,7 @@ vi.mock("@/lib/supabase-server", () => ({
   requireAuth: async () => mocks.denied ? { ok: false, response: new Response(null, { status: 401 }) } : { ok: true, userId: "owner" },
 }));
 import { GET } from "@/app/api/db/saved-analyses/route";
-import { SAVED_ANALYSES_PAGE_BYTES, summaryPage } from "@/lib/saved-analyses/server";
+import { SAVED_ANALYSES_PAGE_BYTES, SAVED_ANALYSES_PAGE_SIZE, summaryPage } from "@/lib/saved-analyses/server";
 
 function analysis(id = "snapshot"): SavedAnalysis {
   return {
@@ -144,6 +144,7 @@ describe("saved analysis history", () => {
         (!timestamp || Number(row.created_at) < Number(timestamp) || (Number(row.created_at) === Number(timestamp) && String(row.id) < JSON.parse(cursorId!))));
       const offset = Number(url.searchParams.get("offset") ?? 0);
       const limit = Number(url.searchParams.get("limit") ?? 1000);
+      if (!id) expect(limit).toBeLessThanOrEqual(6);
       const page = filtered.slice(offset, offset + Math.min(limit, 10));
       return Response.json(page, { headers: { "Content-Range": `${offset}-${offset + page.length - 1}/${filtered.length}` } });
     });
@@ -165,5 +166,40 @@ describe("saved analysis history", () => {
 
   it("rejects invalid pagination input", async () => {
     for (const query of ["?beforeTimestamp=-1&beforeId=x", "?beforeTimestamp=1.1&beforeId=x", "?beforeTimestamp=oops&beforeId=x", "?beforeTimestamp=1", "?beforeId=x", "?beforeTimestamp=&beforeId=x"]) expect((await GET(request(query))).status).toBe(400);
+  });
+
+  it("reduces timed-out database batches without losing rows, order or tenant scope", async () => {
+    const original = Array.from({ length: 13 }, (_, i) => ({ ...row({ ...analysis(String(i)), timestamp: 13 - i }), user_id: "owner" }));
+    const limits: number[] = [];
+    mocks.client = createClient("https://test.supabase.co", "test-key", { auth: { persistSession: false }, global: { fetch: async input => {
+      const url = new URL(String(input));
+      expect(url.searchParams.get("user_id")).toBe("eq.owner");
+      const limit = Number(url.searchParams.get("limit")); limits.push(limit);
+      if (limit > 1) return Response.json({ code: "57014", message: "canceling statement due to statement timeout" }, { status: 500 });
+      const cursor = url.searchParams.get("or")?.match(/created_at\.lt\.(\d+)/)?.[1];
+      const filtered = original.filter(row => !cursor || row.created_at < Number(cursor));
+      return Response.json(filtered.slice(0, 1), { headers: { "Content-Range": `0-0/${filtered.length}` } });
+    } } });
+    const ids: string[] = [];
+    let cursor: SavedAnalysisCursor | undefined;
+    do {
+      const response = await GET(request(cursorQuery(cursor)));
+      expect(response.status).toBe(200);
+      const page: SavedAnalysisSummary[] = await response.json();
+      ids.push(...page.map(entry => entry.id));
+      cursor = page.at(-1)?.nextCursor;
+    } while (cursor);
+    expect(ids).toEqual(original.map(row => row.id));
+    expect(limits.slice(0, 3)).toEqual([SAVED_ANALYSES_PAGE_SIZE + 1, 3, 1]);
+  });
+
+  it("bounds retries and reports genuine storage errors without pretending history is empty", async () => {
+    const fetcher = vi.fn(async () => Response.json({ code: "57014", message: "statement timeout" }, { status: 500 }));
+    mocks.client = createClient("https://test.supabase.co", "test-key", { auth: { persistSession: false }, global: { fetch: fetcher } });
+    expect((await GET(request())).status).toBe(502);
+    expect(fetcher).toHaveBeenCalledTimes(3);
+    fetcher.mockClear().mockImplementation(async () => Response.json({ code: "42501", message: "permission denied" }, { status: 403 }));
+    expect((await GET(request())).status).toBe(502);
+    expect(fetcher).toHaveBeenCalledOnce();
   });
 });

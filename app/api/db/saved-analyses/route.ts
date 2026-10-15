@@ -27,15 +27,27 @@ export async function GET(req: NextRequest) {
   let rows: Record<string, unknown>[];
   let total: number | null = null;
   if (isSupabaseOnly()) {
-    let query = getSupabase()!.from("saved_analyses").select("*", { count: "exact" }).eq("user_id", auth.userId!);
-    if (beforeTimestamp !== null) query = query.or(`created_at.lt.${beforeTimestamp},and(created_at.eq.${beforeTimestamp},id.lt.${JSON.stringify(beforeId)})`);
-    const { data, error, count } = await query.order("created_at", { ascending: false }).order("id", { ascending: false })
-      .range(0, SAVED_ANALYSES_PAGE_SIZE);
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-    if (count === null) return NextResponse.json({ error: "Saved history row count is unavailable. Please retry." }, { status: 500 });
-    rows = data ?? [];
-    total = count;
-    if (!rows.length && total) return NextResponse.json({ error: "Saved history changed during loading. Please retry." }, { status: 500 });
+    // Full snapshots contain large ledgers; retry timed-out reads with a smaller batch.
+    let batchSize = SAVED_ANALYSES_PAGE_SIZE + 1;
+    for (;;) {
+      let query = getSupabase()!.from("saved_analyses").select("*", { count: "exact" }).eq("user_id", auth.userId!);
+      if (beforeTimestamp !== null) query = query.or(`created_at.lt.${beforeTimestamp},and(created_at.eq.${beforeTimestamp},id.lt.${JSON.stringify(beforeId)})`);
+      const { data, error, count } = await query.order("created_at", { ascending: false }).order("id", { ascending: false })
+        .range(0, batchSize - 1);
+      if (error?.code === "57014" && batchSize > 1) {
+        batchSize = Math.max(1, Math.floor(batchSize / 2));
+        continue;
+      }
+      if (error) {
+        console.error("[saved-analyses] GET failed:", error.code, error.message);
+        return NextResponse.json({ error: "Saved history could not be loaded. Please retry." }, { status: 502 });
+      }
+      if (count === null) return NextResponse.json({ error: "Saved history row count is unavailable. Please retry." }, { status: 500 });
+      rows = data ?? [];
+      total = count;
+      if (!rows.length && total) return NextResponse.json({ error: "Saved history changed during loading. Please retry." }, { status: 500 });
+      break;
+    }
   } else rows = beforeTimestamp === null
     ? getDb().prepare("SELECT * FROM saved_analyses ORDER BY created_at DESC, id DESC LIMIT ?").all(SAVED_ANALYSES_PAGE_SIZE + 1) as Record<string, unknown>[]
     : getDb().prepare("SELECT * FROM saved_analyses WHERE created_at < ? OR (created_at = ? AND id < ?) ORDER BY created_at DESC, id DESC LIMIT ?")
