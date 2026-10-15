@@ -16,3 +16,5 @@
 
 - Saved history is optional for manual/deep-link scans. Pending/failed/partial history skips comparison and duplicate suppression; the completed scan is saved independently without replacing prior entries. Saved-distributor readiness still gates automatic selection.
 - Late scan-state restoration is ignored once a new scan starts or Clear is pressed, so delayed initial reads cannot overwrite current rows or resurrect cleared rows.
+- Detailed coverage, memo beneficiary groups, accounting explanations and seller proof are inside the collapsed Analysis details disclosure; incomplete history stays visible in its summary. Statistics and destination tables stay visible. Other modules retain their existing shared presentation.
+- Top holders can be explicitly added as distributors to an existing group matching exact asset code+issuer+network; existing members keep their roles. Manual seller selection remains separate. Mainnet assets link to Lobstr with preserved code case. The result header shows weighted average gross XLM/token from the covered sales, not a current quote.

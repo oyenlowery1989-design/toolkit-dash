@@ -3,6 +3,8 @@
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { ShortAddress } from "@/components/shared/ShortAddress";
+import { useAssetGroups } from "@/hooks/use-asset-groups";
+import { defaultGroupMemberLabel } from "@/lib/asset-groups/types";
 import { getErrorMessage } from "@/lib/stellar-helpers";
 import { fetchTopAssetHolders, type TopHoldersResult } from "@/lib/proceeds-investigator/top-holders";
 
@@ -10,6 +12,8 @@ export function TopHolders({ assetCode, issuer, horizonUrl, network, selectedAcc
   assetCode: string; issuer: string; horizonUrl: string; network: string;
   selectedAccounts: string[]; disabled: boolean; onUseHolder: (address: string) => void;
 }) {
+  const { groups, upsertMember, isLoaded: groupsLoaded } = useAssetGroups();
+  const group = groups.find(item => item.assetCode === assetCode && item.issuer === issuer && item.network === network);
   const [result, setResult] = useState<TopHoldersResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [scanned, setScanned] = useState(0);
@@ -38,7 +42,7 @@ export function TopHolders({ assetCode, issuer, horizonUrl, network, selectedAcc
           : <Button variant="outline" size="sm" onClick={check} disabled={disabled}>{result ? "Refresh top holders" : "Check top 3 holders"}</Button>}
       </div>
     </div>
-    <p className="text-muted-foreground">Current account balances are clues, not confirmed distribution or sales. Adding a holder selects it for the manual seller accounts list.</p>
+    <p className="text-muted-foreground">Holdings do not prove sales. Use as seller selects for this scan{group ? "; + Distributor saves to the asset group." : "."}</p>
     {loading && <p role="status">Checking all accounts… {scanned.toLocaleString()} scanned.</p>}
     {error && <p role="alert" className="text-destructive">{error}</p>}
     {result && <>
@@ -47,12 +51,17 @@ export function TopHolders({ assetCode, issuer, horizonUrl, network, selectedAcc
       {result.warning && <p role="status">{result.warning}</p>}
       <div className="overflow-x-auto">
         <table className="w-full text-xs">
-          <thead><tr className="border-b"><th className="text-left p-2">Holder</th><th className="text-right p-2">{assetCode} balance</th><th className="text-right p-2">% of observed supply</th><th className="p-2"><span className="sr-only">Seller selection</span></th></tr></thead>
+          <thead><tr className="border-b"><th className="text-left p-2">Holder</th><th className="text-right p-2">{assetCode} balance</th><th className="text-right p-2">% of observed supply</th><th className="p-2"><span className="sr-only">Seller and group actions</span></th></tr></thead>
           <tbody>{result.holders.map(holder => <tr key={holder.address} className="border-b last:border-0">
             <td className="p-2"><ShortAddress address={holder.address} network={network} /></td>
             <td className="p-2 text-right font-mono">{holder.balance}</td>
             <td className="p-2 text-right tabular-nums">{holder.percentage === null ? "Unknown" : holder.percentage < 0.01 ? "<0.01%" : `${holder.percentage.toFixed(2)}%`}</td>
-            <td className="p-2 text-right"><Button variant="outline" size="sm" disabled={disabled || selectedAccounts.includes(holder.address)} onClick={() => onUseHolder(holder.address)}>{selectedAccounts.includes(holder.address) ? "Added" : "Use as seller"}</Button></td>
+            <td className="p-2"><div className="flex flex-wrap justify-end gap-2">
+              <Button variant="outline" size="sm" disabled={disabled || selectedAccounts.includes(holder.address)} onClick={() => onUseHolder(holder.address)}>{selectedAccounts.includes(holder.address) ? "Added" : "Use as seller"}</Button>
+              {group && (group.members.some(member => member.address === holder.address)
+                ? <Button variant="ghost" size="sm" asChild><a href={`/groups?open=${encodeURIComponent(group.id)}`}>In group</a></Button>
+                : <Button variant="outline" size="sm" disabled={disabled || !groupsLoaded} title={`Add as distributor to ${group.name}`} onClick={() => upsertMember(group.id, { address: holder.address, role: "distributor", label: defaultGroupMemberLabel("distributor", assetCode) })}>+ Distributor</Button>)}
+            </div></td>
           </tr>)}</tbody>
         </table>
       </div>

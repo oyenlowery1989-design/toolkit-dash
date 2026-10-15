@@ -48,7 +48,7 @@ for (const mode of ["automatic", "saved", "manual", "historical lookup", "pendin
     await page.route("**/api.coingecko.com/**", route => route.fulfill({ json: { stellar: { usd: 0.2 } } }));
     await page.route("https://horizon.stellar.org/**", async route => {
       const url = new URL(route.request().url());horizonUrls.push(url);
-      if (url.pathname === "/") { await route.fulfill({ json: { history_elder_ledger: 1 } }); return; }
+      if (url.pathname === "/") { await route.fulfill({ json: { history_elder_ledger: 500 } }); return; }
       if (url.pathname === "/trades") {
         releaseRestore();
         const account = url.searchParams.get("account_id")!;const index = sellers.indexOf(account);
@@ -85,7 +85,18 @@ for (const mode of ["automatic", "saved", "manual", "historical lookup", "pendin
     if (mode !== "autorun pending history") await runButton.click();
     if (mode === "historical lookup") await expect(page.getByText("Distribution Sales — XLM Proceeds", { exact: true })).toBeVisible();
     if (mode !== "historical lookup") await expect(page.getByText("1 done · 0 failed")).toBeVisible();
+    if (mode !== "historical lookup") {
+      await expect(page.getByText("1 Token ≈ 0.35 XLM · avg", { exact: true })).toBeVisible();
+      await expect(page.getByRole("link", { name: "Open Token on Lobstr", exact: true })).toHaveAttribute("href", `https://lobstr.co/trade/Token:${issuer}`);
+    }
     await expect(page.getByText("OlderScan", { exact: true })).toHaveCount(0);
+    if (mode !== "historical lookup") {
+      const details = page.locator("[data-analysis-details]");
+      await expect(details).not.toHaveAttribute("open", "");
+      await expect(details.getByText("History incomplete", { exact: true })).toBeVisible();
+      await expect(page.getByText("History coverage is incomplete or unproven", { exact: true })).toBeHidden();
+      await details.getByText("Analysis details", { exact: true }).click();
+    }
     await expect(page.getByText("Confirmed asset → XLM seller", { exact: false })).toHaveCount(2);
     await expect(page.getByText("Gross XLM sale output", { exact: true })).toBeVisible();
     const beneficiaries = page.getByRole("region", { name: "Beneficiary credit destinations" });

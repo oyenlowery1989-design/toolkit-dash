@@ -791,6 +791,9 @@ export function AssetSalesTab() {
               }}
               disabled={running}
             />
+            {singlePair && settings.network === "public" && <Button variant="ghost" size="sm" asChild>
+              <a href={`https://lobstr.co/trade/${encodeURIComponent(parsedPairs[0].assetCode)}:${parsedPairs[0].issuer}`} target="_blank" rel="noopener noreferrer">Lobstr trade ↗</a>
+            </Button>}
             {parseError && (
               <p className="text-xs text-destructive flex items-center gap-1">
                 <AlertTriangle className="h-3 w-3 shrink-0" />
@@ -912,6 +915,8 @@ export function AssetSalesTab() {
 
           {rows.map((row, i) => {
             const single = rows.length === 1;
+            const averageSalePrice = row.result && Number.isFinite(row.result.totalAssetSold) && row.result.totalAssetSold > 0
+              ? row.result.totalXlmProceeds / row.result.totalAssetSold : null;
             return (
             <Card key={`${row.assetCode}:${row.issuer}`}>
               {/* Summary row */}
@@ -935,6 +940,7 @@ export function AssetSalesTab() {
                   <span className={`font-mono font-semibold ${single ? "text-base" : "text-sm"}`}>
                     {row.assetCode}
                   </span>
+                  {settings.network === "public" && <a className="text-[10px] text-muted-foreground hover:text-foreground underline" href={`https://lobstr.co/trade/${encodeURIComponent(row.assetCode)}:${row.issuer}`} target="_blank" rel="noopener noreferrer" onClick={event => event.stopPropagation()} aria-label={`Open ${row.assetCode} on Lobstr`}>Lobstr ↗</a>}
                   {row.homeDomain && (
                     <span className={`text-[10px] text-muted-foreground ${single ? "" : "truncate"}`}>
                       {row.homeDomain}
@@ -970,6 +976,9 @@ export function AssetSalesTab() {
                           XLM
                         </span>
                       </span>
+                      {averageSalePrice !== null && Number.isFinite(averageSalePrice) && averageSalePrice >= 0 && <span className="text-[10px] text-muted-foreground" title="Weighted average: gross XLM received divided by tokens sold in the scanned history; not the current market price.">
+                        1 {row.assetCode} ≈ {averageSalePrice.toLocaleString(undefined, { maximumSignificantDigits: 8 })} XLM · avg
+                      </span>}
                       {xlmUsdPrice !== null && (
                         <span className="text-xs text-muted-foreground tabular-nums">
                           ≈ $
@@ -1058,7 +1067,14 @@ export function AssetSalesTab() {
                     showAssetSold={false}
                   />
 
-                  <ProceedsEvidence result={row.result} network={settings.network} />
+                  <details className="mt-3 rounded-md border p-3" data-analysis-details>
+                    <summary className="cursor-pointer text-xs font-medium">
+                      <span>Analysis details</span>
+                      {!row.result.coverage?.complete && <span className="ml-2 text-amber-700 dark:text-amber-400">History incomplete</span>}
+                    </summary>
+                    <ProceedsEvidence result={row.result} network={settings.network} />
+                    {row.inferReason && <p className="text-xs text-muted-foreground mt-3">Seller selection: {row.inferReason}</p>}
+                  </details>
                   <div className="mt-3">
                     <WindowedSalesStats
                       ledger={row.result.proceedsLedger}
@@ -1066,15 +1082,6 @@ export function AssetSalesTab() {
                       xlmUsdPrice={xlmUsdPrice}
                     />
                   </div>
-
-                  {row.inferReason && (
-                    <p className="text-xs text-muted-foreground mt-3">
-                      <span className="font-semibold text-foreground">
-                        Distrib address:{" "}
-                      </span>
-                      {row.inferReason}
-                    </p>
-                  )}
 
                   <h4 className="text-sm font-semibold mt-4 mb-1">
                     Top Destinations

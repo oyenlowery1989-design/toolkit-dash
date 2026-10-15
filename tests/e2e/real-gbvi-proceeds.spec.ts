@@ -27,6 +27,7 @@ test("public GBVI records expose contract proceeds and exact memo evidence toget
   await page.getByRole("button", { name: "Run Analysis", exact: true }).click();
   await expect(page.getByText("1 done · 0 failed", { exact: true })).toBeVisible();
   await expect(page.getByText(/1 contract conversion\(s\)/)).toBeVisible();
+  await page.getByText("Analysis details", { exact: true }).click();
   await expect(page.getByText(/Confirmed asset → XLM seller/)).toBeVisible();
   const beneficiaries = page.getByRole("region", { name: "Beneficiary credit destinations" });
   await beneficiaries.getByRole("button", { name: "Show beneficiary groups", exact: true }).click();
