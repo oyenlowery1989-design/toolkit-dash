@@ -144,7 +144,7 @@ CREATE POLICY owner_all ON asset_groups FOR ALL TO authenticated
 
 DROP POLICY IF EXISTS owner_all ON persons;
 CREATE POLICY owner_all ON persons FOR ALL TO authenticated
-  USING (auth.uid()::text = user_id) WITH CHECK (auth.uid()::text = user_id);
+  USING ((SELECT auth.uid())::text = user_id) WITH CHECK ((SELECT auth.uid())::text = user_id);
 
 DROP POLICY IF EXISTS owner_all ON wallet_folders;
 CREATE POLICY owner_all ON wallet_folders FOR ALL TO authenticated
@@ -166,7 +166,7 @@ CREATE POLICY owner_all ON app_state FOR ALL TO authenticated
 
 DROP POLICY IF EXISTS owner_all ON bulk_scan_state;
 CREATE POLICY owner_all ON bulk_scan_state FOR ALL TO authenticated
-  USING (auth.uid()::text = user_id) WITH CHECK (auth.uid()::text = user_id);
+  USING ((SELECT auth.uid())::text = user_id) WITH CHECK ((SELECT auth.uid())::text = user_id);
 
 DROP POLICY IF EXISTS owner_all ON creator_children;
 CREATE POLICY owner_all ON creator_children FOR ALL TO authenticated
@@ -198,20 +198,20 @@ CREATE POLICY owner_all ON asset_group_members FOR ALL TO authenticated
 
 DROP POLICY IF EXISTS owner_all ON person_addresses;
 CREATE POLICY owner_all ON person_addresses FOR ALL TO authenticated
-  USING (EXISTS (SELECT 1 FROM persons p WHERE p.id = person_id AND auth.uid()::text = p.user_id))
-  WITH CHECK (EXISTS (SELECT 1 FROM persons p WHERE p.id = person_id AND auth.uid()::text = p.user_id));
+  USING (EXISTS (SELECT 1 FROM persons p WHERE p.id = person_id AND (SELECT auth.uid())::text = p.user_id))
+  WITH CHECK (EXISTS (SELECT 1 FROM persons p WHERE p.id = person_id AND (SELECT auth.uid())::text = p.user_id));
 
 -- Both ends must belong to the caller. This also protects direct PostgREST writes,
 -- which do not pass through the application's IDOR guard.
 DROP POLICY IF EXISTS owner_all ON person_relationships;
 CREATE POLICY owner_all ON person_relationships FOR ALL TO authenticated
   USING (
-    EXISTS (SELECT 1 FROM persons a WHERE a.id = person_a_id AND auth.uid()::text = a.user_id)
-    AND EXISTS (SELECT 1 FROM persons b WHERE b.id = person_b_id AND auth.uid()::text = b.user_id)
+    EXISTS (SELECT 1 FROM persons a WHERE a.id = person_a_id AND (SELECT auth.uid())::text = a.user_id)
+    AND EXISTS (SELECT 1 FROM persons b WHERE b.id = person_b_id AND (SELECT auth.uid())::text = b.user_id)
   )
   WITH CHECK (
-    EXISTS (SELECT 1 FROM persons a WHERE a.id = person_a_id AND auth.uid()::text = a.user_id)
-    AND EXISTS (SELECT 1 FROM persons b WHERE b.id = person_b_id AND auth.uid()::text = b.user_id)
+    EXISTS (SELECT 1 FROM persons a WHERE a.id = person_a_id AND (SELECT auth.uid())::text = a.user_id)
+    AND EXISTS (SELECT 1 FROM persons b WHERE b.id = person_b_id AND (SELECT auth.uid())::text = b.user_id)
   );
 
 DROP POLICY IF EXISTS owner_all ON tiered_reward_tiers;

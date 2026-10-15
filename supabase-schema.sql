@@ -85,6 +85,7 @@ CREATE INDEX IF NOT EXISTS idx_person_addresses_address ON person_addresses(addr
 ALTER TABLE asset_groups DROP COLUMN IF EXISTS person_name;
 ALTER TABLE asset_groups DROP COLUMN IF EXISTS person_role;
 ALTER TABLE asset_groups ADD COLUMN IF NOT EXISTS person_id TEXT REFERENCES persons(id) ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS idx_asset_groups_person ON asset_groups(person_id);
 ALTER TABLE asset_groups ADD COLUMN IF NOT EXISTS domain TEXT;
 ALTER TABLE asset_groups ADD COLUMN IF NOT EXISTS telegram_channel TEXT;
 ALTER TABLE asset_groups ADD COLUMN IF NOT EXISTS telegram_link TEXT;

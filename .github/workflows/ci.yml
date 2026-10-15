@@ -40,6 +40,8 @@ jobs:
           psql postgresql://postgres:postgres@127.0.0.1:54322/postgres -v ON_ERROR_STOP=1 -f supabase-schema.sql
           psql postgresql://postgres:postgres@127.0.0.1:54322/postgres -v ON_ERROR_STOP=1 -f supabase-rls-migration.sql
       - run: supabase test db
+      - name: Deployed person policy drift regression
+        run: psql postgresql://postgres:postgres@127.0.0.1:54322/postgres -v ON_ERROR_STOP=1 -f scripts/sql/person_policy_drift.sql
       - name: Atomic restore integration (boolean and integer flags)
         run: |
           psql postgresql://postgres:postgres@127.0.0.1:54322/postgres -v ON_ERROR_STOP=1 -f scripts/sql/atomic_restore.sql

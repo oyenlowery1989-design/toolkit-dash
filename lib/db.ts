@@ -659,6 +659,7 @@ function initDb(): Database.Database {
   if (!assetGroupCols.includes("person_id")) {
     db.exec(`ALTER TABLE asset_groups ADD COLUMN person_id TEXT REFERENCES persons(id) ON DELETE SET NULL`);
   }
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_asset_groups_person ON asset_groups(person_id)`);
 
   // ── Wallet migration: ensure id + folder_id columns exist ─────────────────
   // The wallets table schema evolved over time. Recreate if id column is missing
