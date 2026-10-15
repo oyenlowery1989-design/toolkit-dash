@@ -74,6 +74,7 @@ export interface AssetProceedsResult {
     requestedTo: string;
     oldestObserved?: string;
     newestObserved?: string;
+    accountHistoryStarts?: Array<{ account: string; createdAt: string; operationId: string; txHash: string }>;
     complete: boolean;
     warnings: string[];
   };

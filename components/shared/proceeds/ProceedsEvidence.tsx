@@ -12,10 +12,15 @@ export function ProceedsEvidence({ result, network }: { result: EvidenceResult; 
   const explorer = `https://stellar.expert/explorer/${network === "testnet" ? "testnet" : "public"}`;
   return <div className="space-y-3 text-xs mt-3">
     <div className="rounded-md border p-3 space-y-1" role="status">
-      <p className="font-medium">{coverage?.complete ? "Requested period covered" : "History coverage is incomplete or unproven"}</p>
+      <p className="font-medium">{coverage?.complete ? (coverage.accountHistoryStarts?.length ? "History covered since observed account creation" : "Requested period covered") : "History coverage is incomplete or unproven"}</p>
       {coverage ? <>
         <p>Requested: {coverage.requestedFrom ?? "all retained history"} → {coverage.requestedTo}</p>
         {coverage.oldestObserved && <p>Observed records: {coverage.oldestObserved} → {coverage.newestObserved ?? "unknown"}</p>}
+        {coverage.accountHistoryStarts?.map(start => <p key={start.account}>
+          <ShortAddress address={start.account} network={network} /> · {start.createdAt}{" "}
+          <a className="underline" href={`${explorer}/tx/${start.txHash}`} target="_blank" rel="noopener noreferrer">Creation proof</a>
+        </p>)}
+        {!!coverage.accountHistoryStarts?.length && <p className="text-muted-foreground">Selected accounts only; earlier account incarnations are unverified.</p>}
         {(Array.isArray(coverage.warnings) ? coverage.warnings : []).map(warning => <p key={warning} className="text-muted-foreground">{warning}</p>)}
       </> : <p className="text-muted-foreground">This older snapshot did not store its coverage. Re-run to verify attribution and accounting.</p>}
     </div>

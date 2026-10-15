@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import publicOperations from "../../fixtures/proceeds/vorix-path-operations.json";
 import publicTrades from "../../fixtures/proceeds/vorix-path-trades.json";
+import trsy from "../../fixtures/proceeds/trsy-history-creation.json";
 import { fetchAssetXlmProceeds } from "@/lib/proceeds-investigator/fetchers";
 
 const BASE = "https://horizon.example";
@@ -50,6 +51,13 @@ const run = (accounts = [A], signal = new AbortController().signal, from?: Date,
 afterEach(() => vi.unstubAllGlobals());
 
 describe("proceeds operation accounting", () => {
+  it("recognizes the public TRSY distributor creation within Horizon retention", async () => {
+    mockHorizon({ root: trsy.root, ledger: trsy.ledger, payments: { [trsy.account]: [trsy.creation] } });
+    const result = await fetchAssetXlmProceeds(BASE, trsy.assetCode, trsy.issuer, [trsy.account], new AbortController().signal);
+    expect(result.coverage?.complete).toBe(true);
+    expect(result.coverage?.accountHistoryStarts?.[0]).toMatchObject({ account: trsy.account, createdAt: trsy.creation.created_at,
+      operationId: trsy.creation.id, txHash: trsy.creation.transaction_hash });
+  });
   it.each(["payments", "trades"])("rejects malformed %s envelopes instead of claiming complete zero sales", async kind => {
     const original = mockHorizon();
     vi.stubGlobal("fetch", async (input: string | URL) => {
@@ -160,6 +168,47 @@ describe("proceeds operation accounting", () => {
     expect((await run([A], undefined, new Date("2026-01-02"))).coverage?.complete).toBe(true);
     mockHorizon(config);
     expect((await run([A], undefined, new Date("2025-01-02"))).coverage?.complete).toBe(false);
+  });
+
+  it("covers a retained account lifetime without treating global retention as missing account history", async () => {
+    const creation = { id: "creation", type: "create_account", account: A, funder: C,
+      created_at: DATE, transaction_successful: true, transaction_hash: "creation-tx", starting_balance: "8" };
+    mockHorizon({ root: { history_elder_ledger: 123 }, ledger: { closed_at: "2026-01-01T00:00:00Z" },
+      payments: { [A]: [creation] } });
+    const result = await run();
+    expect(result.coverage?.complete).toBe(true);
+    expect(result.coverage?.warnings).toEqual([]);
+    expect(result.coverage?.accountHistoryStarts).toEqual([{ account: A, createdAt: DATE, operationId: "creation", txHash: "creation-tx" }]);
+  });
+
+  it.each([
+    { account: C }, { transaction_successful: false }, { transaction_successful: undefined },
+    { created_at: "2025-01-01T00:00:00Z" }, { transaction_hash: "" },
+  ])("does not use unrelated, unsuccessful or unverified creation as coverage proof: %j", async overrides => {
+    mockHorizon({ root: { history_elder_ledger: 123 }, ledger: { closed_at: "2026-01-01T00:00:00Z" },
+      payments: { [A]: [{ id: "creation", type: "create_account", account: A, created_at: DATE,
+        transaction_successful: true, transaction_hash: "tx", ...overrides }] } });
+    expect((await run()).coverage?.complete).toBe(false);
+  });
+
+  it("requires retained creation proof for every selected account and the earliest retained payment", async () => {
+    const creation = { id: "creation", type: "create_account", account: A, created_at: DATE,
+      transaction_successful: true, transaction_hash: "tx" };
+    const config = { root: { history_elder_ledger: 123 }, ledger: { closed_at: "2026-01-01T00:00:00Z" } };
+    mockHorizon({ ...config, payments: { [A]: [creation] } });
+    expect((await run([A, B])).coverage?.complete).toBe(false);
+    mockHorizon({ ...config, payments: { [A]: [creation, { ...payment("older", C), created_at: "2026-01-02T00:00:00Z" }] } });
+    expect((await run()).coverage?.complete).toBe(false);
+  });
+
+  it("keeps accounting warnings even when the retained creation proves the account lifetime", async () => {
+    mockHorizon({ root: { history_elder_ledger: 123 }, ledger: { closed_at: "2026-01-01T00:00:00Z" },
+      payments: { [A]: [{ id: "creation", type: "create_account", account: A, created_at: DATE,
+        transaction_successful: true, transaction_hash: "creation-tx" }] }, trades: { [A]: [trade("unknown", "missing")] } });
+    const result = await run();
+    expect(result.coverage?.complete).toBe(false);
+    expect(result.coverage?.warnings.join(" ")).toContain("unverified trade skipped");
+    expect(result.coverage?.warnings.join(" ")).not.toContain("retains history");
   });
 
   it("throws when aborted during a scan rather than returning apparently complete totals", async () => {

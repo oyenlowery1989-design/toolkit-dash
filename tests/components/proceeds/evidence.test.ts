@@ -43,4 +43,15 @@ describe("proceeds presentation", () => {
     expect(stats).not.toContain("External XLM transfers");
     expect(renderToStaticMarkup(React.createElement(ProceedsEvidence, { result: old, network: "public" }))).toContain("older snapshot did not store its coverage");
   });
+  it("states the account lifetime bound and links creation proof without claiming asset-wide completeness", () => {
+    const data = result();
+    data.coverage = { requestedFrom: null, requestedTo: "2026-10-15T00:00:00Z", complete: true, warnings: [],
+      accountHistoryStarts: [{ account: "seller-a", createdAt: "2026-09-22T18:32:23Z", operationId: "creation", txHash: "creation-tx" }] };
+    const html = renderToStaticMarkup(React.createElement(ProceedsEvidence, { result: data, network: "public" }));
+    expect(html).toContain("History covered since observed account creation");
+    expect(html).toContain("2026-09-22T18:32:23Z");
+    expect(html).toContain("/tx/creation-tx");
+    expect(html).toContain("Selected accounts only; earlier account incarnations are unverified");
+    expect(html).not.toContain("History coverage is incomplete or unproven");
+  });
 });

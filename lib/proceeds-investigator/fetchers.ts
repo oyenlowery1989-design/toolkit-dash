@@ -106,6 +106,8 @@ export async function fetchAssetXlmProceeds(
   let oldestObserved: string | undefined;
   let newestObserved: string | undefined;
   let historyComplete = true;
+  let retention: { elder: number; retainedFrom: number } | undefined;
+  const earliestPayments = new Map<string, HorizonRecord>();
 
   const checkAbort = () => {
     if (signal.aborted) throw new DOMException("Proceeds scan aborted", "AbortError");
@@ -136,8 +138,7 @@ export async function fetchAssetXlmProceeds(
     } else if (Number.isFinite(elder) && elder > 1) {
       const ledger = await get(`${base}/ledgers/${elder}`);
       const retainedFrom = Date.parse(String(ledger.closed_at ?? ""));
-      if (!fromDate || !Number.isFinite(retainedFrom) || fromTs < retainedFrom)
-        warn(`Horizon retains history from ledger ${elder}; requested earlier history may be unavailable.`);
+      retention = { elder, retainedFrom };
     } else warn("Horizon history retention is unavailable; exhausted pages do not prove full coverage.");
   } catch (error) {
     checkAbort();
@@ -168,6 +169,7 @@ export async function fetchAssetXlmProceeds(
       let beforeWindow = false;
       for (const raw of records) {
         checkAbort();
+        if (kind === "payments") earliestPayments.set(account, raw);
         const date = String(raw.created_at ?? raw.ledger_close_time ?? "");
         const ts = Date.parse(date);
         if (!Number.isFinite(ts)) { warn(`Undated ${kind} record for ${account}; coverage is incomplete.`); continue; }
@@ -324,6 +326,22 @@ export async function fetchAssetXlmProceeds(
     options.onResult?.(summary);
   }
   checkAbort();
+  const accountHistoryStarts: NonNullable<NonNullable<AssetProceedsResult["coverage"]>["accountHistoryStarts"]> = [];
+  if (retention && (!fromDate || !Number.isFinite(retention.retainedFrom) || fromTs < retention.retainedFrom)) {
+    for (const account of accountList) {
+      const first = earliestPayments.get(account);
+      const createdAt = String(first?.created_at ?? "");
+      const createdTs = Date.parse(createdAt);
+      // Bound coverage to the observed lifetime; a previous merged incarnation is not proven absent.
+      if (first?.type === "create_account" && first.account === account && first.transaction_successful === true &&
+        first.successful !== false && first.id && first.transaction_hash && Number.isFinite(createdTs) &&
+        createdTs >= retention.retainedFrom && createdTs <= toTs) {
+        accountHistoryStarts.push({ account, createdAt, operationId: String(first.id), txHash: String(first.transaction_hash) });
+      }
+    }
+    if (accountHistoryStarts.length !== accountList.length || !accountList.length)
+      warn(`Horizon retains history from ledger ${retention.elder}; coverage before this boundary is unproven for accounts without retained creation evidence.`);
+  }
   const destinations = new Map<string, { totalXlm: number; count: number }>();
   for (const entry of outgoingLedger) {
     if (!entry.to) continue;
@@ -353,7 +371,8 @@ export async function fetchAssetXlmProceeds(
     purchaseLedger: sortByDateDesc(purchaseLedger), internalTransferLedger: sortByDateDesc(internalTransferLedger),
     saleDeliveryLedger: sortByDateDesc(saleDeliveryLedger), accountSummaries,
     coverage: { requestedFrom: fromDate?.toISOString() ?? null, requestedTo: new Date(toTs).toISOString(),
-      oldestObserved, newestObserved, complete: historyComplete, warnings: [...warnings] },
+      oldestObserved, newestObserved, complete: historyComplete, warnings: [...warnings],
+      ...(accountHistoryStarts.length ? { accountHistoryStarts } : {}) },
     topDestinations: [...destinations].map(([address, info]) => ({ address, ...info }))
       .sort((a, b) => b.totalXlm - a.totalXlm).slice(0, 50),
   };

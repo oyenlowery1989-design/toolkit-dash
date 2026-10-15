@@ -1,0 +1,45 @@
+{
+  "description": "Public TRSY retained-creation coverage proof only; not a complete financial-history fixture.",
+  "fetchedAt": "2026-10-15T20:08:14.245Z",
+  "horizon": "https://horizon.stellar.org",
+  "assetCode": "TRSY",
+  "issuer": "GDAHP47TPZVR3CX45GAHLRJOOY6QV23HYSSVJ4NGR3P33ULLLJMST2KJ",
+  "account": "GCDTWPDFESYQQ6YSPVEMRLIHQ4HLMKIOFO6RNZMNWVRUWXJJLIAB4AZI",
+  "root": {
+    "history_elder_ledger": 58654081
+  },
+  "ledger": {
+    "sequence": 58654081,
+    "closed_at": "2025-08-27T10:48:16Z"
+  },
+  "creation": {
+    "_links": {
+      "self": {
+        "href": "https://horizon.stellar.org/operations/277296974259396609"
+      },
+      "transaction": {
+        "href": "https://horizon.stellar.org/transactions/ba1dfdb7a750fe9074bb6102ee546a5cb878c94a1cdc68d138536b191f395e83"
+      },
+      "effects": {
+        "href": "https://horizon.stellar.org/operations/277296974259396609/effects"
+      },
+      "succeeds": {
+        "href": "https://horizon.stellar.org/effects?order=desc&cursor=277296974259396609"
+      },
+      "precedes": {
+        "href": "https://horizon.stellar.org/effects?order=asc&cursor=277296974259396609"
+      }
+    },
+    "id": "277296974259396609",
+    "paging_token": "277296974259396609",
+    "transaction_successful": true,
+    "source_account": "GDAHP47TPZVR3CX45GAHLRJOOY6QV23HYSSVJ4NGR3P33ULLLJMST2KJ",
+    "type": "create_account",
+    "type_i": 0,
+    "created_at": "2026-09-22T18:32:23Z",
+    "transaction_hash": "ba1dfdb7a750fe9074bb6102ee546a5cb878c94a1cdc68d138536b191f395e83",
+    "starting_balance": "8.0000000",
+    "funder": "GDAHP47TPZVR3CX45GAHLRJOOY6QV23HYSSVJ4NGR3P33ULLLJMST2KJ",
+    "account": "GCDTWPDFESYQQ6YSPVEMRLIHQ4HLMKIOFO6RNZMNWVRUWXJJLIAB4AZI"
+  }
+}
