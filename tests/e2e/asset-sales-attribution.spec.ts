@@ -2,17 +2,19 @@ import { expect, test } from "@playwright/test";
 const issuer = "GANJULEAUA7FO4G4VADKZGZ4R7BIRWFQWFCWD6D7W5UDV2D4TJ3CPYTQ";
 const exchange = "GABFQIK63R2NETJM7T673EAMZN4RJLLGP3OFUEJU5SZVTGWUKULZJNL6";
 const sellers = ["GBHWTASVVCTOEIPWDJ7QFVKCP5XN3VRSQLD2ZARWO2GTH54GDQ4BI3EH", "GBVIJOWPN3YJUWFO6ZRDHLQOK24DQLV2VUXJ7FVSDRFNKKD5F3DDXGOS"];
-for (const mode of ["automatic", "saved", "manual", "historical lookup", "pending history", "failed history", "paginated history", "autorun pending history"] as const) {
+for (const mode of ["automatic", "saved", "manual", "historical lookup", "pending history", "failed history", "paginated history", "autorun pending history", "late scan restore", "late scan restore with pending history"] as const) {
   test(`${mode} selection scans every chosen seller and preserves provenance`, async ({ page }) => {
     const horizonUrls: URL[] = [];
     const writes: Array<{ url: string; body: Record<string, unknown> }> = [];
     let releaseGroups!: () => void;
     const groupGate = new Promise<void>(resolve => { releaseGroups = resolve; });
+    let releaseRestore!: () => void;
+    const restoreGate = new Promise<void>(resolve => { releaseRestore = resolve; });
     const historyMode = mode.includes("history");
     let historyPending = false;
     let releaseHistory!: () => void;
     const historyGate = new Promise<void>(resolve => { releaseHistory = resolve; });
-    const groups = (mode === "saved" || mode === "historical lookup" || historyMode) ? [{ id: "saved-group", name: "Saved sellers", assetCode: "Token", issuer, network: "public", createdAt: 1, updatedAt: 1,
+    const groups = (mode === "saved" || mode === "historical lookup" || historyMode || mode === "late scan restore") ? [{ id: "saved-group", name: "Saved sellers", assetCode: "Token", issuer, network: "public", createdAt: 1, updatedAt: 1,
       members: sellers.map((address, i) => ({ id: String(i), groupId: "saved-group", address, role: "distributor", addedAt: 1 })) }] : [];
     await page.route("**/api/db/**", async route => {
       const url = new URL(route.request().url());
@@ -34,7 +36,13 @@ for (const mode of ["automatic", "saved", "manual", "historical lookup", "pendin
         if (mode === "saved") await groupGate;
         await route.fulfill({ json: groups }); return;
       }
-      if (url.pathname === "/api/db/bulk-scan-state") { await route.fulfill({ json: null }); return; }
+      if (url.pathname === "/api/db/bulk-scan-state") {
+        if (mode.startsWith("late scan restore")) {
+          await restoreGate;
+          await route.fulfill({ json: { rowsJson: JSON.stringify([{ assetCode: "OlderScan", issuer, status: "scanning", expanded: true }]), interrupted: false } }); return;
+        }
+        await route.fulfill({ json: null }); return;
+      }
       await route.fulfill({ json: [] });
     });
     await page.route("**/api.coingecko.com/**", route => route.fulfill({ json: { stellar: { usd: 0.2 } } }));
@@ -42,6 +50,7 @@ for (const mode of ["automatic", "saved", "manual", "historical lookup", "pendin
       const url = new URL(route.request().url());horizonUrls.push(url);
       if (url.pathname === "/") { await route.fulfill({ json: { history_elder_ledger: 1 } }); return; }
       if (url.pathname === "/trades") {
+        releaseRestore();
         const account = url.searchParams.get("account_id")!;const index = sellers.indexOf(account);
         await route.fulfill({ json: { _embedded: { records: index < 0 ? [] : [{ id: `trade-${index}`, operation_id: `sale-${index}`, ledger_close_time: "2026-01-05T00:00:00Z", base_account: account, counter_account: issuer,
           base_asset_type: "credit_alphanum4", base_asset_code: "Token", base_asset_issuer: issuer, base_amount: "10", counter_asset_type: "native", counter_amount: String(index + 3) }] } } });return;
@@ -76,6 +85,7 @@ for (const mode of ["automatic", "saved", "manual", "historical lookup", "pendin
     if (mode !== "autorun pending history") await runButton.click();
     if (mode === "historical lookup") await expect(page.getByText("Distribution Sales — XLM Proceeds", { exact: true })).toBeVisible();
     if (mode !== "historical lookup") await expect(page.getByText("1 done · 0 failed")).toBeVisible();
+    await expect(page.getByText("OlderScan", { exact: true })).toHaveCount(0);
     await expect(page.getByText("Confirmed asset → XLM seller", { exact: false })).toHaveCount(2);
     await expect(page.getByText("Gross XLM sale output", { exact: true })).toBeVisible();
     const beneficiaries = page.getByRole("region", { name: "Beneficiary credit destinations" });

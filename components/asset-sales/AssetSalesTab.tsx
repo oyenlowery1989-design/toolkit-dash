@@ -364,6 +364,7 @@ export function AssetSalesTab() {
   const { price: xlmUsdPrice, ensure: ensureXlmUsdPrice } = useXlmUsdPrice();
   const abortRef = useRef<AbortController | null>(null);
   const bulkScanState = useBulkScanState<AssetRow>();
+  const scanStateTouchedRef = useRef(false);
   const searchParams = useSearchParams();
   const prefilledRef = useRef(false);
   const pendingAutorunRef = useRef(false);
@@ -412,7 +413,7 @@ export function AssetSalesTab() {
   useEffect(() => {
     let cancelled = false;
     bulkScanState.load().then((persisted) => {
-      if (cancelled || !persisted || persisted.rows.length === 0) return;
+      if (cancelled || scanStateTouchedRef.current || !persisted || persisted.rows.length === 0) return;
       const wasInterrupted = persisted.rows.some(
         (r) =>
           r.status === "pending" ||
@@ -470,6 +471,7 @@ export function AssetSalesTab() {
     }
 
     if (!groupsLoaded && !overrideAccounts.length) return;
+    scanStateTouchedRef.current = true;
     setParseError(null);
     setInterrupted(false);
     upsertHistory({
@@ -638,6 +640,7 @@ export function AssetSalesTab() {
   };
 
   const handleClear = () => {
+    scanStateTouchedRef.current = true;
     abortRef.current?.abort();
     setRunning(false);
     setRows([]);
