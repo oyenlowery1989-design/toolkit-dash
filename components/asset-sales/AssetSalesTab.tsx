@@ -879,8 +879,8 @@ export function AssetSalesTab() {
         </CardFooter>
       </Card>
 
-      {!historyError && (!historyLoaded || loadingHistory) && <p className="text-sm text-muted-foreground">Saved history is loading. You can run the analysis without comparison.</p>}
-      {historyError && <div role="alert" className="text-sm text-destructive">History comparison unavailable. You can still run the analysis. {historyError} <Button size="sm" variant="outline" onClick={retryHistory}>Retry history</Button></div>}
+      {parsedPairs.length > 0 && !historyError && (!historyLoaded || loadingHistory) && <p className="text-sm text-muted-foreground">Saved history is loading. You can run the analysis without comparison.</p>}
+      {parsedPairs.length > 0 && historyError && <div role="alert" className="text-sm text-destructive">History comparison unavailable. You can still run the analysis. {historyError} <Button size="sm" variant="outline" onClick={retryHistory}>Retry history</Button></div>}
       {/* Running progress */}
       {running && (
         <div className="flex items-center gap-3 rounded-lg border border-border bg-muted/40 px-4 py-3">

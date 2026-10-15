@@ -2,6 +2,36 @@ import { expect, test } from "@playwright/test";
 const issuer = "GANJULEAUA7FO4G4VADKZGZ4R7BIRWFQWFCWD6D7W5UDV2D4TJ3CPYTQ";
 const exchange = "GABFQIK63R2NETJM7T673EAMZN4RJLLGP3OFUEJU5SZVTGWUKULZJNL6";
 const sellers = ["GBHWTASVVCTOEIPWDJ7QFVKCP5XN3VRSQLD2ZARWO2GTH54GDQ4BI3EH", "GBVIJOWPN3YJUWFO6ZRDHLQOK24DQLV2VUXJ7FVSDRFNKKD5F3DDXGOS"];
+for (const history of ["pending", "failed"] as const) {
+  test(`empty asset input hides ${history} background history messages`, async ({ page }) => {
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    let historyRequested = false;
+    await page.route("**/api/db/**", async route => {
+      const path = new URL(route.request().url()).pathname;
+      if (path === "/api/db/groups") await gate;
+      if (path === "/api/db/saved-analyses") {
+        historyRequested = true;
+        if (history === "pending") await gate;
+        else { await route.fulfill({ status: 500, json: { error: "History unavailable" } }); return; }
+      }
+      await route.fulfill({ json: path === "/api/db/bulk-scan-state" ? null : [] });
+    });
+    await page.goto("/asset-sales");
+    await expect.poll(() => historyRequested).toBe(true);
+    const input = page.locator("#assets-input");
+    await expect(input).toHaveValue("");
+    await expect(page.getByText("Loading saved distributors before automatic selection…", { exact: true })).toHaveCount(0);
+    const message = page.getByText(history === "pending" ? /Saved history is loading/ : /History comparison unavailable/);
+    await expect(message).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Run Analysis", exact: true })).toBeEnabled();
+    await input.fill(`Token:${issuer}`);
+    await expect(message).toBeVisible();
+    await input.fill("");
+    await expect(message).toHaveCount(0);
+    release();
+  });
+}
 for (const mode of ["automatic", "saved", "failed distributors", "manual", "historical lookup", "pending history", "failed history", "paginated history", "autorun pending history", "late scan restore", "late scan restore with pending history"] as const) {
   test(`${mode} selection scans every chosen seller and preserves provenance`, async ({ page }) => {
     const horizonUrls: URL[] = [];
