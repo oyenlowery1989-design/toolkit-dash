@@ -10,6 +10,12 @@ const group = (assetCode = "WhipSim", issuer = "issuer", network = "public"): As
 const options = () => ({ horizonUrl: "https://horizon.test", assetCode: "WhipSim", issuer: "issuer", network: "public", groups: [], signal: new AbortController().signal });
 afterEach(() => vi.clearAllMocks());
 describe("seller selection", () => {
+  it("uses an asset-specific saved read while the global groups cache is pending", async () => {
+    const result = await selectSellerAccounts({ ...options(), savedAccounts: ["seller-a", "seller-b"] });
+    expect(result.accounts).toEqual(["seller-a", "seller-b"]);
+    expect(result.attributions.every(a => a.source === "saved")).toBe(true);
+    expect(inferDistribLite).not.toHaveBeenCalled();
+  });
   it("preserves a deduplicated manual override without inference", async () => {
     const result = await selectSellerAccounts({ ...options(), groups: [group()], manualAccounts: ["manual", " manual "] });
     expect(result.accounts).toEqual(["manual"]);

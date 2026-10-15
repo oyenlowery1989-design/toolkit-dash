@@ -2,12 +2,25 @@ import { expect, test } from "@playwright/test";
 const issuer = "GANJULEAUA7FO4G4VADKZGZ4R7BIRWFQWFCWD6D7W5UDV2D4TJ3CPYTQ";
 const exchange = "GABFQIK63R2NETJM7T673EAMZN4RJLLGP3OFUEJU5SZVTGWUKULZJNL6";
 const sellers = ["GBHWTASVVCTOEIPWDJ7QFVKCP5XN3VRSQLD2ZARWO2GTH54GDQ4BI3EH", "GBVIJOWPN3YJUWFO6ZRDHLQOK24DQLV2VUXJ7FVSDRFNKKD5F3DDXGOS"];
-for (const mode of ["automatic", "saved", "manual", "historical lookup", "pending history", "failed history", "paginated history", "autorun pending history", "late scan restore", "late scan restore with pending history"] as const) {
+for (const mode of ["automatic", "saved", "failed distributors", "manual", "historical lookup", "pending history", "failed history", "paginated history", "autorun pending history", "late scan restore", "late scan restore with pending history"] as const) {
   test(`${mode} selection scans every chosen seller and preserves provenance`, async ({ page }) => {
     const horizonUrls: URL[] = [];
     const writes: Array<{ url: string; body: Record<string, unknown> }> = [];
     let releaseGroups!: () => void;
     const groupGate = new Promise<void>(resolve => { releaseGroups = resolve; });
+    const groupsPending = mode === "saved" || mode === "failed distributors" || mode === "manual";
+    let distributorReads = 0;
+    await page.route("**/api/asset-sales/distributors?**", async route => {
+      distributorReads++;
+      const url = new URL(route.request().url());
+      expect(url.searchParams.get("assetCode")).toBe("Token");
+      expect(url.searchParams.get("issuer")).toBe(issuer);
+      expect(url.searchParams.get("network")).toBe("public");
+      if (mode === "failed distributors" && distributorReads === 1) {
+        await route.fulfill({ status: 502, json: { error: "Read failed" } }); return;
+      }
+      await route.fulfill({ json: { accounts: mode === "automatic" ? [] : sellers } });
+    });
     let releaseRestore!: () => void;
     const restoreGate = new Promise<void>(resolve => { releaseRestore = resolve; });
     const historyMode = mode.includes("history");
@@ -33,7 +46,7 @@ for (const mode of ["automatic", "saved", "manual", "historical lookup", "pendin
         await route.fulfill({ json: [] }); return;
       }
       if (url.pathname === "/api/db/groups") {
-        if (mode === "saved") await groupGate;
+        if (groupsPending) await groupGate;
         await route.fulfill({ json: groups }); return;
       }
       if (url.pathname === "/api/db/bulk-scan-state") {
@@ -74,15 +87,21 @@ for (const mode of ["automatic", "saved", "manual", "historical lookup", "pendin
       await page.locator("#issuer").fill(issuer);
     } else await page.locator("#assets-input").fill(`Token:${issuer}`);
     if (mode === "manual") await page.locator("#override-accounts").fill(sellers.join("\n"));
-    if (mode === "saved") {
-      await expect(page.getByRole("button", { name: "Run Analysis", exact: true })).toBeDisabled();
+    if (groupsPending) {
+      await expect(page.getByRole("button", { name: "Run Analysis", exact: true })).toBeEnabled();
       expect(horizonUrls).toHaveLength(0);
-      releaseGroups();
     }
     const runButton = page.getByRole("button", { name: mode === "historical lookup" ? "Distribution Sales" : "Run Analysis", exact: true });
     if (mode === "failed history") await expect(page.getByText(/History comparison unavailable/)).toBeVisible();
     else if (historyMode) await expect.poll(() => historyPending).toBe(true);
     if (mode !== "autorun pending history") await runButton.click();
+    if (mode === "failed distributors") {
+      await expect(page.getByText(/Saved distributors could not be loaded/)).toBeVisible();
+      await expect(runButton).toBeEnabled();
+      expect(horizonUrls).toHaveLength(0);
+      expect(writes.some(w => w.url === "/api/db/saved-analyses")).toBe(false);
+      await runButton.click();
+    }
     if (mode === "historical lookup") await expect(page.getByText("Distribution Sales — XLM Proceeds", { exact: true })).toBeVisible();
     if (mode !== "historical lookup") await expect(page.getByText("1 done · 0 failed")).toBeVisible();
     if (mode !== "historical lookup") {
@@ -113,6 +132,10 @@ for (const mode of ["automatic", "saved", "manual", "historical lookup", "pendin
     expect(result.sellerAttributions.every(a => a.source === (mode === "automatic" ? "inferred" : mode === "manual" ? "manual" : "saved") && a.confirmedSeller)).toBe(true);
     expect(horizonUrls.some(u => u.pathname === `/accounts/${issuer}/payments`)).toBe(mode === "automatic");
     releaseHistory();
+    releaseGroups();
+    if (mode === "manual") expect(distributorReads).toBe(0);
+    if (mode === "saved") expect(distributorReads).toBe(1);
+    if (mode === "failed distributors") expect(distributorReads).toBe(2);
     expect(new Set(horizonUrls.filter(u => u.pathname === "/trades").map(u => u.searchParams.get("account_id")))).toEqual(new Set(sellers));
   });
 }

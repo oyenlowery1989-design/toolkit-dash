@@ -12,6 +12,7 @@ import { GET as groups } from "@/app/api/db/groups/route";
 import { GET as persons } from "@/app/api/db/persons/route";
 import { GET as children } from "@/app/api/db/creator-children/route";
 import { GET as wallets } from "@/app/api/db/wallets-v2/route";
+import { GET as distributors } from "@/app/api/asset-sales/distributors/route";
 
 beforeEach(() => {
   source.rows = {}; source.fail = ""; source.requests = [];
@@ -36,6 +37,44 @@ beforeEach(() => {
 });
 const req = (query = "") => new NextRequest(`http://localhost/api/db/test${query}`);
 const rows = (n: number, extra: Record<string, unknown> = {}) => Array.from({ length: n }, (_, i) => ({ id: String(i).padStart(5, "0"), user_id: "owner", ...extra }));
+
+const issuer = "GANJULEAUA7FO4G4VADKZGZ4R7BIRWFQWFCWD6D7W5UDV2D4TJ3CPYTQ";
+const distributorRequest = () => req(`?assetCode=WhipSim&issuer=${issuer}&network=public`);
+it("reads only the owner's distributors for the exact asset and network, without private fields", async () => {
+  source.rows.asset_groups = [
+    { id: "match", user_id: "owner", asset_code: "WhipSim", issuer, network: "public" },
+    { id: "other-user", user_id: "other", asset_code: "WhipSim", issuer, network: "public" },
+    { id: "other-case", user_id: "owner", asset_code: "WHIPSIM", issuer, network: "public" },
+    { id: "other-network", user_id: "owner", asset_code: "WhipSim", issuer, network: "testnet" },
+    { id: "other-issuer", user_id: "owner", asset_code: "WhipSim", issuer: "other", network: "public" },
+  ];
+  source.rows.asset_group_members = [
+    { id: "a", group_id: "match", address: "saved", role: "distributor", notes: "private" },
+    { id: "b", group_id: "match", address: "saved", role: "distributor" },
+    { id: "c", group_id: "match", address: "bank", role: "bank" },
+    ...["other-user", "other-case", "other-network", "other-issuer"].map(id => ({ id, group_id: id, address: id, role: "distributor" })),
+  ];
+  const response = await distributors(distributorRequest());
+  expect(response.status).toBe(200);
+  expect(await response.json()).toEqual({ accounts: ["saved"] });
+  expect(response.headers.get("Cache-Control")).toBe("no-store");
+  expect(source.requests.map(url => url.searchParams.get("select"))).toEqual(["id", "address"]);
+});
+it("pages matching distributors beyond the cloud API cap", async () => {
+  source.rows.asset_groups = rows(101, { asset_code: "WhipSim", issuer, network: "public" });
+  source.rows.asset_group_members = rows(1001, { group_id: "00000", role: "distributor" }).map(row => ({ ...row, address: row.id }));
+  expect((await (await distributors(distributorRequest())).json()).accounts).toHaveLength(1001);
+});
+it.each(["asset_groups", "asset_group_members"])("fails closed on scoped %s read errors", async table => {
+  source.rows.asset_groups = rows(1, { asset_code: "WhipSim", issuer, network: "public" });
+  source.fail = table;
+  expect((await distributors(distributorRequest())).status).toBe(502);
+});
+it("distinguishes no saved distributors from invalid input", async () => {
+  expect(await (await distributors(distributorRequest())).json()).toEqual({ accounts: [] });
+  expect((await distributors(req("?assetCode=WhipSim&issuer=invalid&network=public"))).status).toBe(400);
+  expect((await distributors(req(`?assetCode=WhipSim&issuer=${issuer}&network=invalid`))).status).toBe(400);
+});
 
 it("reads all group parents and members with bounded parent ID batches", async () => {
   source.rows.asset_groups = rows(1001, { name: "Group", network: "public", created_at: 1, updated_at: 2 });

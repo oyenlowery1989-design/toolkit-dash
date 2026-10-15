@@ -34,6 +34,7 @@ import { useProceedsHistory } from "./useProceedsHistory";
 import { getErrorMessage } from "@/lib/stellar-helpers";
 import { ShortAddress } from "@/components/shared/ShortAddress";
 import { selectSellerAccounts } from "@/lib/proceeds-investigator/selection";
+import { loadSavedDistributors } from "@/lib/proceeds-investigator/saved-distributors";
 import { fetchAssetXlmProceeds } from "@/lib/proceeds-investigator/fetchers";
 import { formatXlm, formatUsdEstimate, parseAddresses } from "@/lib/format";
 import { useSavedSearches } from "@/hooks/use-saved-searches";
@@ -470,7 +471,6 @@ export function AssetSalesTab() {
       }
     }
 
-    if (!groupsLoaded && !overrideAccounts.length) return;
     scanStateTouchedRef.current = true;
     setParseError(null);
     setInterrupted(false);
@@ -512,10 +512,13 @@ export function AssetSalesTab() {
         updateRow(i, { status: "inferring" });
         let selection;
         try {
+          const onLog = (message: string) => console.info(`[Asset Sales ${assetCode}] ${message}`);
+          const savedAccounts = !groupsLoaded && !overrideAccounts.length
+            ? await loadSavedDistributors(assetCode, issuer, settings.network, signal, onLog)
+            : undefined;
           selection = await selectSellerAccounts({
             horizonUrl, assetCode, issuer, network: settings.network, groups,
-            manualAccounts: overrideAccounts, signal,
-            onLog: (message) => console.info(`[Asset Sales ${assetCode}] ${message}`),
+            savedAccounts, manualAccounts: overrideAccounts, signal, onLog,
           });
           if (signal.aborted) return;
           if (!selection.accounts.length) {
@@ -621,12 +624,12 @@ export function AssetSalesTab() {
 
   // Fire a pending autorun once the deep-linked text has actually landed in state.
   useEffect(() => {
-    if (pendingAutorunRef.current && assetsText && (groupsLoaded || (singlePair && overrideAccountsText.trim()))) {
+    if (pendingAutorunRef.current && assetsText) {
       pendingAutorunRef.current = false;
       handleRun();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [assetsText, groupsLoaded, overrideAccountsText, singlePair]);
+  }, [assetsText]);
 
   const handleCancel = () => {
     abortRef.current?.abort();
@@ -843,7 +846,7 @@ export function AssetSalesTab() {
           </div>
         </CardContent>
         <CardFooter className="flex gap-2 flex-wrap">
-          <Button onClick={handleRun} disabled={running || (!groupsLoaded && !(singlePair && overrideAccountsText.trim()))}>
+          <Button onClick={handleRun} disabled={running}>
             {running ? (
               <Loader2 className="mr-2 h-4 w-4 animate-spin" />
             ) : (
@@ -876,7 +879,6 @@ export function AssetSalesTab() {
         </CardFooter>
       </Card>
 
-      {!groupsLoaded && <p className="text-sm text-muted-foreground">Loading saved distributors before automatic selection…</p>}
       {!historyError && (!historyLoaded || loadingHistory) && <p className="text-sm text-muted-foreground">Saved history is loading. You can run the analysis without comparison.</p>}
       {historyError && <div role="alert" className="text-sm text-destructive">History comparison unavailable. You can still run the analysis. {historyError} <Button size="sm" variant="outline" onClick={retryHistory}>Retry history</Button></div>}
       {/* Running progress */}

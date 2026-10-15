@@ -22,6 +22,7 @@ export async function selectSellerAccounts(options: {
   issuer: string;
   network: string;
   groups: AssetGroup[];
+  savedAccounts?: string[];
   manualAccounts?: string[];
   signal: AbortSignal;
   onLog?: (message: string) => void;
@@ -29,7 +30,7 @@ export async function selectSellerAccounts(options: {
 }): Promise<SellerSelection> {
   options.signal.throwIfAborted();
   const manual = [...new Set(options.manualAccounts?.map(a => a.trim()).filter(Boolean))];
-  const saved = findSavedDistributors(options.groups, options.assetCode, options.issuer, options.network);
+  const saved = options.savedAccounts ?? findSavedDistributors(options.groups, options.assetCode, options.issuer, options.network);
   let attributions: SellerAttribution[];
   if (manual.length || saved.length) {
     const source = manual.length ? "manual" : "saved";
