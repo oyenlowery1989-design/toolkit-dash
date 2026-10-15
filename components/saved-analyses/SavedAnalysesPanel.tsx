@@ -44,6 +44,9 @@ import type { SavedAnalysisSummary } from "@/hooks/use-saved-analyses";
 import { useXlmUsdPrice } from "@/hooks/use-xlm-usd-price";
 import { useConfirmClick } from "@/hooks/use-confirm-click";
 import { ShortAddress } from "@/components/shared/ShortAddress";
+import { ProceedsStatsCards } from "@/components/shared/proceeds/ProceedsStatsCards";
+import { BeneficiaryGroups } from "@/components/shared/proceeds/BeneficiaryGroups";
+import { ProceedsEvidence } from "@/components/shared/proceeds/ProceedsEvidence";
 import { ProceedsDestinationsTable } from "@/components/shared/proceeds/ProceedsDestinationsTable";
 import { WindowedSalesStats } from "@/components/shared/proceeds/WindowedSalesStats";
 import { fetchAssetXlmProceeds } from "@/lib/proceeds-investigator/fetchers";
@@ -70,7 +73,7 @@ const SORT_OPTIONS: { value: string; label: string; sort: Sort }[] = [
   { value: "xlmProceeds:desc", label: "Highest XLM Proceeds", sort: { field: "xlmProceeds", dir: "desc" } },
   { value: "assetSold:desc", label: "Highest Asset Sold", sort: { field: "assetSold", dir: "desc" } },
   { value: "outgoing:desc", label: "Highest Outgoing", sort: { field: "outgoing", dir: "desc" } },
-  { value: "onHand:desc", label: "Highest On Hand", sort: { field: "onHand", dir: "desc" } },
+  { value: "onHand:desc", label: "Highest Scan Balance", sort: { field: "onHand", dir: "desc" } },
   { value: "assetCode:asc", label: "Asset Code A→Z", sort: { field: "assetCode", dir: "asc" } },
 ];
 
@@ -123,7 +126,7 @@ function sortAnalyses(analyses: SavedAnalysisSummary[], sort: Sort): SavedAnalys
       case "xlmProceeds": av = a.result.totalXlmProceeds; bv = b.result.totalXlmProceeds; break;
       case "assetSold":   av = a.result.totalAssetSold;   bv = b.result.totalAssetSold;   break;
       case "outgoing":    av = a.result.totalOutgoingXlm; bv = b.result.totalOutgoingXlm; break;
-      case "onHand":      av = a.result.estimatedOnHandXlm ?? 0; bv = b.result.estimatedOnHandXlm ?? 0; break;
+      case "onHand":      av = a.result.currentXlmBalance ?? -1; bv = b.result.currentXlmBalance ?? -1; break;
       case "timestamp":   av = a.timestamp; bv = b.timestamp; break;
     }
     return sort.dir === "desc" ? bv - av : av - bv;
@@ -155,9 +158,15 @@ export async function rerunAnalysis(
     analysis.assetCode,
     analysis.issuer,
     analysis.distribAddresses,
-    signal,
+    signal, undefined, undefined, undefined,
+    { network: analysis.network, onLog: message => console.info(`[Saved Sales ${analysis.assetCode}] ${message}`) },
   );
   if (signal.aborted) return;
+  result.sellerAttributions = (analysis.result.sellerAttributions ?? analysis.distribAddresses.map(account => ({ account, source: "saved" as const, evidence: [] }))).map(attribution => ({
+    ...attribution,
+    confirmedSeller: result.proceedsLedger.some(entry => entry.account === attribution.account && entry.successful),
+    saleEvidenceIds: result.proceedsLedger.filter(entry => entry.account === attribution.account && entry.successful).map(entry => entry.id),
+  }));
   saveAnalysis({
     name: analysis.name,
     assetCode: analysis.assetCode,
@@ -399,39 +408,8 @@ function AnalysisCard({ group, xlmUsdPrice }: { group: SavedAnalysisSummary[]; x
 
       {expanded && (
         <div className="border-t border-border px-4 pb-4">
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-4">
-            <div>
-              <p className="text-xs text-muted-foreground">XLM Proceeds</p>
-              <p className="font-mono font-semibold">{formatXlm(analysis.result.totalXlmProceeds)} XLM</p>
-              {formatUsdEstimate(analysis.result.totalXlmProceeds, xlmUsdPrice) && (
-                <p className="text-[11px] text-muted-foreground font-mono">
-                  {formatUsdEstimate(analysis.result.totalXlmProceeds, xlmUsdPrice)}
-                </p>
-              )}
-            </div>
-            <div>
-              <p className="text-xs text-muted-foreground">Asset Sold</p>
-              <p className="font-mono font-semibold">{formatXlm(analysis.result.totalAssetSold)} {analysis.assetCode}</p>
-            </div>
-            <div>
-              <p className="text-xs text-muted-foreground">Outgoing XLM</p>
-              <p className="font-mono font-semibold">{formatXlm(analysis.result.totalOutgoingXlm)} XLM</p>
-              {formatUsdEstimate(analysis.result.totalOutgoingXlm, xlmUsdPrice) && (
-                <p className="text-[11px] text-muted-foreground font-mono">
-                  {formatUsdEstimate(analysis.result.totalOutgoingXlm, xlmUsdPrice)}
-                </p>
-              )}
-            </div>
-            <div>
-              <p className="text-xs text-muted-foreground">Est. On Hand</p>
-              <p className="font-mono font-semibold">{formatXlm(analysis.result.estimatedOnHandXlm)} XLM</p>
-              {formatUsdEstimate(analysis.result.estimatedOnHandXlm ?? 0, xlmUsdPrice) && (
-                <p className="text-[11px] text-muted-foreground font-mono">
-                  {formatUsdEstimate(analysis.result.estimatedOnHandXlm ?? 0, xlmUsdPrice)}
-                </p>
-              )}
-            </div>
-          </div>
+          <div className="mt-4"><ProceedsStatsCards result={analysis.result} assetCode={analysis.assetCode} xlmUsdPrice={xlmUsdPrice} /></div>
+          <ProceedsEvidence result={analysis.result} network={analysis.network} />
 
           <div className="mt-3">
             {detailError ? <div role="alert" className="text-sm text-destructive">{detailError} <Button size="sm" variant="outline" onClick={() => setDetailAttempt((n) => n + 1)}>Retry</Button></div> : !detail ? <p className="text-sm text-muted-foreground">Loading snapshot detail…</p> : <WindowedSalesStats
@@ -524,7 +502,7 @@ function AnalysisCard({ group, xlmUsdPrice }: { group: SavedAnalysisSummary[]; x
                       <th className="px-3 py-2 text-right font-medium">XLM Proceeds</th>
                       <th className="px-3 py-2 text-right font-medium">Asset Sold</th>
                       <th className="px-3 py-2 text-right font-medium">Outgoing</th>
-                      <th className="px-3 py-2 text-right font-medium">On Hand</th>
+                      <th className="px-3 py-2 text-right font-medium">Balance at Scan</th>
                       <th className="px-3 py-2 text-right font-medium"></th>
                     </tr>
                   </thead>
@@ -549,7 +527,7 @@ function AnalysisCard({ group, xlmUsdPrice }: { group: SavedAnalysisSummary[]; x
                           {formatXlm(snap.result.totalOutgoingXlm)}
                         </td>
                         <td className="px-3 py-2 text-right tabular-nums font-mono">
-                          {formatXlm(snap.result.estimatedOnHandXlm ?? 0)}
+                          {snap.result.currentXlmBalance == null ? "Unknown" : formatXlm(snap.result.currentXlmBalance)}
                         </td>
                         <td className="px-3 py-2 text-right">
                           <ConfirmDeleteButton
@@ -574,7 +552,6 @@ function AnalysisCard({ group, xlmUsdPrice }: { group: SavedAnalysisSummary[]; x
             network={analysis.network}
             showProgressBar
             emptyMessage="No outgoing XLM transfers found."
-            undistributedXlm={analysis.result.estimatedOnHandXlm}
           />
         </div>
       )}
@@ -634,7 +611,7 @@ function TableView({
             {th("XLM Proceeds", "xlmProceeds")}
             {th("Asset Sold", "assetSold")}
             {th("Outgoing XLM", "outgoing")}
-            {th("Est. On Hand", "onHand")}
+            {th("XLM Balance at Scan", "onHand")}
             {th("Saved", "timestamp")}
             <th className="px-3 py-2 text-right font-medium"></th>
           </tr>
@@ -679,7 +656,7 @@ function TableRow({ analysis: a }: { analysis: SavedAnalysisSummary }) {
         {formatXlm(a.result.totalOutgoingXlm)}
       </td>
       <td className="px-3 py-2 text-right tabular-nums font-mono text-xs">
-        {formatXlm(a.result.estimatedOnHandXlm ?? 0)}
+        {a.result.currentXlmBalance == null ? "Unknown" : formatXlm(a.result.currentXlmBalance)}
       </td>
       <td className="px-3 py-2 text-right text-xs text-muted-foreground whitespace-nowrap">
         {timeAgo(a.timestamp)}
@@ -808,7 +785,8 @@ function CrossAssetDestinations({ analyses }: { analyses: SavedAnalysisSummary[]
           <div>
             <CardTitle className="text-base">Cross-Asset Destinations</CardTitle>
             <CardDescription className="text-xs mt-0.5">
-              Addresses that received XLM across multiple assets — likely shared banks or exchanges.
+              Shared recipient addresses only; exact memo destinations are shown separately below.
+              Snapshot sums may overlap across assets and do not establish common ownership.
               {multiAsset.length > 0 && (
                 <span className="ml-1 font-semibold text-yellow-500">
                   {multiAsset.length} shared destination{multiAsset.length > 1 ? "s" : ""} found.
@@ -829,7 +807,7 @@ function CrossAssetDestinations({ analyses }: { analyses: SavedAnalysisSummary[]
                 <tr className="border-b bg-muted/40 text-muted-foreground">
                   <th className="px-3 py-2 text-left font-medium">Destination</th>
                   <th className="px-3 py-2 text-right font-medium">Assets</th>
-                  <th className="px-3 py-2 text-right font-medium">Total XLM</th>
+                  <th className="px-3 py-2 text-right font-medium">Snapshot XLM sum</th>
                   <th className="px-3 py-2 text-right font-medium">Txns</th>
                 </tr>
               </thead>
@@ -1321,6 +1299,10 @@ export function SavedAnalysesPanel() {
             <>
               <SnapshotCompare analyses={filtered} />
               <CrossAssetDestinations analyses={latestPerGroup(filtered)} />
+              <BeneficiaryGroups
+                groupings={latestPerGroup(filtered).map(analysis => analysis.result.beneficiaryGrouping?.network === analysis.network ? analysis.result.beneficiaryGrouping : undefined)}
+                historyIncomplete={latestPerGroup(filtered).some(analysis => !analysis.result.coverage?.complete)}
+              />
             </>
           ) : (
             <Card>

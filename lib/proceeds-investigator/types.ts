@@ -8,20 +8,30 @@ export interface ProceedsLedgerEntry {
   id: string;
   account: string;
   category:
+    | "contract_sale"
+    | "contract_purchase"
     | "dex_sale"
     | "path_sale"
     | "payment"
     | "create_account"
     | "path_native_out"
     | "account_merge"
-    | "fee";
+    | "fee"
+    | "dex_purchase"
+    | "path_purchase"
+    | "sale_delivery";
   amountXlm: number;
   assetSoldAmount?: number;
+  operationId?: string;
+  targetAssetPurchase?: boolean;
   txHash: string;
   createdAt: string;
   from?: string;
   to?: string;
   successful: boolean;
+  memo?: import("./beneficiaries").TransactionMemo;
+  toMuxed?: string;
+  toMuxedId?: string;
 }
 
 export interface AssetProceedsResult {
@@ -32,11 +42,41 @@ export interface AssetProceedsResult {
   totalXlmProceeds: number;
   totalOutgoingXlm: number;
   estimatedOnHandXlm: number;
+  contractSaleCount?: number;
   dexTradeCount: number;
   pathSaleCount: number;
   proceedsLedger: ProceedsLedgerEntry[];
   outgoingLedger: ProceedsLedgerEntry[];
+  beneficiaryGrouping?: import("./beneficiaries").BeneficiaryGrouping;
   topDestinations: DestinationSummary[];
+  sellerAttributions?: import("./selection").SellerAttribution[];
+  totalXlmSpentOnPurchases?: number;
+  accountWideXlmSpentOnPurchases?: number;
+  currentXlmBalance?: number | null;
+  purchaseLedger?: ProceedsLedgerEntry[];
+  totalInternalTransferXlm?: number;
+  internalTransferLedger?: ProceedsLedgerEntry[];
+  externalSaleDeliveryXlm?: number;
+  saleDeliveryLedger?: ProceedsLedgerEntry[];
+  accountSummaries?: Array<{
+    account: string;
+    totalXlmProceeds: number;
+    totalAssetSold: number;
+    totalXlmSpentOnPurchases: number;
+    accountWideXlmSpentOnPurchases: number;
+    totalOutgoingXlm: number;
+    currentXlmBalance: number | null;
+    confirmedSeller: boolean;
+    saleEvidenceIds: string[];
+  }>;
+  coverage?: {
+    requestedFrom: string | null;
+    requestedTo: string;
+    oldestObserved?: string;
+    newestObserved?: string;
+    complete: boolean;
+    warnings: string[];
+  };
 }
 
 export interface CounterpartySummary {

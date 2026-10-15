@@ -1,0 +1,177 @@
+[
+  {
+    "_links": {
+      "self": {
+        "href": ""
+      },
+      "base": {
+        "href": "https://horizon.stellar.org/accounts/GBUIFDO4V3DUNIWY2G3FQCUQ4D6YPAHEZZOEVWH3JDAVBB2U37PRQ7JC"
+      },
+      "counter": {
+        "href": "https://horizon.stellar.org/accounts/GBVIJOWPN3YJUWFO6ZRDHLQOK24DQLV2VUXJ7FVSDRFNKKD5F3DDXGOS"
+      },
+      "operation": {
+        "href": "https://horizon.stellar.org/operations/277867191298174977"
+      }
+    },
+    "id": "277867191298174977-0",
+    "paging_token": "277867191298174977-0",
+    "ledger_close_time": "2026-09-30T10:56:07Z",
+    "trade_type": "orderbook",
+    "base_offer_id": "1859677971",
+    "base_account": "GBUIFDO4V3DUNIWY2G3FQCUQ4D6YPAHEZZOEVWH3JDAVBB2U37PRQ7JC",
+    "base_amount": "0.0388050",
+    "base_asset_type": "native",
+    "counter_offer_id": "4889553209725562881",
+    "counter_account": "GBVIJOWPN3YJUWFO6ZRDHLQOK24DQLV2VUXJ7FVSDRFNKKD5F3DDXGOS",
+    "counter_amount": "29.8500000",
+    "counter_asset_type": "credit_alphanum12",
+    "counter_asset_code": "VORIX",
+    "counter_asset_issuer": "GBZWS45TJZFITWCMIPSUWZXAQREOBPX3QBGYRIT4LGZKI7O5CJMPCFHG",
+    "base_is_seller": true,
+    "price": {
+      "n": "10000",
+      "d": "13"
+    }
+  },
+  {
+    "_links": {
+      "self": {
+        "href": ""
+      },
+      "base": {
+        "href": "https://horizon.stellar.org/accounts/GBUIFDO4V3DUNIWY2G3FQCUQ4D6YPAHEZZOEVWH3JDAVBB2U37PRQ7JC"
+      },
+      "counter": {
+        "href": "https://horizon.stellar.org/accounts/GBVIJOWPN3YJUWFO6ZRDHLQOK24DQLV2VUXJ7FVSDRFNKKD5F3DDXGOS"
+      },
+      "operation": {
+        "href": "https://horizon.stellar.org/operations/277867191298174978"
+      }
+    },
+    "id": "277867191298174978-0",
+    "paging_token": "277867191298174978-0",
+    "ledger_close_time": "2026-09-30T10:56:07Z",
+    "trade_type": "orderbook",
+    "base_offer_id": "1859677971",
+    "base_account": "GBUIFDO4V3DUNIWY2G3FQCUQ4D6YPAHEZZOEVWH3JDAVBB2U37PRQ7JC",
+    "base_amount": "0.0001950",
+    "base_asset_type": "native",
+    "counter_offer_id": "4889553209725562882",
+    "counter_account": "GBVIJOWPN3YJUWFO6ZRDHLQOK24DQLV2VUXJ7FVSDRFNKKD5F3DDXGOS",
+    "counter_amount": "0.1500000",
+    "counter_asset_type": "credit_alphanum12",
+    "counter_asset_code": "VORIX",
+    "counter_asset_issuer": "GBZWS45TJZFITWCMIPSUWZXAQREOBPX3QBGYRIT4LGZKI7O5CJMPCFHG",
+    "base_is_seller": true,
+    "price": {
+      "n": "10000",
+      "d": "13"
+    }
+  },
+  {
+    "_links": {
+      "self": {
+        "href": ""
+      },
+      "base": {
+        "href": "https://horizon.stellar.org/liquidity_pools/4b7890d7699dbfbc44d581ddb9c3baa0b65e3aeb07f093b76ec7ff6c9ec2cd60"
+      },
+      "counter": {
+        "href": "https://horizon.stellar.org/accounts/GBVIJOWPN3YJUWFO6ZRDHLQOK24DQLV2VUXJ7FVSDRFNKKD5F3DDXGOS"
+      },
+      "operation": {
+        "href": "https://horizon.stellar.org/operations/277867191298174978"
+      }
+    },
+    "id": "277867191298174978-1",
+    "paging_token": "277867191298174978-1",
+    "ledger_close_time": "2026-09-30T10:56:07Z",
+    "trade_type": "liquidity_pool",
+    "liquidity_pool_fee_bp": 30,
+    "base_liquidity_pool_id": "4b7890d7699dbfbc44d581ddb9c3baa0b65e3aeb07f093b76ec7ff6c9ec2cd60",
+    "base_amount": "0.0000442",
+    "base_asset_type": "credit_alphanum12",
+    "base_asset_code": "yUSDC",
+    "base_asset_issuer": "GDGTVWSM4MGS4T7Z6W4RPWOCHE2I6RDFCIFZGS3DOA63LWQTRNZNTTFF",
+    "counter_offer_id": "4889553209725562882",
+    "counter_account": "GBVIJOWPN3YJUWFO6ZRDHLQOK24DQLV2VUXJ7FVSDRFNKKD5F3DDXGOS",
+    "counter_amount": "0.0001950",
+    "counter_asset_type": "native",
+    "base_is_seller": true,
+    "price": {
+      "n": "1950",
+      "d": "442"
+    }
+  },
+  {
+    "_links": {
+      "self": {
+        "href": ""
+      },
+      "base": {
+        "href": "https://horizon.stellar.org/accounts/GBLAYTB45QLEJ22H2ESMXAOUN4RCNYTSKNPEFDR7RLO3NAGGNT6NFN2J"
+      },
+      "counter": {
+        "href": "https://horizon.stellar.org/accounts/GBVIJOWPN3YJUWFO6ZRDHLQOK24DQLV2VUXJ7FVSDRFNKKD5F3DDXGOS"
+      },
+      "operation": {
+        "href": "https://horizon.stellar.org/operations/277754517125492739"
+      }
+    },
+    "id": "277754517125492739-0",
+    "paging_token": "277754517125492739-0",
+    "ledger_close_time": "2026-09-28T22:29:56Z",
+    "trade_type": "orderbook",
+    "base_offer_id": "1859438730",
+    "base_account": "GBLAYTB45QLEJ22H2ESMXAOUN4RCNYTSKNPEFDR7RLO3NAGGNT6NFN2J",
+    "base_amount": "0.0327380",
+    "base_asset_type": "native",
+    "counter_offer_id": "4889440535552880643",
+    "counter_account": "GBVIJOWPN3YJUWFO6ZRDHLQOK24DQLV2VUXJ7FVSDRFNKKD5F3DDXGOS",
+    "counter_amount": "20.0000000",
+    "counter_asset_type": "credit_alphanum12",
+    "counter_asset_code": "VORIX",
+    "counter_asset_issuer": "GBZWS45TJZFITWCMIPSUWZXAQREOBPX3QBGYRIT4LGZKI7O5CJMPCFHG",
+    "base_is_seller": true,
+    "price": {
+      "n": "10000000",
+      "d": "16369"
+    }
+  },
+  {
+    "_links": {
+      "self": {
+        "href": ""
+      },
+      "base": {
+        "href": "https://horizon.stellar.org/accounts/GCM75OVO3EKYVW42NK376SENX7UBIHQXCQDHX3SHV2LFEGHX6TGS6O27"
+      },
+      "counter": {
+        "href": "https://horizon.stellar.org/accounts/GBVIJOWPN3YJUWFO6ZRDHLQOK24DQLV2VUXJ7FVSDRFNKKD5F3DDXGOS"
+      },
+      "operation": {
+        "href": "https://horizon.stellar.org/operations/277754517125492739"
+      }
+    },
+    "id": "277754517125492739-1",
+    "paging_token": "277754517125492739-1",
+    "ledger_close_time": "2026-09-28T22:29:56Z",
+    "trade_type": "orderbook",
+    "base_offer_id": "1859449668",
+    "base_account": "GCM75OVO3EKYVW42NK376SENX7UBIHQXCQDHX3SHV2LFEGHX6TGS6O27",
+    "base_amount": "19.6424071",
+    "base_asset_type": "credit_alphanum4",
+    "base_asset_code": "AQUA",
+    "base_asset_issuer": "GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA",
+    "counter_offer_id": "4889440535552880643",
+    "counter_account": "GBVIJOWPN3YJUWFO6ZRDHLQOK24DQLV2VUXJ7FVSDRFNKKD5F3DDXGOS",
+    "counter_amount": "0.0327380",
+    "counter_asset_type": "native",
+    "base_is_seller": true,
+    "price": {
+      "n": "48001",
+      "d": "28800024"
+    }
+  }
+]

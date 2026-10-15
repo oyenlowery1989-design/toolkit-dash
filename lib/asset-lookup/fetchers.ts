@@ -3,6 +3,7 @@ import { fetchJson } from "../horizon-fetch";
 import { authHeaders, waitForAuth } from "@/lib/db-client";
 import { resolveAssetToXlmTrade } from "@/lib/trade-helpers";
 import type {
+  DistributionEvidence,
   Holder,
   DistribCandidate,
   IssuerInfo,
@@ -330,13 +331,31 @@ export async function inferDistribLite(
   issuer: string,
   signal: AbortSignal,
   onLog?: (message: string) => void,
-): Promise<{ address: string; score: number; reason: string }[]> {
+): Promise<{ address: string; score: number; reason: string; evidence?: DistributionEvidence[] }[]> {
   const horizonBase = horizonUrl.replace(/\/$/, "");
   type RecordData = Record<string, unknown>;
-  const totals = new Map<string, { amount: number; count: number; cursor?: string; claimed: boolean }>();
+  type Receipt = { amount: number; cursor?: string };
+  type Funding = { amount: number; count: number; cursor?: string; claimed: boolean; evidence: DistributionEvidence[]; receipts: Receipt[]; forwarded: number };
+  const totals = new Map<string, Funding>();
+  const metadata = (op: RecordData) => ({
+    ...(typeof op.transaction_hash === "string" ? { transactionHash: op.transaction_hash } : {}),
+    ...(typeof op.created_at === "string" ? { createdAt: op.created_at } : {}),
+  });
+  const operationId = (op: RecordData) => {
+    const id = op.id ?? op.paging_token;
+    if (typeof id !== "string") throw new Error("Missing distribution operation ID. Enter seller accounts manually.");
+    return id;
+  };
+  const before = (a: string | undefined, b: string | undefined) => {
+    if (!a || !b || !/^\d+$/.test(a) || !/^\d+$/.test(b)) {
+      throw new Error("Distribution history cannot prove operation order. Enter seller accounts manually.");
+    }
+    return BigInt(a) < BigInt(b);
+  };
   const readRecords = async (path: string, firstCursor?: string, pageLimit = 20) => {
     const records: RecordData[] = [];
     let cursor = firstCursor;
+    const cursors = new Set<string>(cursor ? [cursor] : []);
     for (let page = 0; page < pageLimit; page++) {
       signal.throwIfAborted();
       const params = new URLSearchParams({ limit: "200", order: "asc" });
@@ -345,11 +364,13 @@ export async function inferDistribLite(
       onLog?.(`  GET ${url}`);
       const data = await fetchJson(url, signal, { onLog });
       signal.throwIfAborted();
-      const batch: RecordData[] = data._embedded?.records ?? [];
+      const batch: RecordData[] = data._embedded?.records;
+      if (!Array.isArray(batch)) throw new Error("Distributor inference history is incomplete. Enter seller accounts manually.");
       records.push(...batch);
       if (batch.length < 200) return records;
       const next = batch[batch.length - 1].paging_token;
-      if (typeof next !== "string" || next === cursor) break;
+      if (typeof next !== "string" || cursors.has(next)) break;
+      cursors.add(next);
       cursor = next;
     }
     throw new Error("Distributor inference history limit reached. Enter seller accounts manually.");
@@ -369,22 +390,28 @@ export async function inferDistribLite(
       count: (existing?.count ?? 0) + 1,
       cursor: existing?.cursor ?? (typeof op.paging_token === "string" ? op.paging_token : undefined),
       claimed: false,
+      evidence: [...(existing?.evidence ?? []), { kind: "issuer_payment", from: issuer, to,
+        amount: String(op.amount), operationId: operationId(op), ...metadata(op) }],
+      receipts: [...(existing?.receipts ?? []), { amount, cursor: typeof op.paging_token === "string" ? op.paging_token : undefined }],
+      forwarded: 0,
     });
   }
 
-  // shortcut: trace the top five funded accounts and at most three claim hops;
-  // deeper or wider proven routes require explicit seller accounts.
-  const queue = [...totals.entries()].sort((a, b) => b[1].amount - a[1].amount)
-    .slice(0, 5).map(([address]) => ({ address, depth: 0 }));
+  // shortcut: trace at most twenty funded accounts and three claim hops; wider or deeper routes require manual sellers.
+  if (totals.size > 20) throw new Error("Distributor inference account limit reached. Enter seller accounts manually.");
+  const queue = [{ address: issuer, depth: -1 }, ...[...totals.entries()]
+    .sort((a, b) => b[1].amount - a[1].amount).map(([address]) => ({ address, depth: 0 }))];
   const visited = new Set<string>();
   const seenBalances = new Set<string>();
   for (let index = 0; index < queue.length; index++) {
     signal.throwIfAborted();
     const { address, depth } = queue[index];
     if (visited.has(address)) continue;
-    if (index >= 20) throw new Error("Distributor inference account limit reached. Enter seller accounts manually.");
+    if (visited.size >= 21) throw new Error("Distributor inference account limit reached. Enter seller accounts manually.");
     visited.add(address);
-    const info = totals.get(address)!;
+    const info = address === issuer
+      ? { amount: Infinity, count: 0, claimed: false, evidence: [], receipts: [], forwarded: 0 } as Funding
+      : totals.get(address)!;
     const operations = await readRecords(`/accounts/${encodeURIComponent(address)}/operations`, info.cursor);
     for (const op of operations) {
       if (op.type !== "create_claimable_balance" || op.transaction_successful === false) continue;
@@ -413,28 +440,54 @@ export async function inferDistribLite(
       if (history.some(ref => ref.type === "clawback_claimable_balance" && ref.transaction_successful === true)) continue;
       const claimants = op.claimants as { destination?: string }[] | undefined;
       if (!claimants?.some(c => c.destination === claim.claimant)) continue;
+      if (!before(typeof op.paging_token === "string" ? op.paging_token : op.id,
+        typeof claim.paging_token === "string" ? claim.paging_token : operationId(claim))) {
+        throw new Error("Claimable-balance history cannot prove claim order. Enter seller accounts manually.");
+      }
+      const available = address === issuer ? Infinity : info.receipts
+        .filter(receipt => before(receipt.cursor, typeof op.paging_token === "string" ? op.paging_token : op.id as string))
+        .reduce((sum, receipt) => sum + receipt.amount, 0) - info.forwarded;
+      const transferred = Math.min(amount, info.amount, Math.max(0, available));
+      if (transferred <= 0) continue;
       if (depth >= 3 || visited.has(claim.claimant)) {
         throw new Error("Distributor inference reached a claim hop limit, cycle or converging route. Enter seller accounts manually.");
       }
-      const transferred = Math.min(amount, info.amount);
       info.amount -= transferred;
+      info.forwarded += transferred;
       const recipient = totals.get(claim.claimant);
       totals.set(claim.claimant, {
         amount: (recipient?.amount ?? 0) + transferred,
         count: (recipient?.count ?? 0) + 1,
-        cursor: recipient?.cursor ?? (typeof claim.paging_token === "string" ? claim.paging_token : undefined),
+        cursor: recipient?.cursor && before(recipient.cursor, claim.paging_token as string)
+          ? recipient.cursor : typeof claim.paging_token === "string" ? claim.paging_token : undefined,
         claimed: true,
+        evidence: [...(recipient?.evidence ?? []), ...info.evidence.filter(evidence => before(
+          evidence.kind === "claimable_balance" ? evidence.claimOperationId : evidence.operationId,
+          typeof op.paging_token === "string" ? op.paging_token : op.id as string,
+        )), {
+          kind: "claimable_balance", from: address, to: claim.claimant, amount: String(op.amount),
+          ...(transferred < amount ? { attributedAmount: String(transferred) } : {}),
+          operationId: op.id, ...metadata(op), balanceId, claimOperationId: operationId(claim),
+          ...(typeof claim.transaction_hash === "string" ? { claimTransactionHash: claim.transaction_hash } : {}),
+          ...(typeof claim.created_at === "string" ? { claimCreatedAt: claim.created_at } : {}),
+        }],
+        receipts: [...(recipient?.receipts ?? []), { amount: transferred, cursor: typeof claim.paging_token === "string" ? claim.paging_token : undefined }],
+        forwarded: recipient?.forwarded ?? 0,
       });
+      if (totals.size > 20) throw new Error("Distributor inference account limit reached. Enter seller accounts manually.");
       queue.push({ address: claim.claimant, depth: depth + 1 });
     }
   }
   signal.throwIfAborted();
-  const ranked = [...totals.entries()].filter(([, info]) => info.amount > 0)
-    .sort((a, b) => b[1].amount - a[1].amount).slice(0, 5);
+  const ranked = [...totals.entries()]
+    .sort((a, b) => b[1].amount - a[1].amount);
   return ranked.map(([address, info], i) => ({
     address,
     score: ranked.length - i,
-    reason: info.claimed
+    evidence: [...new Map(info.evidence.map(item => [`${item.kind}:${item.operationId}:${item.to}`, item])).values()],
+    reason: info.amount === 0
+      ? `Issuer-funded recipient forwarded its attributed amount; historical sales still require checking; retained Horizon history only`
+      : info.claimed
       ? `Verified claim recipient of up to ${info.amount.toLocaleString()} ${assetCode} from issuer-funded distribution; retained Horizon history only`
       : `Remaining issuer-funded amount: ${info.amount.toLocaleString()} ${assetCode} across ${info.count} direct payment${info.count !== 1 ? "s" : ""}; retained Horizon history only`,
   }));

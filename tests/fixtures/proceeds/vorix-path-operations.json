@@ -1,0 +1,125 @@
+[
+  {
+    "_links": {
+      "self": {
+        "href": "https://horizon.stellar.org/operations/277867191298174977"
+      },
+      "transaction": {
+        "href": "https://horizon.stellar.org/transactions/16cdd4f189a5c3a0e03db571fc3d7521fc812678243acfae94e309a2e8990bdd"
+      },
+      "effects": {
+        "href": "https://horizon.stellar.org/operations/277867191298174977/effects"
+      },
+      "succeeds": {
+        "href": "https://horizon.stellar.org/effects?order=desc&cursor=277867191298174977"
+      },
+      "precedes": {
+        "href": "https://horizon.stellar.org/effects?order=asc&cursor=277867191298174977"
+      }
+    },
+    "id": "277867191298174977",
+    "paging_token": "277867191298174977",
+    "transaction_successful": true,
+    "source_account": "GBVIJOWPN3YJUWFO6ZRDHLQOK24DQLV2VUXJ7FVSDRFNKKD5F3DDXGOS",
+    "type": "path_payment_strict_send",
+    "type_i": 13,
+    "created_at": "2026-09-30T10:56:07Z",
+    "transaction_hash": "16cdd4f189a5c3a0e03db571fc3d7521fc812678243acfae94e309a2e8990bdd",
+    "asset_type": "native",
+    "from": "GBVIJOWPN3YJUWFO6ZRDHLQOK24DQLV2VUXJ7FVSDRFNKKD5F3DDXGOS",
+    "to": "GBVIJOWPN3YJUWFO6ZRDHLQOK24DQLV2VUXJ7FVSDRFNKKD5F3DDXGOS",
+    "amount": "0.0388050",
+    "path": [],
+    "source_amount": "29.8500000",
+    "destination_min": "0.0384170",
+    "source_asset_type": "credit_alphanum12",
+    "source_asset_code": "VORIX",
+    "source_asset_issuer": "GBZWS45TJZFITWCMIPSUWZXAQREOBPX3QBGYRIT4LGZKI7O5CJMPCFHG"
+  },
+  {
+    "_links": {
+      "self": {
+        "href": "https://horizon.stellar.org/operations/277867191298174978"
+      },
+      "transaction": {
+        "href": "https://horizon.stellar.org/transactions/16cdd4f189a5c3a0e03db571fc3d7521fc812678243acfae94e309a2e8990bdd"
+      },
+      "effects": {
+        "href": "https://horizon.stellar.org/operations/277867191298174978/effects"
+      },
+      "succeeds": {
+        "href": "https://horizon.stellar.org/effects?order=desc&cursor=277867191298174978"
+      },
+      "precedes": {
+        "href": "https://horizon.stellar.org/effects?order=asc&cursor=277867191298174978"
+      }
+    },
+    "id": "277867191298174978",
+    "paging_token": "277867191298174978",
+    "transaction_successful": true,
+    "source_account": "GBVIJOWPN3YJUWFO6ZRDHLQOK24DQLV2VUXJ7FVSDRFNKKD5F3DDXGOS",
+    "type": "path_payment_strict_send",
+    "type_i": 13,
+    "created_at": "2026-09-30T10:56:07Z",
+    "transaction_hash": "16cdd4f189a5c3a0e03db571fc3d7521fc812678243acfae94e309a2e8990bdd",
+    "asset_type": "credit_alphanum12",
+    "asset_code": "yUSDC",
+    "asset_issuer": "GDGTVWSM4MGS4T7Z6W4RPWOCHE2I6RDFCIFZGS3DOA63LWQTRNZNTTFF",
+    "from": "GBVIJOWPN3YJUWFO6ZRDHLQOK24DQLV2VUXJ7FVSDRFNKKD5F3DDXGOS",
+    "to": "GABPOTABC2H2KH5KEKDAQOGFDGN4XZQL47WVMH3VS72GMFCKNY345XMP",
+    "amount": "0.0000442",
+    "path": [
+      {
+        "asset_type": "native"
+      }
+    ],
+    "source_amount": "0.1500000",
+    "destination_min": "0.0000001",
+    "source_asset_type": "credit_alphanum12",
+    "source_asset_code": "VORIX",
+    "source_asset_issuer": "GBZWS45TJZFITWCMIPSUWZXAQREOBPX3QBGYRIT4LGZKI7O5CJMPCFHG"
+  },
+  {
+    "_links": {
+      "self": {
+        "href": "https://horizon.stellar.org/operations/277754517125492739"
+      },
+      "transaction": {
+        "href": "https://horizon.stellar.org/transactions/7919a02d69c3b7cbcd0a9d15cfdb2d5675488b446498c69fddd591f46454d484"
+      },
+      "effects": {
+        "href": "https://horizon.stellar.org/operations/277754517125492739/effects"
+      },
+      "succeeds": {
+        "href": "https://horizon.stellar.org/effects?order=desc&cursor=277754517125492739"
+      },
+      "precedes": {
+        "href": "https://horizon.stellar.org/effects?order=asc&cursor=277754517125492739"
+      }
+    },
+    "id": "277754517125492739",
+    "paging_token": "277754517125492739",
+    "transaction_successful": true,
+    "source_account": "GBVIJOWPN3YJUWFO6ZRDHLQOK24DQLV2VUXJ7FVSDRFNKKD5F3DDXGOS",
+    "type": "path_payment_strict_send",
+    "type_i": 13,
+    "created_at": "2026-09-28T22:29:56Z",
+    "transaction_hash": "7919a02d69c3b7cbcd0a9d15cfdb2d5675488b446498c69fddd591f46454d484",
+    "asset_type": "credit_alphanum4",
+    "asset_code": "AQUA",
+    "asset_issuer": "GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA",
+    "from": "GBVIJOWPN3YJUWFO6ZRDHLQOK24DQLV2VUXJ7FVSDRFNKKD5F3DDXGOS",
+    "to": "GBVIJOWPN3YJUWFO6ZRDHLQOK24DQLV2VUXJ7FVSDRFNKKD5F3DDXGOS",
+    "amount": "19.6424071",
+    "path": [
+      {
+        "asset_type": "native"
+      }
+    ],
+    "source_amount": "20.0000000",
+    "destination_min": "9.8212036",
+    "source_asset_type": "credit_alphanum12",
+    "source_asset_code": "VORIX",
+    "source_asset_issuer": "GBZWS45TJZFITWCMIPSUWZXAQREOBPX3QBGYRIT4LGZKI7O5CJMPCFHG"
+  }
+]

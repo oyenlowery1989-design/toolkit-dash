@@ -40,7 +40,7 @@ const FIELD_LABELS: Record<ProceedsFieldKey, string> = {
   totalXlmProceeds: "XLM Proceeds",
   totalAssetSold: "Asset Sold",
   totalOutgoingXlm: "Outgoing XLM",
-  estimatedOnHandXlm: "Est. On Hand",
+  estimatedOnHandXlm: "Legacy sales minus transfers (not balance/profit)",
 };
 
 export interface FieldDelta {

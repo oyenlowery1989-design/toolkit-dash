@@ -114,3 +114,16 @@ export function findSavedDistributor(
     )
     ?.members.find((member) => member.role === "distributor")?.address;
 }
+
+/** All explicitly saved sellers for the same ledger asset and network. */
+export function findSavedDistributors(
+  groups: AssetGroup[],
+  assetCode: string,
+  issuer: string,
+  network: string,
+): string[] {
+  return [...new Set(groups
+    .filter(group => group.assetCode === assetCode && group.issuer === issuer && group.network === network)
+    .flatMap(group => group.members.filter(member => member.role === "distributor").map(member => member.address.trim()))
+    .filter(Boolean))];
+}

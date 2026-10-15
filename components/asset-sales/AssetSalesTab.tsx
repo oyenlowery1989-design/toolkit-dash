@@ -32,7 +32,7 @@ import { useSettings, resolveHorizonUrl, NETWORK_LABELS, type Network } from "@/
 import { useProceedsHistory } from "./useProceedsHistory";
 import { getErrorMessage } from "@/lib/stellar-helpers";
 import { ShortAddress } from "@/components/shared/ShortAddress";
-import { inferDistribLite } from "@/lib/asset-lookup/fetchers";
+import { selectSellerAccounts } from "@/lib/proceeds-investigator/selection";
 import { fetchAssetXlmProceeds } from "@/lib/proceeds-investigator/fetchers";
 import { formatXlm, formatUsdEstimate, parseAddresses } from "@/lib/format";
 import { useSavedSearches } from "@/hooks/use-saved-searches";
@@ -41,7 +41,6 @@ import { useAssetGroups } from "@/hooks/use-asset-groups";
 import { useBulkScanState } from "@/hooks/use-bulk-scan-state";
 import { useConfirmClick } from "@/hooks/use-confirm-click";
 import { parseAssetPairs } from "@/lib/asset-pair";
-import { findSavedDistributor } from "@/lib/asset-groups/types";
 import { useXlmUsdPrice } from "@/hooks/use-xlm-usd-price";
 import { fetchHomeDomain } from "@/components/shared/ChainDisplay";
 import { assetKey, diffSnapshots } from "@/lib/saved-analyses/diff";
@@ -53,6 +52,7 @@ import {
   requestNotificationPermission,
 } from "@/lib/notifications";
 import type { AssetProceedsResult } from "@/lib/proceeds-investigator/types";
+import { ProceedsEvidence } from "@/components/shared/proceeds/ProceedsEvidence";
 import { cancelActiveRows, type AssetRowStatus } from "./state";
 import {
   ProceedsStatsCards,
@@ -89,7 +89,17 @@ interface AssetRow {
 /** True when a fresh result is identical (all tracked fields + destinations) to the given prior save. */
 function isUnchangedSince(prior: SavedAnalysisSummary, result: AssetProceedsResult): boolean {
   const diff = diffSnapshots(prior, { ...prior, timestamp: Date.now(), result });
-  return diff.fields.every((f) => f.delta === 0) && diff.destinations.length === 0;
+  return JSON.stringify(prior.result.beneficiaryGrouping) === JSON.stringify(result.beneficiaryGrouping) &&
+    !!prior.result.coverage && !!prior.result.sellerAttributions &&
+    JSON.stringify(prior.result.sellerAttributions) === JSON.stringify(result.sellerAttributions) &&
+    prior.result.contractSaleCount === result.contractSaleCount &&
+    prior.result.totalXlmSpentOnPurchases === result.totalXlmSpentOnPurchases &&
+    prior.result.currentXlmBalance === result.currentXlmBalance &&
+    prior.result.accountWideXlmSpentOnPurchases === result.accountWideXlmSpentOnPurchases &&
+    prior.result.totalInternalTransferXlm === result.totalInternalTransferXlm &&
+    JSON.stringify(prior.result.accountSummaries) === JSON.stringify(result.accountSummaries) &&
+    JSON.stringify(prior.result.coverage?.warnings) === JSON.stringify(result.coverage?.warnings) &&
+    diff.fields.every((f) => f.delta === 0) && diff.destinations.length === 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -337,7 +347,7 @@ export function AssetSalesTab() {
   const { upsert: upsertSearch } = useSavedSearches();
   const { analyses: savedAnalyses, saveAnalysis, remove: removeSavedAnalysis, isLoaded: historyLoaded, loadingHistory, error: historyError, retry: retryHistory } = useSavedAnalyses();
   const historyReady = historyLoaded && !loadingHistory && !historyError;
-  const { groups } = useAssetGroups();
+  const { groups, isLoaded: groupsLoaded } = useAssetGroups();
   const {
     history: searchHistory,
     upsert: upsertHistory,
@@ -458,6 +468,7 @@ export function AssetSalesTab() {
       }
     }
 
+    if (!groupsLoaded && !overrideAccounts.length) return;
     setParseError(null);
     setInterrupted(false);
     upsertHistory({
@@ -495,71 +506,28 @@ export function AssetSalesTab() {
       sequential ? 1 : CONCURRENCY,
       async (i, { assetCode, issuer }) => {
         const startedAt = Date.now();
-        let distribAddress: string | undefined;
-        let inferReason: string | undefined;
-        let scanAccounts: string[];
-
-        if (overrideAccounts.length > 0) {
-          scanAccounts = overrideAccounts;
-          distribAddress = overrideAccounts[0];
-          updateRow(i, { status: "scanning", distribAddress });
-          const hd = await fetchHomeDomain(horizonUrl, issuer, signal).catch(
-            () => null,
-          );
-          if (!signal.aborted && hd) updateRow(i, { homeDomain: hd });
-        } else {
-          const savedDistributor = findSavedDistributor(
-            groups,
-            assetCode,
-            issuer,
-            settings.network,
-          );
-          if (savedDistributor) {
-            distribAddress = savedDistributor;
-            inferReason = "Saved distributor from Asset Group";
-            scanAccounts = [distribAddress];
-            const hd = await fetchHomeDomain(horizonUrl, issuer, signal);
-            if (!signal.aborted && hd) updateRow(i, { homeDomain: hd });
-          } else {
-            // Step 1: infer issuer-funded recipients, including verified claim relays.
-            updateRow(i, { status: "inferring" });
-            try {
-              const candidates = await inferDistribLite(
-                horizonUrl,
-                assetCode,
-                issuer,
-                signal,
-                (message) => console.info(`[Asset Sales ${assetCode}] ${message}`),
-              );
-              if (signal.aborted) return;
-              if (candidates.length === 0) {
-                updateRow(i, {
-                  status: "error",
-                  error:
-                    "Could not infer a distribution address — the issuer has made no direct payments of this asset. " +
-                    "Distribution may use DEX sell orders only. Enter seller accounts manually below.",
-                  elapsedMs: Date.now() - startedAt,
-                });
-                return;
-              }
-              distribAddress = candidates[0].address;
-              inferReason = candidates[0].reason;
-              scanAccounts = [distribAddress];
-
-              // Fetch issuer home_domain in background (best-effort)
-              const hd = await fetchHomeDomain(horizonUrl, issuer, signal);
-              if (!signal.aborted && hd) updateRow(i, { homeDomain: hd });
-            } catch (e) {
-              if (signal.aborted) return;
-              updateRow(i, {
-                status: "error",
-                error: getErrorMessage(e),
-                elapsedMs: Date.now() - startedAt,
-              });
-              return;
-            }
+        updateRow(i, { status: "inferring" });
+        let selection;
+        try {
+          selection = await selectSellerAccounts({
+            horizonUrl, assetCode, issuer, network: settings.network, groups,
+            manualAccounts: overrideAccounts, signal,
+            onLog: (message) => console.info(`[Asset Sales ${assetCode}] ${message}`),
+          });
+          if (signal.aborted) return;
+          if (!selection.accounts.length) {
+            updateRow(i, { status: "error", error: "No distribution recipients were proven in retained history. Enter seller accounts manually; this is not proof of zero sales.", elapsedMs: Date.now() - startedAt });
+            return;
           }
+        } catch (error) {
+          if (!signal.aborted) updateRow(i, { status: "error", error: getErrorMessage(error), elapsedMs: Date.now() - startedAt });
+          return;
         }
+        const scanAccounts = selection.accounts;
+        const distribAddress = scanAccounts[0];
+        const inferReason = `${selection.attributions[0].source} selection · ${scanAccounts.length} account(s); selling is confirmed from asset-specific ledger entries`;
+        const hd = await fetchHomeDomain(horizonUrl, issuer, signal).catch(() => null);
+        if (!signal.aborted && hd) updateRow(i, { homeDomain: hd });
 
         // Step 2: scan proceeds
         updateRow(i, { status: "scanning", distribAddress, inferReason });
@@ -570,9 +538,15 @@ export function AssetSalesTab() {
             issuer,
             scanAccounts,
             signal,
-            () => {},
+            () => {}, undefined, undefined,
+            { network: settings.network, onLog: message => console.info(`[Asset Sales ${assetCode}] ${message}`) },
           );
           if (signal.aborted) return;
+          result.sellerAttributions = selection.attributions.map(attribution => ({
+            ...attribution,
+            confirmedSeller: result.proceedsLedger.some(entry => entry.account === attribution.account && entry.successful),
+            saleEvidenceIds: result.proceedsLedger.filter(entry => entry.account === attribution.account && entry.successful).map(entry => entry.id),
+          }));
 
           // Prior saves of this exact asset — used to skip a redundant save
           // when nothing actually changed, and to render the diff below.
@@ -645,12 +619,12 @@ export function AssetSalesTab() {
 
   // Fire a pending autorun once the deep-linked text has actually landed in state.
   useEffect(() => {
-    if (pendingAutorunRef.current && assetsText && historyReady) {
+    if (pendingAutorunRef.current && assetsText && historyReady && (groupsLoaded || (singlePair && overrideAccountsText.trim()))) {
       pendingAutorunRef.current = false;
       handleRun();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [assetsText, historyReady]);
+  }, [assetsText, historyReady, groupsLoaded, overrideAccountsText, singlePair]);
 
   const handleCancel = () => {
     abortRef.current?.abort();
@@ -856,7 +830,7 @@ export function AssetSalesTab() {
           </div>
         </CardContent>
         <CardFooter className="flex gap-2 flex-wrap">
-          <Button onClick={handleRun} disabled={running || !historyReady}>
+          <Button onClick={handleRun} disabled={running || !historyReady || (!groupsLoaded && !(singlePair && overrideAccountsText.trim()))}>
             {running ? (
               <Loader2 className="mr-2 h-4 w-4 animate-spin" />
             ) : (
@@ -889,6 +863,7 @@ export function AssetSalesTab() {
         </CardFooter>
       </Card>
 
+      {!groupsLoaded && <p className="text-sm text-muted-foreground">Loading saved distributors before automatic selection…</p>}
       {(!historyLoaded || loadingHistory) && <p className="text-sm text-muted-foreground">Loading saved history for comparison…</p>}
       {historyError && <div role="alert" className="text-sm text-destructive">{historyError} <Button size="sm" variant="outline" onClick={retryHistory}>Retry history</Button></div>}
       {/* Running progress */}
@@ -1027,12 +1002,12 @@ export function AssetSalesTab() {
                     </span>
                   )}
                   <ProceedsStatusBadge status={row.status} />
-                  {row.distribAddress && (
+                  {row.result?.accountSummaries?.some(account => account.confirmedSeller) && (
                     <SaveToGroupButton
                       assetCode={row.assetCode}
                       issuer={row.issuer}
                       network={settings.network}
-                      distribAddress={row.distribAddress}
+                      distribAddress={row.result?.accountSummaries?.find(account => account.confirmedSeller)?.account}
                       homeDomain={row.homeDomain}
                       topDestinations={row.result?.topDestinations}
                       size="sm"
@@ -1073,6 +1048,7 @@ export function AssetSalesTab() {
                     showAssetSold={false}
                   />
 
+                  <ProceedsEvidence result={row.result} network={settings.network} />
                   <div className="mt-3">
                     <WindowedSalesStats
                       ledger={row.result.proceedsLedger}
@@ -1086,7 +1062,7 @@ export function AssetSalesTab() {
                       <span className="font-semibold text-foreground">
                         Distrib address:{" "}
                       </span>
-                      {row.distribAddress} · {row.inferReason}
+                      {row.inferReason}
                     </p>
                   )}
 
@@ -1101,7 +1077,6 @@ export function AssetSalesTab() {
                     issuer={row.result.issuer}
                     showProgressBar
                     showGroupAction
-                    undistributedXlm={row.result.estimatedOnHandXlm}
                     xlmUsdPrice={xlmUsdPrice}
                   />
 

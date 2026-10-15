@@ -4,7 +4,7 @@ import { formatXlm } from "@/lib/format";
 import type { AssetProceedsResult } from "@/lib/proceeds-investigator/types";
 
 interface ProceedsStatsCardsProps {
-  result: AssetProceedsResult;
+  result: Pick<AssetProceedsResult, "totalXlmProceeds" | "totalAssetSold" | "totalOutgoingXlm" | "estimatedOnHandXlm" | "totalXlmSpentOnPurchases" | "accountWideXlmSpentOnPurchases" | "currentXlmBalance" | "totalInternalTransferXlm" | "externalSaleDeliveryXlm" | "contractSaleCount">;
   assetCode: string;
   xlmUsdPrice?: number | null;
   showAssetSold?: boolean;
@@ -39,21 +39,14 @@ export function ProceedsStatsCards({ result, assetCode, xlmUsdPrice, showAssetSo
     (n * (xlmUsdPrice ?? 0)).toLocaleString(undefined, { maximumFractionDigits: 0 });
 
   return (
-    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-      <StatCard
-        label="Total XLM Proceeds"
-        value={formatXlm(result.totalXlmProceeds)}
-        usdValue={xlmUsdPrice != null ? fmtUsd(result.totalXlmProceeds) : undefined}
-      />
-      {showAssetSold && (
-        <StatCard label={`${assetCode} Sold`} value={formatXlm(result.totalAssetSold)} />
-      )}
-      <StatCard label="Total Outgoing XLM" value={formatXlm(result.totalOutgoingXlm)} />
-      <StatCard
-        label="Est. Proceeds Remaining"
-        value={formatXlm(result.estimatedOnHandXlm)}
-        usdValue={xlmUsdPrice != null ? fmtUsd(result.estimatedOnHandXlm) : undefined}
-      />
+    <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+      <StatCard label="Gross XLM sale output" value={formatXlm(result.totalXlmProceeds)} usdValue={xlmUsdPrice != null ? fmtUsd(result.totalXlmProceeds) : undefined} subLabel={`Asset → XLM, including direct delivery${result.contractSaleCount ? ` and ${result.contractSaleCount} contract conversion(s)` : ""}; not profit`} />
+      {showAssetSold && <StatCard label={`${assetCode} Sold`} value={formatXlm(result.totalAssetSold)} />}
+      <StatCard label={`XLM spent buying ${assetCode}`} value={result.totalXlmSpentOnPurchases === undefined ? "Unknown" : formatXlm(result.totalXlmSpentOnPurchases)} />
+      <StatCard label="All-asset XLM purchases" value={result.accountWideXlmSpentOnPurchases === undefined ? "Unknown" : formatXlm(result.accountWideXlmSpentOnPurchases)} subLabel="Account-wide; includes the selected asset" />
+      <StatCard label={result.accountWideXlmSpentOnPurchases === undefined ? "Legacy outgoing XLM" : "External XLM transfers"} value={formatXlm(result.totalOutgoingXlm)} subLabel={result.accountWideXlmSpentOnPurchases === undefined ? "Older accounting; may include purchases or internal transfers" : "Account-wide; includes sale output delivered elsewhere"} />
+      {result.totalInternalTransferXlm !== undefined && <StatCard label="Transfers within selected accounts" value={formatXlm(result.totalInternalTransferXlm)} />}
+      <StatCard label="XLM balance at scan" value={result.currentXlmBalance == null ? "Unknown" : formatXlm(result.currentXlmBalance)} subLabel="Fetched during this scan; not profit" />
     </div>
   );
 }

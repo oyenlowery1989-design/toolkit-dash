@@ -74,6 +74,9 @@ import {
   type AssetXlmTradeSummary,
   type PriceBucket,
 } from "@/lib/asset-lookup";
+import { useAssetGroups } from "@/hooks/use-asset-groups";
+import { selectSellerAccounts } from "@/lib/proceeds-investigator/selection";
+import { ProceedsEvidence } from "@/components/shared/proceeds/ProceedsEvidence";
 import { fetchAssetXlmProceeds } from "@/lib/proceeds-investigator/fetchers";
 import type { AssetProceedsResult } from "@/lib/proceeds-investigator/types";
 import { useAssetHistory, assetHistoryGetSnapshot } from "./useAssetHistory";
@@ -212,6 +215,7 @@ export function AssetLookupPanel({
   initialIssuer,
 }: AssetLookupPanelProps) {
   const { settings } = useSettings();
+  const { groups: savedAssetGroups, isLoaded: groupsLoaded } = useAssetGroups();
   const router = useRouter();
   const searchParams = useSearchParams();
   const urlCode = searchParams.get("code");
@@ -471,11 +475,8 @@ export function AssetLookupPanel({
   const handleAssetCodeChange = (value: string) => {
     const normalized = value;
     setAssetCode(normalized);
-    if (touched.assetCode) {
-      setValidationErrors((prev) => ({
-        ...prev,
-        ...validate(normalized, issuer),
-      }));
+    if (touched.assetCode || validationErrors.assetCode) {
+      setValidationErrors(validate(normalized, issuer));
     }
   };
 
@@ -488,11 +489,8 @@ export function AssetLookupPanel({
 
   const handleIssuerChange = (value: string) => {
     setIssuer(value);
-    if (touched.issuer) {
-      setValidationErrors((prev) => ({
-        ...prev,
-        ...validate(assetCode, value),
-      }));
+    if (touched.issuer || validationErrors.issuer) {
+      setValidationErrors(validate(assetCode, value));
     }
   };
 
@@ -904,33 +902,46 @@ export function AssetLookupPanel({
   };
 
   const handleFetchDistribSales = async () => {
+    if (!groupsLoaded) return;
     setShowDistribSales(true);
-    if (distribSales) return; // already loaded
-    if (distribCandidates.length === 0) return;
+    if (distribSales?.assetCode === assetCode && distribSales.issuer === issuer) return;
+    setDistribSales(null);
     setDistribSalesLoading(true);
     setDistribSalesError(null);
     setDistribSalesProgress("Starting scan…");
     const signal = abortRef.current?.signal ?? new AbortController().signal;
     try {
-      const primaryDistrib = distribCandidates[0].address;
+      const selection = await selectSellerAccounts({
+        horizonUrl: resolveHorizonUrl(settings), assetCode, issuer,
+        network: settings.network, groups: savedAssetGroups, signal,
+        onLog: message => console.info(`[Distribution Sales ${assetCode}] ${message}`),
+      });
+      if (!selection.accounts.length) throw new Error("No recipients proven in retained history; use manual seller accounts in Asset Sales.");
       const result = await fetchAssetXlmProceeds(
         resolveHorizonUrl(settings),
         assetCode,
         issuer,
-        [primaryDistrib],
+        selection.accounts,
         signal,
         (progress) =>
           !signal.aborted && setDistribSalesProgress(
             `${progress.phase} (${progress.records.toLocaleString()} records)`,
           ),
+        undefined, undefined,
+        { network: settings.network, onLog: message => console.info(`[Distribution Sales ${assetCode}] ${message}`) },
       );
       if (signal.aborted) return;
+      result.sellerAttributions = selection.attributions.map(attribution => ({
+        ...attribution,
+        confirmedSeller: result.proceedsLedger.some(entry => entry.account === attribution.account && entry.successful),
+        saleEvidenceIds: result.proceedsLedger.filter(entry => entry.account === attribution.account && entry.successful).map(entry => entry.id),
+      }));
       setDistribSales(result);
       saveAnalysis({
         name: `${assetCode} — ${new Date().toLocaleDateString()}`,
         assetCode,
         issuer,
-        distribAddresses: [primaryDistrib],
+        distribAddresses: selection.accounts,
         network: settings.network,
         result,
       });
@@ -1497,6 +1508,34 @@ export function AssetLookupPanel({
         </div>
       )}
 
+      {!isCrawling && assetCode.trim() && StrKey.isValidEd25519PublicKey(issuer) && (
+        <div>
+            <Button
+              variant="outline"
+              size="sm"
+              className="text-xs"
+              onClick={handleFetchDistribSales}
+              disabled={distribSalesLoading || !groupsLoaded}
+              title={
+                !groupsLoaded
+                  ? "Loading saved distributor accounts"
+                  : undefined
+              }
+            >
+              {distribSalesLoading ? (
+                <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Coins className="mr-2 h-3.5 w-3.5" />
+              )}
+              Distribution Sales
+              {showDistribSales ? (
+                <ChevronUp className="ml-2 h-3.5 w-3.5" />
+              ) : (
+                <ChevronDown className="ml-2 h-3.5 w-3.5" />
+              )}
+            </Button></div>
+      )}
+
       {/* On-demand sections — only shown/fetched when requested */}
       {holders.length > 0 && !isCrawling && (
         <div className="space-y-3">
@@ -1573,30 +1612,7 @@ export function AssetLookupPanel({
                 <ChevronDown className="ml-2 h-3.5 w-3.5" />
               )}
             </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              className="text-xs"
-              onClick={handleFetchDistribSales}
-              disabled={distribSalesLoading || distribCandidates.length === 0}
-              title={
-                distribCandidates.length === 0
-                  ? "Run the lookup first to infer the distribution address"
-                  : undefined
-              }
-            >
-              {distribSalesLoading ? (
-                <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
-              ) : (
-                <Coins className="mr-2 h-3.5 w-3.5" />
-              )}
-              Distribution Sales
-              {showDistribSales ? (
-                <ChevronUp className="ml-2 h-3.5 w-3.5" />
-              ) : (
-                <ChevronDown className="ml-2 h-3.5 w-3.5" />
-              )}
-            </Button>
+
             <Button
               variant="outline"
               size="sm"
@@ -2225,6 +2241,9 @@ export function AssetLookupPanel({
             </Card>
           )}
 
+        </div>
+      )}
+
           {/* Distribution Sales */}
           {showDistribSales && (
             <Card>
@@ -2234,9 +2253,8 @@ export function AssetLookupPanel({
                   Distribution Sales — XLM Proceeds
                 </CardTitle>
                 <CardDescription>
-                  All-time {assetCode}→XLM sales from the primary distribution
-                  address ({distribCandidates[0]?.address}), and where the XLM
-                  was sent.
+                  {assetCode}→XLM sales across the selected accounts, with
+                  attribution evidence, retained-history coverage, and XLM transfers.
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-5">
@@ -2259,6 +2277,7 @@ export function AssetLookupPanel({
                       assetCode={assetCode}
                       xlmUsdPrice={xlmUsdPrice}
                     />
+                    <ProceedsEvidence result={distribSales} network={settings.network} />
                     <WindowedSalesStats
                       ledger={distribSales.proceedsLedger}
                       assetCode={assetCode}
@@ -2278,20 +2297,19 @@ export function AssetLookupPanel({
                           assetCode={distribSales.assetCode}
                           issuer={distribSales.issuer}
                           showGroupAction
-                          undistributedXlm={distribSales.estimatedOnHandXlm}
                         />
                       </div>
                     )}
                   </div>
                 )}
-                {distribCandidates.length > 0 && (
+                {distribSales?.accountSummaries?.some(account => account.confirmedSeller) && (
                   <div className="pt-3 border-t flex justify-end gap-2">
-                    {distribCandidates[0] && (
+                    {distribSales && (
                       <SaveToGroupButton
                         assetCode={assetCode}
                         issuer={issuer}
                         network={settings.network}
-                        distribAddress={distribCandidates[0].address}
+                        distribAddress={distribSales.accountSummaries?.find(account => account.confirmedSeller)?.account}
                         topDestinations={distribSales?.topDestinations}
                       />
                     )}
@@ -2300,7 +2318,8 @@ export function AssetLookupPanel({
                       size="sm"
                       className="text-xs gap-1.5"
                       onClick={() => {
-                        const primary = distribCandidates[0].address;
+                        const primary = distribSales?.accountSummaries?.find(account => account.confirmedSeller)?.account;
+                        if (!primary) return;
                         const params = new URLSearchParams({
                           asset: assetCode,
                           issuer,
@@ -2318,8 +2337,6 @@ export function AssetLookupPanel({
               </CardContent>
             </Card>
           )}
-        </div>
-      )}
 
       {/* Distribution address inference */}
       {(isInferring || distribCandidates.length > 0 || distribError) &&

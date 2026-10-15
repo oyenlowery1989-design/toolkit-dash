@@ -1,0 +1,12 @@
+{
+  "description": "Synthetic transaction metadata; exact destination and text memo from the reported example. No claim that these transactions occurred.",
+  "exchange": "GABFQIK63R2NETJM7T673EAMZN4RJLLGP3OFUEJU5SZVTGWUKULZJNL6",
+  "transactions": [
+    {"hash":"tx-text-a","successful":true,"memo_type":"text","memo":"354151076","memo_bytes":"MzU0MTUxMDc2"},
+    {"hash":"tx-text-b","successful":true,"memo_type":"text","memo":"354151076","memo_bytes":"MzU0MTUxMDc2"},
+    {"hash":"tx-id","successful":true,"memo_type":"id","memo":"354151076"},
+    {"hash":"tx-zero","successful":true,"memo_type":"text","memo":"0354151076"},
+    {"hash":"tx-space","successful":true,"memo_type":"text","memo":"354151076 "},
+    {"hash":"tx-none","successful":true,"memo_type":"none"}
+  ]
+}

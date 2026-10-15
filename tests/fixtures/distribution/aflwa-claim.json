@@ -1,0 +1,274 @@
+{
+  "source": "https://horizon.stellar.org",
+  "capturedAt": "2026-10-14",
+  "payment": {
+    "_links": {
+      "self": {
+        "href": "https://horizon.stellar.org/operations/263626385414348801"
+      },
+      "transaction": {
+        "href": "https://horizon.stellar.org/transactions/c4f0217179f5bc176e1797e250e2461c15c3b0335b70109588999844643f6499"
+      },
+      "effects": {
+        "href": "https://horizon.stellar.org/operations/263626385414348801/effects"
+      },
+      "succeeds": {
+        "href": "https://horizon.stellar.org/effects?order=desc&cursor=263626385414348801"
+      },
+      "precedes": {
+        "href": "https://horizon.stellar.org/effects?order=asc&cursor=263626385414348801"
+      }
+    },
+    "id": "263626385414348801",
+    "paging_token": "263626385414348801",
+    "transaction_successful": true,
+    "source_account": "GANJULEAUA7FO4G4VADKZGZ4R7BIRWFQWFCWD6D7W5UDV2D4TJ3CPYTQ",
+    "type": "payment",
+    "type_i": 1,
+    "created_at": "2026-02-24T16:38:09Z",
+    "transaction_hash": "c4f0217179f5bc176e1797e250e2461c15c3b0335b70109588999844643f6499",
+    "asset_type": "credit_alphanum12",
+    "asset_code": "AFLWA",
+    "asset_issuer": "GANJULEAUA7FO4G4VADKZGZ4R7BIRWFQWFCWD6D7W5UDV2D4TJ3CPYTQ",
+    "from": "GANJULEAUA7FO4G4VADKZGZ4R7BIRWFQWFCWD6D7W5UDV2D4TJ3CPYTQ",
+    "to": "GC67QDUVNVJBSNEI6FHPNGPDKUKZEZWNHVWT6E4L5XS5SYCKA2WAUTD6",
+    "amount": "5000000.0000000"
+  },
+  "creation": {
+    "_links": {
+      "self": {
+        "href": "https://horizon.stellar.org/operations/263626389708668929"
+      },
+      "transaction": {
+        "href": "https://horizon.stellar.org/transactions/0bc5e7b7bda4465b297f182d46c85f452fd2def0ab9299b8f9cc25593ce88971"
+      },
+      "effects": {
+        "href": "https://horizon.stellar.org/operations/263626389708668929/effects"
+      },
+      "succeeds": {
+        "href": "https://horizon.stellar.org/effects?order=desc&cursor=263626389708668929"
+      },
+      "precedes": {
+        "href": "https://horizon.stellar.org/effects?order=asc&cursor=263626389708668929"
+      }
+    },
+    "id": "263626389708668929",
+    "paging_token": "263626389708668929",
+    "transaction_successful": true,
+    "source_account": "GC67QDUVNVJBSNEI6FHPNGPDKUKZEZWNHVWT6E4L5XS5SYCKA2WAUTD6",
+    "type": "create_claimable_balance",
+    "type_i": 14,
+    "created_at": "2026-02-24T16:38:15Z",
+    "transaction_hash": "0bc5e7b7bda4465b297f182d46c85f452fd2def0ab9299b8f9cc25593ce88971",
+    "sponsor": "GC67QDUVNVJBSNEI6FHPNGPDKUKZEZWNHVWT6E4L5XS5SYCKA2WAUTD6",
+    "asset": "AFLWA:GANJULEAUA7FO4G4VADKZGZ4R7BIRWFQWFCWD6D7W5UDV2D4TJ3CPYTQ",
+    "amount": "5000000.0000000",
+    "claimants": [
+      {
+        "destination": "GBHWTASVVCTOEIPWDJ7QFVKCP5XN3VRSQLD2ZARWO2GTH54GDQ4BI3EH",
+        "predicate": {
+          "unconditional": true
+        }
+      },
+      {
+        "destination": "GC67QDUVNVJBSNEI6FHPNGPDKUKZEZWNHVWT6E4L5XS5SYCKA2WAUTD6",
+        "predicate": {
+          "unconditional": true
+        }
+      }
+    ]
+  },
+  "history": [
+    {
+      "_links": {
+        "self": {
+          "href": "https://horizon.stellar.org/operations/263626389708668929"
+        },
+        "transaction": {
+          "href": "https://horizon.stellar.org/transactions/0bc5e7b7bda4465b297f182d46c85f452fd2def0ab9299b8f9cc25593ce88971"
+        },
+        "effects": {
+          "href": "https://horizon.stellar.org/operations/263626389708668929/effects"
+        },
+        "succeeds": {
+          "href": "https://horizon.stellar.org/effects?order=desc&cursor=263626389708668929"
+        },
+        "precedes": {
+          "href": "https://horizon.stellar.org/effects?order=asc&cursor=263626389708668929"
+        }
+      },
+      "id": "263626389708668929",
+      "paging_token": "263626389708668929",
+      "transaction_successful": true,
+      "source_account": "GC67QDUVNVJBSNEI6FHPNGPDKUKZEZWNHVWT6E4L5XS5SYCKA2WAUTD6",
+      "type": "create_claimable_balance",
+      "type_i": 14,
+      "created_at": "2026-02-24T16:38:15Z",
+      "transaction_hash": "0bc5e7b7bda4465b297f182d46c85f452fd2def0ab9299b8f9cc25593ce88971",
+      "sponsor": "GC67QDUVNVJBSNEI6FHPNGPDKUKZEZWNHVWT6E4L5XS5SYCKA2WAUTD6",
+      "asset": "AFLWA:GANJULEAUA7FO4G4VADKZGZ4R7BIRWFQWFCWD6D7W5UDV2D4TJ3CPYTQ",
+      "amount": "5000000.0000000",
+      "claimants": [
+        {
+          "destination": "GBHWTASVVCTOEIPWDJ7QFVKCP5XN3VRSQLD2ZARWO2GTH54GDQ4BI3EH",
+          "predicate": {
+            "unconditional": true
+          }
+        },
+        {
+          "destination": "GC67QDUVNVJBSNEI6FHPNGPDKUKZEZWNHVWT6E4L5XS5SYCKA2WAUTD6",
+          "predicate": {
+            "unconditional": true
+          }
+        }
+      ]
+    },
+    {
+      "_links": {
+        "self": {
+          "href": "https://horizon.stellar.org/operations/263628554372382722"
+        },
+        "transaction": {
+          "href": "https://horizon.stellar.org/transactions/165a1a798ff2158c516ec6a3cf9204ad1c3ef83d1c5abcabd69ed40eadb4fb60"
+        },
+        "effects": {
+          "href": "https://horizon.stellar.org/operations/263628554372382722/effects"
+        },
+        "succeeds": {
+          "href": "https://horizon.stellar.org/effects?order=desc&cursor=263628554372382722"
+        },
+        "precedes": {
+          "href": "https://horizon.stellar.org/effects?order=asc&cursor=263628554372382722"
+        }
+      },
+      "id": "263628554372382722",
+      "paging_token": "263628554372382722",
+      "transaction_successful": true,
+      "source_account": "GBHWTASVVCTOEIPWDJ7QFVKCP5XN3VRSQLD2ZARWO2GTH54GDQ4BI3EH",
+      "type": "claim_claimable_balance",
+      "type_i": 15,
+      "created_at": "2026-02-24T17:26:35Z",
+      "transaction_hash": "165a1a798ff2158c516ec6a3cf9204ad1c3ef83d1c5abcabd69ed40eadb4fb60",
+      "balance_id": "000000003b347a425e7ebb55a6bf5857f2995c021e645f7354e5757a87122b6cd4bd993e",
+      "claimant": "GBHWTASVVCTOEIPWDJ7QFVKCP5XN3VRSQLD2ZARWO2GTH54GDQ4BI3EH"
+    }
+  ],
+  "effects": [
+    {
+      "_links": {
+        "operation": {
+          "href": "https://horizon.stellar.org/operations/263626389708668929"
+        },
+        "succeeds": {
+          "href": "https://horizon.stellar.org/effects?order=desc&cursor=263626389708668929-1"
+        },
+        "precedes": {
+          "href": "https://horizon.stellar.org/effects?order=asc&cursor=263626389708668929-1"
+        }
+      },
+      "id": "0263626389708668929-0000000001",
+      "paging_token": "263626389708668929-1",
+      "account": "GC67QDUVNVJBSNEI6FHPNGPDKUKZEZWNHVWT6E4L5XS5SYCKA2WAUTD6",
+      "type": "claimable_balance_created",
+      "type_i": 50,
+      "created_at": "2026-02-24T16:38:15Z",
+      "asset": "AFLWA:GANJULEAUA7FO4G4VADKZGZ4R7BIRWFQWFCWD6D7W5UDV2D4TJ3CPYTQ",
+      "balance_id": "000000003b347a425e7ebb55a6bf5857f2995c021e645f7354e5757a87122b6cd4bd993e",
+      "amount": "5000000.0000000"
+    },
+    {
+      "_links": {
+        "operation": {
+          "href": "https://horizon.stellar.org/operations/263626389708668929"
+        },
+        "succeeds": {
+          "href": "https://horizon.stellar.org/effects?order=desc&cursor=263626389708668929-2"
+        },
+        "precedes": {
+          "href": "https://horizon.stellar.org/effects?order=asc&cursor=263626389708668929-2"
+        }
+      },
+      "id": "0263626389708668929-0000000002",
+      "paging_token": "263626389708668929-2",
+      "account": "GBHWTASVVCTOEIPWDJ7QFVKCP5XN3VRSQLD2ZARWO2GTH54GDQ4BI3EH",
+      "type": "claimable_balance_claimant_created",
+      "type_i": 51,
+      "created_at": "2026-02-24T16:38:15Z",
+      "asset": "AFLWA:GANJULEAUA7FO4G4VADKZGZ4R7BIRWFQWFCWD6D7W5UDV2D4TJ3CPYTQ",
+      "balance_id": "000000003b347a425e7ebb55a6bf5857f2995c021e645f7354e5757a87122b6cd4bd993e",
+      "amount": "5000000.0000000",
+      "predicate": {
+        "unconditional": true
+      }
+    },
+    {
+      "_links": {
+        "operation": {
+          "href": "https://horizon.stellar.org/operations/263626389708668929"
+        },
+        "succeeds": {
+          "href": "https://horizon.stellar.org/effects?order=desc&cursor=263626389708668929-3"
+        },
+        "precedes": {
+          "href": "https://horizon.stellar.org/effects?order=asc&cursor=263626389708668929-3"
+        }
+      },
+      "id": "0263626389708668929-0000000003",
+      "paging_token": "263626389708668929-3",
+      "account": "GC67QDUVNVJBSNEI6FHPNGPDKUKZEZWNHVWT6E4L5XS5SYCKA2WAUTD6",
+      "type": "claimable_balance_claimant_created",
+      "type_i": 51,
+      "created_at": "2026-02-24T16:38:15Z",
+      "asset": "AFLWA:GANJULEAUA7FO4G4VADKZGZ4R7BIRWFQWFCWD6D7W5UDV2D4TJ3CPYTQ",
+      "balance_id": "000000003b347a425e7ebb55a6bf5857f2995c021e645f7354e5757a87122b6cd4bd993e",
+      "amount": "5000000.0000000",
+      "predicate": {
+        "unconditional": true
+      }
+    },
+    {
+      "_links": {
+        "operation": {
+          "href": "https://horizon.stellar.org/operations/263626389708668929"
+        },
+        "succeeds": {
+          "href": "https://horizon.stellar.org/effects?order=desc&cursor=263626389708668929-4"
+        },
+        "precedes": {
+          "href": "https://horizon.stellar.org/effects?order=asc&cursor=263626389708668929-4"
+        }
+      },
+      "id": "0263626389708668929-0000000004",
+      "paging_token": "263626389708668929-4",
+      "account": "GC67QDUVNVJBSNEI6FHPNGPDKUKZEZWNHVWT6E4L5XS5SYCKA2WAUTD6",
+      "type": "account_debited",
+      "type_i": 3,
+      "created_at": "2026-02-24T16:38:15Z",
+      "asset_type": "credit_alphanum12",
+      "asset_code": "AFLWA",
+      "asset_issuer": "GANJULEAUA7FO4G4VADKZGZ4R7BIRWFQWFCWD6D7W5UDV2D4TJ3CPYTQ",
+      "amount": "5000000.0000000"
+    },
+    {
+      "_links": {
+        "operation": {
+          "href": "https://horizon.stellar.org/operations/263626389708668929"
+        },
+        "succeeds": {
+          "href": "https://horizon.stellar.org/effects?order=desc&cursor=263626389708668929-5"
+        },
+        "precedes": {
+          "href": "https://horizon.stellar.org/effects?order=asc&cursor=263626389708668929-5"
+        }
+      },
+      "id": "0263626389708668929-0000000005",
+      "paging_token": "263626389708668929-5",
+      "account": "GC67QDUVNVJBSNEI6FHPNGPDKUKZEZWNHVWT6E4L5XS5SYCKA2WAUTD6",
+      "type": "claimable_balance_sponsorship_created",
+      "type_i": 69,
+      "created_at": "2026-02-24T16:38:15Z",
+      "balance_id": "000000003b347a425e7ebb55a6bf5857f2995c021e645f7354e5757a87122b6cd4bd993e",
+      "sponsor": "GC67QDUVNVJBSNEI6FHPNGPDKUKZEZWNHVWT6E4L5XS5SYCKA2WAUTD6"
+    }
+  ]
+}

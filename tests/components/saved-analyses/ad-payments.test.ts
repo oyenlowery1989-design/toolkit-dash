@@ -113,7 +113,7 @@ describe("rerunAnalysis", () => {
   it("fetches and saves a fresh result with the selected analysis metadata", async () => {
     const selected = analysis({ assetCode: "ONLY", issuer: "GONLY", distribAddresses: ["GA", "GB"], notes: "note", tags: ["tag"] }); const fresh = result({ assetCode: "ONLY", issuer: "GONLY" }); const save = vi.fn(); mocks.fetchAssetXlmProceeds.mockResolvedValueOnce(fresh);
     await rerunAnalysis(selected, settings(), save, new AbortController().signal);
-    expect(mocks.fetchAssetXlmProceeds).toHaveBeenCalledWith("https://horizon.test", "ONLY", "GONLY", ["GA", "GB"], expect.any(AbortSignal));
+    expect(mocks.fetchAssetXlmProceeds).toHaveBeenCalledWith("https://horizon.test", "ONLY", "GONLY", ["GA", "GB"], expect.any(AbortSignal), undefined, undefined, undefined, { network: "public", onLog: expect.any(Function) });
     expect(save).toHaveBeenCalledWith(expect.objectContaining({ name: "snapshot", assetCode: "ONLY", issuer: "GONLY", distribAddresses: ["GA", "GB"], notes: "note", tags: ["tag"], result: fresh }));
   });
   it("does not save when the fetch throws or the signal aborts before its result resolves", async () => {

@@ -1,3 +1,19 @@
+export interface DistributionEvidence {
+  /** Proven issuer-funded portion, when smaller than the balance actually claimed. */
+  attributedAmount?: string;
+  kind: "issuer_payment" | "claimable_balance";
+  from: string;
+  to: string;
+  amount: string;
+  operationId: string;
+  transactionHash?: string;
+  createdAt?: string;
+  balanceId?: string;
+  claimOperationId?: string;
+  claimTransactionHash?: string;
+  claimCreatedAt?: string;
+}
+
 export interface Holder {
   id: string;
   balance: string;

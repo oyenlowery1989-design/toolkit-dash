@@ -5,9 +5,12 @@ import type {
   ProceedsLedgerEntry,
   ScanProgress,
 } from "./types";
-import { fetchJson } from "@/lib/horizon-fetch";
+import { fetchJson, HorizonFetchError } from "@/lib/horizon-fetch";
 import { resolveAssetToXlmTrade } from "@/lib/trade-helpers";
 import { getErrorMessage } from "@/lib/stellar-helpers";
+
+import { resolveContractConversion } from "./contract-conversion";
+import { fetchBeneficiaryGrouping } from "./beneficiaries";
 
 const FETCH_LIMIT = 200;
 
@@ -31,7 +34,7 @@ function isTargetAsset(
 ): boolean {
   const code = String(raw[`${prefix}_code`] ?? "");
   const assetIssuer = String(raw[`${prefix}_issuer`] ?? "");
-  return code === assetCode && assetIssuer === issuer;
+  return raw[`${prefix}_type`] !== "native" && code === assetCode && assetIssuer === issuer;
 }
 
 async function fetchAccountMergeAmount(
@@ -59,281 +62,12 @@ async function fetchAccountMergeAmount(
   return 0;
 }
 
-async function scanAccountDexAssetToXlm(
-  horizonBase: string,
-  account: string,
-  assetCode: string,
-  issuer: string,
-  signal: AbortSignal,
-  fromTs: number,
-  toTs: number,
-  onProgress?: (progress: ScanProgress) => void,
-): Promise<{
-  assetSold: number;
-  xlmReceived: number;
-  tradeCount: number;
-  proceedsLedger: ProceedsLedgerEntry[];
-}> {
-  const base = horizonBase.replace(/\/+$/, "");
-  let cursor: string | undefined;
-  let pages = 0;
-  let recordsSeen = 0;
-  let assetSold = 0;
-  let xlmReceived = 0;
-  let tradeCount = 0;
-  const proceedsLedger: ProceedsLedgerEntry[] = [];
-
-  // Scan desc so we can stop early when we pass fromDate
-  while (!signal.aborted) {
-    const params = new URLSearchParams({
-      account_id: account,
-      limit: String(FETCH_LIMIT),
-      order: "desc",
-    });
-    if (cursor) params.set("cursor", cursor);
-
-    const data = await fetchJson(`${base}/trades?${params.toString()}`, signal);
-    const records = (data._embedded?.records ?? []) as Record<
-      string,
-      unknown
-    >[];
-    pages += 1;
-    recordsSeen += records.length;
-
-    let doneEarly = false;
-    for (const raw of records) {
-      const ts = new Date(String(raw.ledger_close_time ?? "")).getTime();
-      if (ts > toTs) continue;
-      if (ts < fromTs) { doneEarly = true; break; }
-
-      const trade = resolveAssetToXlmTrade(raw, account, assetCode, issuer);
-      const sold = trade?.sold ?? 0;
-      const received = trade?.received ?? 0;
-
-      if (sold <= 0 || received < 0) continue;
-
-      assetSold += sold;
-      xlmReceived += received;
-      tradeCount += 1;
-
-      proceedsLedger.push({
-        id: `dex-${raw.id ?? `${account}-${tradeCount}`}`,
-        account,
-        category: "dex_sale",
-        amountXlm: received,
-        assetSoldAmount: sold,
-        txHash: `trade:${String(raw.id ?? "")}`,
-        createdAt: String(raw.ledger_close_time ?? ""),
-        from: account,
-        successful: true,
-      });
-    }
-
-    onProgress?.({
-      phase: `Scanning DEX trades for ${account.slice(0, 6)}…`,
-      pages,
-      records: recordsSeen,
-      hits: tradeCount,
-    });
-
-    if (doneEarly || records.length < FETCH_LIMIT) break;
-    cursor = String(records[records.length - 1].paging_token);
-  }
-
-  return { assetSold, xlmReceived, tradeCount, proceedsLedger };
-}
-
-async function scanAccountOpsForProceedsAndOutflows(
-  horizonBase: string,
-  account: string,
-  assetCode: string,
-  issuer: string,
-  signal: AbortSignal,
-  fromTs: number,
-  toTs: number,
-  onProgress?: (progress: ScanProgress) => void,
-): Promise<{
-  pathAssetSold: number;
-  pathXlmReceived: number;
-  pathSaleCount: number;
-  outgoingWithoutFees: number;
-  proceedsLedger: ProceedsLedgerEntry[];
-  outgoingLedger: ProceedsLedgerEntry[];
-  destinationTotals: Map<string, { total: number; count: number }>;
-}> {
-  const base = horizonBase.replace(/\/+$/, "");
-  let cursor: string | undefined;
-  let pages = 0;
-  let recordsSeen = 0;
-  let hits = 0;
-
-  let pathAssetSold = 0;
-  let pathXlmReceived = 0;
-  let pathSaleCount = 0;
-  let outgoingWithoutFees = 0;
-
-  const proceedsLedger: ProceedsLedgerEntry[] = [];
-  const outgoingLedger: ProceedsLedgerEntry[] = [];
-  const destinationTotals = new Map<string, { total: number; count: number }>();
-
-  // Scan desc — newest first, stop when we pass fromDate
-  while (!signal.aborted) {
-    const params = new URLSearchParams({
-      order: "desc",
-      limit: String(FETCH_LIMIT),
-    });
-    if (cursor) params.set("cursor", cursor);
-
-    const data = await fetchJson(
-      `${base}/accounts/${account}/payments?${params.toString()}`,
-      signal,
-    );
-    const records = (data._embedded?.records ?? []) as Record<
-      string,
-      unknown
-    >[];
-    pages += 1;
-    recordsSeen += records.length;
-
-    let doneEarly = false;
-    for (const raw of records) {
-      const ts = new Date(String(raw.created_at ?? "")).getTime();
-      if (ts > toTs) continue;
-      if (ts < fromTs) { doneEarly = true; break; }
-
-      const type = String(raw.type ?? "");
-      const opId = String(raw.id ?? "");
-      const txHash = String(raw.transaction_hash ?? "");
-      const createdAt = String(raw.created_at ?? "");
-      const successful = (raw.transaction_successful as boolean) ?? true;
-
-      if (
-        (type === "path_payment_strict_send" ||
-          type === "path_payment_strict_receive") &&
-        raw.from === account &&
-        isTargetAsset(raw, assetCode, issuer, "source_asset") &&
-        isNativeAsset(raw)
-      ) {
-        const sold = parseAmount(raw.source_amount);
-        const xlm = parseAmount(raw.amount);
-        if (sold > 0) {
-          pathAssetSold += sold;
-          pathXlmReceived += xlm;
-          pathSaleCount += 1;
-          hits += 1;
-          proceedsLedger.push({
-            id: `path-sale-${opId}`,
-            account,
-            category: "path_sale",
-            amountXlm: xlm,
-            assetSoldAmount: sold,
-            txHash,
-            createdAt,
-            from: String(raw.from ?? account),
-            to: String(raw.to ?? ""),
-            successful,
-          });
-        }
-      }
-
-      let outflowAmount = 0;
-      let outflowCategory: ProceedsLedgerEntry["category"] | null = null;
-      let to: string | undefined;
-      let from: string | undefined;
-
-      if (type === "payment" && raw.from === account && isNativeAsset(raw)) {
-        outflowAmount = parseAmount(raw.amount);
-        outflowCategory = "payment";
-        from = String(raw.from ?? account);
-        to = String(raw.to ?? "");
-      } else if (type === "create_account" && raw.funder === account) {
-        outflowAmount = parseAmount(raw.starting_balance);
-        outflowCategory = "create_account";
-        from = String(raw.funder ?? account);
-        to = String(raw.account ?? "");
-      } else if (
-        (type === "path_payment_strict_send" ||
-          type === "path_payment_strict_receive") &&
-        raw.from === account &&
-        isNativeAsset(raw, "source_asset")
-      ) {
-        outflowAmount = parseAmount(raw.source_amount);
-        outflowCategory = "path_native_out";
-        from = String(raw.from ?? account);
-        to = String(raw.to ?? "");
-      } else if (type === "account_merge" && raw.source_account === account) {
-        const destination = String(raw.into ?? "");
-        const mergeAmount = await fetchAccountMergeAmount(
-          base,
-          opId,
-          destination,
-          signal,
-        );
-        outflowAmount = mergeAmount;
-        outflowCategory = "account_merge";
-        from = String(raw.source_account ?? account);
-        to = destination;
-      }
-
-      if (outflowCategory && outflowAmount > 0) {
-        outgoingWithoutFees += outflowAmount;
-        hits += 1;
-        const entry: ProceedsLedgerEntry = {
-          id: `${outflowCategory}-${opId}`,
-          account,
-          category: outflowCategory,
-          amountXlm: outflowAmount,
-          txHash,
-          createdAt,
-          from,
-          to,
-          successful,
-        };
-        outgoingLedger.push(entry);
-
-        const destination = to?.trim();
-        if (destination) {
-          const current = destinationTotals.get(destination) ?? {
-            total: 0,
-            count: 0,
-          };
-          destinationTotals.set(destination, {
-            total: current.total + outflowAmount,
-            count: current.count + 1,
-          });
-        }
-      }
-    }
-
-    onProgress?.({
-      phase: `Scanning payments for ${account.slice(0, 6)}…`,
-      pages,
-      records: recordsSeen,
-      hits,
-    });
-
-    if (doneEarly || records.length < FETCH_LIMIT) break;
-    cursor = String(records[records.length - 1].paging_token);
-  }
-
-  return {
-    pathAssetSold,
-    pathXlmReceived,
-    pathSaleCount,
-    outgoingWithoutFees,
-    proceedsLedger,
-    outgoingLedger,
-    destinationTotals,
-  };
-}
-
 function sortByDateDesc<T extends { createdAt: string }>(rows: T[]): T[] {
-  return [...rows].sort((a, b) => {
-    const ta = new Date(a.createdAt).getTime();
-    const tb = new Date(b.createdAt).getTime();
-    return tb - ta;
-  });
+  return [...rows].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
 }
+
+type HorizonRecord = Record<string, unknown>;
+type AccountSummary = NonNullable<AssetProceedsResult["accountSummaries"]>[number];
 
 export async function fetchAssetXlmProceeds(
   horizonBase: string,
@@ -344,93 +78,281 @@ export async function fetchAssetXlmProceeds(
   onProgress?: (progress: ScanProgress) => void,
   fromDate?: Date,
   toDate?: Date,
+  options: {
+    network?: string;
+    onLog?: (message: string) => void;
+    onResult?: (summary: AccountSummary) => void;
+  } = {},
 ): Promise<AssetProceedsResult> {
-  const accountList = [
-    ...new Set(accounts.map((a) => a.trim()).filter(Boolean)),
-  ];
-
-  const fromTs = fromDate ? fromDate.getTime() : 0;
-  const toTs = toDate ? toDate.getTime() : Date.now() + 86_400_000;
-
-  let totalAssetSold = 0;
-  let totalXlmProceeds = 0;
-  let totalOutgoingXlm = 0;
-  let dexTradeCount = 0;
-  let pathSaleCount = 0;
-
+  const base = horizonBase.replace(/\/+$/, "");
+  const accountList = [...new Set(accounts.map((account) => account.trim()).filter(Boolean))];
+  const selected = new Set(accountList);
+  const fromTs = fromDate?.getTime() ?? 0;
+  const toTs = toDate?.getTime() ?? Date.now();
+  if (!Number.isFinite(fromTs) || !Number.isFinite(toTs) || fromTs > toTs)
+    throw new Error("Invalid proceeds date window: From and To must be valid dates with From at or before To.");
+  const warnings = new Set<string>();
   const proceedsLedger: ProceedsLedgerEntry[] = [];
+  const purchaseLedger: ProceedsLedgerEntry[] = [];
   const outgoingLedger: ProceedsLedgerEntry[] = [];
-  const destinationTotals = new Map<string, { total: number; count: number }>();
+  const internalTransferLedger: ProceedsLedgerEntry[] = [];
+  const saleDeliveryLedger: ProceedsLedgerEntry[] = [];
+  const accountSummaries: AccountSummary[] = [];
+  const operationCache = new Map<string, HorizonRecord>();
+  const verifiedContractOperations = new Set<string>();
+  let oldestObserved: string | undefined;
+  let newestObserved: string | undefined;
+  let historyComplete = true;
 
-  for (const account of accountList) {
-    if (signal.aborted) break;
+  const checkAbort = () => {
+    if (signal.aborted) throw new DOMException("Proceeds scan aborted", "AbortError");
+  };
+  const get = async (url: string) => {
+    checkAbort();
+    options.onLog?.(`  GET ${url}`);
+    const data = await fetchJson(url, signal, { onLog: options.onLog });
+    checkAbort();
+    return data;
+  };
+  const warn = (message: string) => { warnings.add(message); historyComplete = false; };
+  const isPath = (raw: HorizonRecord) =>
+    raw.type === "path_payment_strict_send" || raw.type === "path_payment_strict_receive";
+  const sum = (rows: ProceedsLedgerEntry[]) => rows.reduce((total, row) => total + row.amountXlm, 0);
+  const transfer = (entry: ProceedsLedgerEntry) => {
+    if (entry.to === entry.account) return;
+    if (entry.to && selected.has(entry.to)) internalTransferLedger.push(entry);
+    else outgoingLedger.push(entry);
+  };
 
-    const dex = await scanAccountDexAssetToXlm(
-      horizonBase,
-      account,
-      assetCode,
-      issuer,
-      signal,
-      fromTs,
-      toTs,
-      onProgress,
-    );
-    totalAssetSold += dex.assetSold;
-    totalXlmProceeds += dex.xlmReceived;
-    dexTradeCount += dex.tradeCount;
-    proceedsLedger.push(...dex.proceedsLedger);
-
-    const ops = await scanAccountOpsForProceedsAndOutflows(
-      horizonBase,
-      account,
-      assetCode,
-      issuer,
-      signal,
-      fromTs,
-      toTs,
-      onProgress,
-    );
-    totalAssetSold += ops.pathAssetSold;
-    totalXlmProceeds += ops.pathXlmReceived;
-    pathSaleCount += ops.pathSaleCount;
-    totalOutgoingXlm += ops.outgoingWithoutFees;
-    proceedsLedger.push(...ops.proceedsLedger);
-    outgoingLedger.push(...ops.outgoingLedger);
-
-    for (const [destination, info] of ops.destinationTotals.entries()) {
-      const current = destinationTotals.get(destination) ?? {
-        total: 0,
-        count: 0,
-      };
-      destinationTotals.set(destination, {
-        total: current.total + info.total,
-        count: current.count + info.count,
-      });
-    }
+  // Exhausting an account endpoint proves pagination ended, not that retained history is complete.
+  try {
+    const root = await get(base);
+    const elder = Number(root.history_elder_ledger);
+    if (elder === 1) {
+      // Full ledger history retained.
+    } else if (Number.isFinite(elder) && elder > 1) {
+      const ledger = await get(`${base}/ledgers/${elder}`);
+      const retainedFrom = Date.parse(String(ledger.closed_at ?? ""));
+      if (!fromDate || !Number.isFinite(retainedFrom) || fromTs < retainedFrom)
+        warn(`Horizon retains history from ledger ${elder}; requested earlier history may be unavailable.`);
+    } else warn("Horizon history retention is unavailable; exhausted pages do not prove full coverage.");
+  } catch (error) {
+    checkAbort();
+    warn(`Horizon history retention unavailable: ${getErrorMessage(error)}`);
   }
 
-  const topDestinations = [...destinationTotals.entries()]
-    .map(([address, info]) => ({
-      address,
-      totalXlm: info.total,
-      count: info.count,
-    }))
-    .sort((a, b) => b.totalXlm - a.totalXlm)
-    .slice(0, 50);
+  const scan = async (
+    account: string,
+    kind: "payments" | "trades",
+    visit: (raw: HorizonRecord) => Promise<void>,
+  ) => {
+    let cursor: string | undefined;
+    let pages = 0;
+    let recordsSeen = 0;
+    const seen = new Set<string>();
+    const visitedCursors = new Set<string>();
+    while (true) {
+      checkAbort();
+      const params = new URLSearchParams({ limit: String(FETCH_LIMIT), order: "desc" });
+      if (cursor) params.set("cursor", cursor);
+      if (kind === "trades") params.set("account_id", account);
+      const endpoint = kind === "trades" ? `${base}/trades` : `${base}/accounts/${account}/payments`;
+      const data = await get(`${endpoint}?${params}`);
+      const records = data._embedded?.records as HorizonRecord[] | undefined;
+      if (!Array.isArray(records)) throw new Error(`Invalid ${kind} history response; coverage cannot be verified.`);
+      pages += 1;
+      recordsSeen += records.length;
+      let beforeWindow = false;
+      for (const raw of records) {
+        checkAbort();
+        const date = String(raw.created_at ?? raw.ledger_close_time ?? "");
+        const ts = Date.parse(date);
+        if (!Number.isFinite(ts)) { warn(`Undated ${kind} record for ${account}; coverage is incomplete.`); continue; }
+        if (!oldestObserved || ts < Date.parse(oldestObserved)) oldestObserved = date;
+        if (!newestObserved || ts > Date.parse(newestObserved)) newestObserved = date;
+        if (ts < fromTs) { beforeWindow = true; break; }
+        if (ts > toTs) continue;
+        const id = String(raw.id ?? raw.paging_token ?? "");
+        if (!id) { warn(`Missing ${kind} event ID for ${account}; record skipped.`); continue; }
+        if (seen.has(id)) continue;
+        seen.add(id);
+        if (raw.transaction_successful === false || raw.successful === false) continue;
+        await visit(raw);
+      }
+      onProgress?.({ phase: `Scanning ${kind} for ${account.slice(0, 6)}…`, pages, records: recordsSeen,
+        hits: proceedsLedger.length + purchaseLedger.length + outgoingLedger.length });
+      if (beforeWindow || records.length < FETCH_LIMIT) break;
+      const next = String(records.at(-1)?.paging_token ?? "");
+      if (!next || visitedCursors.has(next)) { warn(`Pagination did not advance for ${account} ${kind}; cursor cycle detected.`); break; }
+      visitedCursors.add(next);
+      cursor = next;
+    }
+  };
 
+  for (const account of accountList) {
+    checkAbort();
+    await scan(account, "payments", async (raw) => {
+      const operationId = String(raw.id);
+      operationCache.set(operationId, raw);
+      const entry = (category: ProceedsLedgerEntry["category"], amountXlm: number): ProceedsLedgerEntry => ({
+        id: `${category}-${operationId}`, operationId, account, category, amountXlm,
+        txHash: String(raw.transaction_hash ?? ""), createdAt: String(raw.created_at ?? ""),
+        from: account, to: String(raw.to ?? raw.into ?? raw.account ?? ""), successful: true,
+        toMuxed: raw.to_muxed == null ? undefined : String(raw.to_muxed),
+        toMuxedId: raw.to_muxed_id == null ? undefined : String(raw.to_muxed_id),
+      });
+      if (raw.type === "invoke_host_function") {
+        verifiedContractOperations.add(`${account}:${operationId}`);
+        const conversion = resolveContractConversion(raw, account, assetCode, issuer);
+        if (conversion.warning) warn(`${conversion.warning} Operation ${operationId}.`);
+        if (conversion.sale) proceedsLedger.push({ ...entry("contract_sale", conversion.sale.amountXlm), ...conversion.sale, to: account });
+        if (conversion.purchase) purchaseLedger.push({ ...entry("contract_purchase", conversion.purchase.amountXlm), ...conversion.purchase, to: account });
+      } else if (isPath(raw) && raw.from === account) {
+        if (isTargetAsset(raw, assetCode, issuer, "source_asset") && isNativeAsset(raw)) {
+          const sale = entry("path_sale", parseAmount(raw.amount));
+          sale.assetSoldAmount = parseAmount(raw.source_amount);
+          if (sale.assetSoldAmount > 0 && sale.amountXlm > 0) {
+            proceedsLedger.push(sale);
+            if (sale.to && sale.to !== account) {
+              const delivery = { ...sale, id: `sale-delivery-${operationId}`, category: "sale_delivery" as const };
+              saleDeliveryLedger.push(delivery);
+              transfer(delivery);
+            }
+          }
+        } else if (isNativeAsset(raw, "source_asset") && !isNativeAsset(raw)) {
+          const purchase = entry("path_purchase", parseAmount(raw.source_amount));
+          purchase.targetAssetPurchase = isTargetAsset(raw, assetCode, issuer);
+          if (purchase.amountXlm > 0) purchaseLedger.push(purchase);
+        } else if (isNativeAsset(raw, "source_asset") && isNativeAsset(raw)) {
+          const amount = parseAmount(raw.amount);
+          if (parseAmount(raw.source_amount) !== amount)
+            warn(`Native path ${operationId} consumed ${parseAmount(raw.source_amount)} XLM and delivered ${amount} XLM; conversion difference is not a destination payment.`);
+          if (amount > 0) transfer(entry("path_native_out", amount));
+        }
+      } else if (raw.type === "payment" && raw.from === account && isNativeAsset(raw)) {
+        const amount = parseAmount(raw.amount);
+        if (amount > 0) transfer(entry("payment", amount));
+      } else if (raw.type === "create_account" && raw.funder === account) {
+        const amount = parseAmount(raw.starting_balance);
+        if (amount > 0) transfer(entry("create_account", amount));
+      } else if (raw.type === "account_merge" && raw.source_account === account) {
+        const url = `${base}/operations/${operationId}/effects?limit=200`;
+        options.onLog?.(`  GET ${url}`);
+        const amount = await fetchAccountMergeAmount(base, operationId, String(raw.into ?? ""), signal);
+        checkAbort();
+        if (amount > 0) transfer(entry("account_merge", amount));
+        else warn(`Account merge ${operationId} amount unavailable.`);
+      }
+    });
+
+    await scan(account, "trades", async (raw) => {
+      if (raw.base_account !== account && raw.counter_account !== account) return;
+      const sale = resolveAssetToXlmTrade(raw, account, assetCode, issuer);
+      const ownPrefix = raw.base_account === account ? "base" : "counter";
+      const otherPrefix = ownPrefix === "base" ? "counter" : "base";
+      const purchase = isNativeAsset(raw, `${ownPrefix}_asset`) && !isNativeAsset(raw, `${otherPrefix}_asset`);
+      if (!sale && !purchase) return;
+      const links = raw._links as { operation?: { href?: string } } | undefined;
+      const href = links?.operation?.href;
+      const operationId = href?.match(/\/operations\/([^/?#]+)/)?.[1] ??
+        (raw.operation_id ? String(raw.operation_id) : undefined);
+      if (operationId && verifiedContractOperations.has(`${account}:${operationId}`)) return;
+      let operation: HorizonRecord | undefined;
+      if (operationId) {
+        operation = operationCache.get(operationId);
+        if (!operation) {
+          try {
+            operation = await get(`${base}/operations/${encodeURIComponent(operationId)}`);
+            operationCache.set(operationId, operation!);
+          } catch (error) {
+            checkAbort();
+            warn(`Trade ${raw.id} operation ${operationId} unavailable; unverified trade skipped: ${getErrorMessage(error)}`);
+            return;
+          }
+        }
+        if (!operation?.type) {
+          warn(`Trade ${raw.id} operation ${operationId} could not be verified; trade skipped.`);
+          return;
+        }
+        if (operation.transaction_successful === false || operation.successful === false) return;
+        // A path source's fills are conversion legs; only its payment endpoint realizes proceeds.
+        if (isPath(operation) && operation.from === account) return;
+      } else {
+        warn(`Trade ${raw.id} lacks operation evidence; unverified trade skipped.`);
+        return;
+      }
+      const entry: ProceedsLedgerEntry = {
+        id: `dex-${String(raw.id)}`, operationId, account, category: sale ? "dex_sale" : "dex_purchase",
+        amountXlm: sale?.received ?? parseAmount(raw[`${ownPrefix}_amount`]),
+        txHash: String(operation?.transaction_hash ?? raw.transaction_hash ?? ""),
+        createdAt: String(raw.ledger_close_time ?? ""), from: account, successful: true,
+      };
+      if (sale && sale.sold > 0 && sale.received > 0) {
+        entry.assetSoldAmount = sale.sold;
+        proceedsLedger.push(entry);
+      } else if (purchase && entry.amountXlm > 0) {
+        entry.targetAssetPurchase = isTargetAsset(raw, assetCode, issuer, `${otherPrefix}_asset`);
+        purchaseLedger.push(entry);
+      }
+    });
+
+    let currentXlmBalance: number | null = null;
+    try {
+      const data = await get(`${base}/accounts/${account}`);
+      const native = (data.balances as HorizonRecord[] | undefined)?.find((balance) => balance.asset_type === "native");
+      const amount = Number(native?.balance);
+      if (native && Number.isFinite(amount)) currentXlmBalance = amount;
+      else warn(`Current XLM balance unavailable for ${account}.`);
+    } catch (error) {
+      checkAbort();
+      if (error instanceof HorizonFetchError && error.status === 404) currentXlmBalance = 0;
+      else warn(`Current XLM balance unavailable for ${account}: ${getErrorMessage(error)}`);
+    }
+    const sales = proceedsLedger.filter((entry) => entry.account === account);
+    const purchases = purchaseLedger.filter((entry) => entry.account === account);
+    const summary: AccountSummary = {
+      account, totalXlmProceeds: sum(sales), totalAssetSold: sales.reduce((total, sale) => total + (sale.assetSoldAmount ?? 0), 0),
+      totalXlmSpentOnPurchases: sum(purchases.filter((entry) => entry.targetAssetPurchase)),
+      accountWideXlmSpentOnPurchases: sum(purchases),
+      totalOutgoingXlm: sum(outgoingLedger.filter((entry) => entry.account === account)), currentXlmBalance,
+      confirmedSeller: sales.length > 0, saleEvidenceIds: sales.map((entry) => entry.id),
+    };
+    accountSummaries.push(summary);
+    options.onResult?.(summary);
+  }
+  checkAbort();
+  const destinations = new Map<string, { totalXlm: number; count: number }>();
+  for (const entry of outgoingLedger) {
+    if (!entry.to) continue;
+    const previous = destinations.get(entry.to) ?? { totalXlm: 0, count: 0 };
+    destinations.set(entry.to, { totalXlm: previous.totalXlm + entry.amountXlm, count: previous.count + 1 });
+  }
+  if (options.network) onProgress?.({ phase: "Verifying beneficiary transaction memos", pages: 0, records: outgoingLedger.length });
+  const beneficiaryGrouping = options.network
+    ? await fetchBeneficiaryGrouping(outgoingLedger, options.network, signal, hash => get(`${base}/transactions/${encodeURIComponent(hash)}`))
+    : undefined;
+  checkAbort();
+  const totalXlmProceeds = sum(proceedsLedger);
+  const totalOutgoingXlm = sum(outgoingLedger);
   return {
-    assetCode,
-    issuer,
-    accounts: accountList,
-    totalAssetSold,
-    totalXlmProceeds,
-    totalOutgoingXlm,
-    estimatedOnHandXlm: totalXlmProceeds - totalOutgoingXlm,
-    dexTradeCount,
-    pathSaleCount,
-    proceedsLedger: sortByDateDesc(proceedsLedger),
-    outgoingLedger: sortByDateDesc(outgoingLedger),
-    topDestinations,
+    assetCode, issuer, accounts: accountList, beneficiaryGrouping,
+    totalAssetSold: accountSummaries.reduce((total, summary) => total + summary.totalAssetSold, 0),
+    totalXlmProceeds, totalOutgoingXlm, estimatedOnHandXlm: totalXlmProceeds - totalOutgoingXlm,
+    totalXlmSpentOnPurchases: sum(purchaseLedger.filter((entry) => entry.targetAssetPurchase)),
+    accountWideXlmSpentOnPurchases: sum(purchaseLedger),
+    currentXlmBalance: accountSummaries.some((summary) => summary.currentXlmBalance === null) ? null :
+      accountSummaries.reduce((total, summary) => total + (summary.currentXlmBalance ?? 0), 0),
+    totalInternalTransferXlm: sum(internalTransferLedger), externalSaleDeliveryXlm: sum(saleDeliveryLedger.filter((entry) => !selected.has(entry.to ?? ""))),
+    contractSaleCount: proceedsLedger.filter((entry) => entry.category === "contract_sale").length,
+    dexTradeCount: proceedsLedger.filter((entry) => entry.category === "dex_sale").length,
+    pathSaleCount: proceedsLedger.filter((entry) => entry.category === "path_sale").length,
+    proceedsLedger: sortByDateDesc(proceedsLedger), outgoingLedger: sortByDateDesc(outgoingLedger),
+    purchaseLedger: sortByDateDesc(purchaseLedger), internalTransferLedger: sortByDateDesc(internalTransferLedger),
+    saleDeliveryLedger: sortByDateDesc(saleDeliveryLedger), accountSummaries,
+    coverage: { requestedFrom: fromDate?.toISOString() ?? null, requestedTo: new Date(toTs).toISOString(),
+      oldestObserved, newestObserved, complete: historyComplete, warnings: [...warnings] },
+    topDestinations: [...destinations].map(([address, info]) => ({ address, ...info }))
+      .sort((a, b) => b.totalXlm - a.totalXlm).slice(0, 50),
   };
 }
 

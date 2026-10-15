@@ -34,6 +34,7 @@ function stubHorizon(routes: {
       const opId = u.split("/operations/")[1]?.split("/effects")[0] ?? "";
       return json(page(routes.effects?.[opId] ?? []));
     }
+    if (u.includes("/operations/trade-op-")) return json({ type: "manage_sell_offer", transaction_hash: "trade-tx", transaction_successful: true });
     if (u.includes("/trades")) return json(page(routes.trades ?? []));
     if (u.includes("/payments")) return json(page(routes.payments ?? []));
     return json(page([]));
@@ -47,6 +48,7 @@ function stubHorizon(routes: {
 function dexTrade(overrides: Record<string, unknown> = {}) {
   return {
     id: "trade-1",
+    operation_id: "trade-op-1",
     paging_token: "pt-trade-1",
     ledger_close_time: "2026-01-01T00:00:00Z",
     base_account: ACCOUNT,
@@ -165,10 +167,10 @@ describe("fetchAssetXlmProceeds", () => {
     expect(result.totalAssetSold).toBeCloseTo(140, 7);
     // XLM proceeds: 50 (DEX) + 20 (path sale)
     expect(result.totalXlmProceeds).toBeCloseTo(70, 7);
-    // Outgoing: 10 + 5 + 3 (payments) + 25 (merge)
-    expect(result.totalOutgoingXlm).toBeCloseTo(43, 7);
-    // On-hand = proceeds - outgoing = 70 - 43
-    expect(result.estimatedOnHandXlm).toBeCloseTo(27, 7);
+    // Outgoing includes the 20 XLM sale delivered directly to DEST_A.
+    expect(result.totalOutgoingXlm).toBeCloseTo(63, 7);
+    // Legacy arithmetic: proceeds - external outgoing = 70 - 63
+    expect(result.estimatedOnHandXlm).toBeCloseTo(7, 7);
 
     expect(result.dexTradeCount).toBe(1);
     expect(result.pathSaleCount).toBe(1);
@@ -253,31 +255,13 @@ describe("fetchAssetXlmProceeds", () => {
     expect(progress.every((p) => typeof p.records === "number")).toBe(true);
   });
 
-  it("returns an empty (zeroed) result without fetching when signal is already aborted", async () => {
-    const f = stubHorizon({
-      trades: [dexTrade()],
-      payments: [xlmPayment("pay-1", DEST_A, "10")],
-    });
-
+  it("rejects an already aborted scan without fetching", async () => {
+    const f = stubHorizon({});
     const controller = new AbortController();
     controller.abort();
-
-    const result = await fetchAssetXlmProceeds(
-      HORIZON,
-      ASSET_CODE,
-      ISSUER,
-      [ACCOUNT],
-      controller.signal,
-    );
-
-    // Aborted-before-start short-circuits the account loop: resolves (does not
-    // reject/hang) with a zeroed result and never touches the network.
+    await expect(fetchAssetXlmProceeds(HORIZON, ASSET_CODE, ISSUER, [ACCOUNT], controller.signal))
+      .rejects.toMatchObject({ name: "AbortError" });
     expect(f).not.toHaveBeenCalled();
-    expect(result.totalAssetSold).toBe(0);
-    expect(result.totalXlmProceeds).toBe(0);
-    expect(result.totalOutgoingXlm).toBe(0);
-    expect(result.estimatedOnHandXlm).toBe(0);
-    expect(result.topDestinations).toEqual([]);
   });
 });
 
