@@ -1,7 +1,8 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { loadSavedDistributors } from "@/lib/proceeds-investigator/saved-distributors";
+import { waitForAuth } from "@/lib/db-client";
 
-vi.mock("@/lib/db-client", () => ({ waitForAuth: async () => {}, authHeaders: () => ({ Authorization: "Bearer test" }) }));
+vi.mock("@/lib/db-client", () => ({ waitForAuth: vi.fn(async () => {}), authHeaders: () => ({ Authorization: "Bearer test" }) }));
 const account = "GBHWTASVVCTOEIPWDJ7QFVKCP5XN3VRSQLD2ZARWO2GTH54GDQ4BI3EH";
 const run = (signal = new AbortController().signal) => loadSavedDistributors("WhipSim", account, "public", signal);
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
@@ -42,4 +43,27 @@ it("cancels an already pending saved-distributor request", async () => {
   await vi.waitFor(() => expect(started).toHaveBeenCalledOnce());
   controller.abort();
   await expect(request).rejects.toThrow();
+});
+
+it.each(["cancel", "timeout"])("bounds pending authentication on %s and never fetches after auth resolves", async mode => {
+  let finishAuth!: () => void;
+  vi.mocked(waitForAuth).mockImplementationOnce(() => new Promise<void>(resolve => { finishAuth = resolve; }));
+  const controller = new AbortController();
+  const timeout = new AbortController();
+  vi.spyOn(AbortSignal, "timeout").mockReturnValue(timeout.signal);
+  const fetcher = vi.fn();vi.stubGlobal("fetch", fetcher);
+  const request = run(controller.signal);
+  const rejection = expect(request).rejects.toThrow(mode === "timeout" ? "Saved distributors could not be loaded" : "cancelled");
+  (mode === "timeout" ? timeout : controller).abort(new DOMException(mode === "timeout" ? "Timed out" : "cancelled", mode === "timeout" ? "TimeoutError" : "AbortError"));
+  await rejection;
+  finishAuth();
+  await Promise.resolve();
+  expect(fetcher).not.toHaveBeenCalled();
+});
+
+it("removes the authentication abort listener after readiness", async () => {
+  const removeListener = vi.spyOn(AbortSignal.prototype, "removeEventListener");
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json({ accounts: [] })));
+  await run();
+  expect(removeListener).toHaveBeenCalledWith("abort", expect.any(Function));
 });

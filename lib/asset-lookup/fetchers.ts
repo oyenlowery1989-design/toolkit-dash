@@ -331,6 +331,7 @@ export async function inferDistribLite(
   issuer: string,
   signal: AbortSignal,
   onLog?: (message: string) => void,
+  options: { requestTimeoutMs?: number } = {},
 ): Promise<{ address: string; score: number; reason: string; evidence?: DistributionEvidence[] }[]> {
   const horizonBase = horizonUrl.replace(/\/$/, "");
   type RecordData = Record<string, unknown>;
@@ -362,7 +363,7 @@ export async function inferDistribLite(
       if (cursor) params.set("cursor", cursor);
       const url = `${horizonBase}${path}?${params}`;
       onLog?.(`  GET ${url}`);
-      const data = await fetchJson(url, signal, { onLog });
+      const data = await fetchJson(url, signal, { onLog, timeoutMs: options.requestTimeoutMs });
       signal.throwIfAborted();
       const batch: RecordData[] = data._embedded?.records;
       if (!Array.isArray(batch)) throw new Error("Distributor inference history is incomplete. Enter seller accounts manually.");

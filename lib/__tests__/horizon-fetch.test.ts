@@ -1,9 +1,48 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { fetchJson, HorizonFetchError } from "../horizon-fetch";
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 describe("fetchJson", () => {
+  it.each(["fetch", "body", "retry-after"])("bounds a stalled %s with one deadline", async stage => {
+    vi.useFakeTimers();
+    const stalled = new Promise<never>(() => {});
+    const fetcher = vi.fn().mockImplementation(() => stage === "fetch" ? stalled : stage === "body"
+      ? Promise.resolve({ ok: true, json: () => stalled })
+      : Promise.resolve(new Response(null, { status: 429, headers: { "Retry-After": "999999" } })));
+    vi.stubGlobal("fetch", fetcher);
+    const request = fetchJson("http://x", undefined, { timeoutMs: 100 });
+    const rejection = expect(request).rejects.toMatchObject({ name: "TimeoutError" });
+    await vi.advanceTimersByTimeAsync(100);
+    await rejection;
+    await vi.advanceTimersByTimeAsync(10000);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("cancels a stalled opt-in request and cleans up its deadline", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("fetch", vi.fn(() => new Promise(() => {})));
+    const controller = new AbortController();
+    const request = fetchJson("http://x", controller.signal, { timeoutMs: 100 });
+    const rejection = expect(request).rejects.toMatchObject({ name: "AbortError" });
+    controller.abort();
+    await rejection;
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("does not fetch an already cancelled request", async () => {
+    const fetcher = vi.fn();vi.stubGlobal("fetch", fetcher);
+    await expect(fetchJson("http://x", AbortSignal.abort())).rejects.toMatchObject({ name: "AbortError" });
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it("notices cancellation from retry logging before waiting", async () => {
+    const controller = new AbortController();
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, { status: 429 })));
+    await expect(fetchJson("http://x", controller.signal, { onLog: () => controller.abort() })).rejects.toMatchObject({ name: "AbortError" });
+  });
+
   it("returns parsed JSON on 200", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(
       new Response(JSON.stringify({ ok: 1 }), { status: 200 })));

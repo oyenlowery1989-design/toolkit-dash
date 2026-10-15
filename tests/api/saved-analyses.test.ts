@@ -169,7 +169,7 @@ describe("saved analysis history", () => {
   });
 
   it("reduces timed-out database batches without losing rows, order or tenant scope", async () => {
-    const original = Array.from({ length: 13 }, (_, i) => ({ ...row({ ...analysis(String(i)), timestamp: 13 - i }), user_id: "owner" }));
+    const original: Record<string, unknown>[] = Array.from({ length: 13 }, (_, i) => ({ ...row({ ...analysis(String(i)), timestamp: 13 - i }), user_id: "owner" }));
     const limits: number[] = [];
     mocks.client = createClient("https://test.supabase.co", "test-key", { auth: { persistSession: false }, global: { fetch: async input => {
       const url = new URL(String(input));
@@ -177,7 +177,7 @@ describe("saved analysis history", () => {
       const limit = Number(url.searchParams.get("limit")); limits.push(limit);
       if (limit > 1) return Response.json({ code: "57014", message: "canceling statement due to statement timeout" }, { status: 500 });
       const cursor = url.searchParams.get("or")?.match(/created_at\.lt\.(\d+)/)?.[1];
-      const filtered = original.filter(row => !cursor || row.created_at < Number(cursor));
+      const filtered = original.filter(row => !cursor || Number(row.created_at) < Number(cursor));
       return Response.json(filtered.slice(0, 1), { headers: { "Content-Range": `0-0/${filtered.length}` } });
     } } });
     const ids: string[] = [];

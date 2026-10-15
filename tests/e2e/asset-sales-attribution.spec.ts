@@ -18,21 +18,23 @@ for (const history of ["pending", "failed"] as const) {
       await route.fulfill({ json: path === "/api/db/bulk-scan-state" ? null : [] });
     });
     await page.goto("/asset-sales");
-    await expect.poll(() => historyRequested).toBe(true);
     const input = page.locator("#assets-input");
     await expect(input).toHaveValue("");
+    expect(historyRequested).toBe(false);
     await expect(page.getByText("Loading saved distributors before automatic selection…", { exact: true })).toHaveCount(0);
     const message = page.getByText(history === "pending" ? /Saved history is loading/ : /History comparison unavailable/);
     await expect(message).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Run Analysis", exact: true })).toBeEnabled();
     await input.fill(`Token:${issuer}`);
-    await expect(message).toBeVisible();
+    await expect.poll(() => historyRequested).toBe(true);
+    if (history === "failed") await expect(message).toBeVisible();
+    else await expect(message).toHaveCount(0);
     await input.fill("");
     await expect(message).toHaveCount(0);
     release();
   });
 }
-for (const mode of ["automatic", "saved", "failed distributors", "manual", "historical lookup", "pending history", "failed history", "paginated history", "autorun pending history", "late scan restore", "late scan restore with pending history"] as const) {
+for (const mode of ["automatic", "saved", "failed distributors", "manual", "pending issuer metadata", "historical lookup", "pending history", "history finishes during scan", "failed history", "paginated history", "autorun pending history", "late scan restore", "late scan restore with pending history"] as const) {
   test(`${mode} selection scans every chosen seller and preserves provenance`, async ({ page }) => {
     const horizonUrls: URL[] = [];
     const writes: Array<{ url: string; body: Record<string, unknown> }> = [];
@@ -57,7 +59,11 @@ for (const mode of ["automatic", "saved", "failed distributors", "manual", "hist
     let historyPending = false;
     let releaseHistory!: () => void;
     const historyGate = new Promise<void>(resolve => { releaseHistory = resolve; });
-    const groups = (mode === "saved" || mode === "historical lookup" || historyMode || mode === "late scan restore") ? [{ id: "saved-group", name: "Saved sellers", assetCode: "Token", issuer, network: "public", createdAt: 1, updatedAt: 1,
+    let releaseTrades!: () => void;
+    const tradeGate = new Promise<void>(resolve => { releaseTrades = resolve; });
+    let releaseMetadata!: () => void;
+    const metadataGate = new Promise<void>(resolve => { releaseMetadata = resolve; });
+    const groups = (mode === "saved" || mode === "pending issuer metadata" || mode === "historical lookup" || historyMode || mode === "late scan restore") ? [{ id: "saved-group", name: "Saved sellers", assetCode: "Token", issuer, network: "public", createdAt: 1, updatedAt: 1,
       members: sellers.map((address, i) => ({ id: String(i), groupId: "saved-group", address, role: "distributor", addedAt: 1 })) }] : [];
     await page.route("**/api/db/**", async route => {
       const url = new URL(route.request().url());
@@ -73,6 +79,10 @@ for (const mode of ["automatic", "saved", "failed distributors", "manual", "hist
         }
         historyPending = true;
         await historyGate;
+        if (mode === "history finishes during scan") {
+          await route.fulfill({ json: [{ id: "previous", name: "Previous Token analysis", timestamp: 1, assetCode: "Token", issuer, network: "public", distribAddresses: sellers,
+            result: { assetCode: "Token", issuer, accounts: sellers, totalXlmProceeds: 0, totalAssetSold: 0, totalOutgoingXlm: 0, estimatedOnHandXlm: 0, dexTradeCount: 0, pathSaleCount: 0, topDestinations: [] } }] }); return;
+        }
         await route.fulfill({ json: [] }); return;
       }
       if (url.pathname === "/api/db/groups") {
@@ -91,9 +101,11 @@ for (const mode of ["automatic", "saved", "failed distributors", "manual", "hist
     await page.route("**/api.coingecko.com/**", route => route.fulfill({ json: { stellar: { usd: 0.2 } } }));
     await page.route("https://horizon.stellar.org/**", async route => {
       const url = new URL(route.request().url());horizonUrls.push(url);
+      if (mode === "pending issuer metadata" && url.pathname === `/accounts/${issuer}`) await metadataGate;
       if (url.pathname === "/") { await route.fulfill({ json: { history_elder_ledger: 500 } }); return; }
       if (url.pathname === "/trades") {
         releaseRestore();
+        if (mode === "history finishes during scan") await tradeGate;
         const account = url.searchParams.get("account_id")!;const index = sellers.indexOf(account);
         await route.fulfill({ json: { _embedded: { records: index < 0 ? [] : [{ id: `trade-${index}`, operation_id: `sale-${index}`, ledger_close_time: "2026-01-05T00:00:00Z", base_account: account, counter_account: issuer,
           base_asset_type: "credit_alphanum4", base_asset_code: "Token", base_asset_issuer: issuer, base_amount: "10", counter_asset_type: "native", counter_amount: String(index + 3) }] } } });return;
@@ -125,6 +137,14 @@ for (const mode of ["automatic", "saved", "failed distributors", "manual", "hist
     if (mode === "failed history") await expect(page.getByText(/History comparison unavailable/)).toBeVisible();
     else if (historyMode) await expect.poll(() => historyPending).toBe(true);
     if (mode !== "autorun pending history") await runButton.click();
+    if (mode === "history finishes during scan") {
+      const loaded = page.waitForResponse(response => response.url().includes("/api/db/saved-analyses") && response.request().method() === "GET");
+      releaseHistory();
+      await loaded;
+      await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+      releaseTrades();
+    }
+    if (mode === "pending issuer metadata") await expect.poll(() => horizonUrls.some(url => url.pathname === "/trades"), { timeout: 2000 }).toBe(true);
     if (mode === "failed distributors") {
       await expect(page.getByText(/Saved distributors could not be loaded/)).toBeVisible();
       await expect(runButton).toBeEnabled();
@@ -134,6 +154,7 @@ for (const mode of ["automatic", "saved", "failed distributors", "manual", "hist
     }
     if (mode === "historical lookup") await expect(page.getByText("Distribution Sales — XLM Proceeds", { exact: true })).toBeVisible();
     if (mode !== "historical lookup") await expect(page.getByText("1 done · 0 failed")).toBeVisible();
+    if (mode === "history finishes during scan") await expect(page.getByText("saved 1× before", { exact: true })).toBeVisible();
     if (mode !== "historical lookup") {
       await expect(page.getByText("1 Token ≈ 0.35 XLM · avg", { exact: true })).toBeVisible();
       await expect(page.getByRole("link", { name: "Open Token on Lobstr", exact: true })).toHaveAttribute("href", `https://lobstr.co/trade/Token:${issuer}`);
@@ -163,9 +184,68 @@ for (const mode of ["automatic", "saved", "failed distributors", "manual", "hist
     expect(horizonUrls.some(u => u.pathname === `/accounts/${issuer}/payments`)).toBe(mode === "automatic");
     releaseHistory();
     releaseGroups();
+    releaseMetadata();
     if (mode === "manual") expect(distributorReads).toBe(0);
     if (mode === "saved") expect(distributorReads).toBe(1);
     if (mode === "failed distributors") expect(distributorReads).toBe(2);
     expect(new Set(horizonUrls.filter(u => u.pathname === "/trades").map(u => u.searchParams.get("account_id")))).toEqual(new Set(sellers));
   });
 }
+
+test("cancelling pending requests preserves stopped rows and does not show a refresh warning", async ({ page }) => {
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  let metadataRequested = false;
+  await page.route("**/api/db/**", route => route.fulfill({ json: new URL(route.request().url()).pathname === "/api/db/bulk-scan-state" ? null : [] }));
+  await page.route("**/api.coingecko.com/**", route => route.fulfill({ json: { stellar: { usd: 0.2 } } }));
+  await page.route("https://horizon.stellar.org/**", async route => {
+    const path = new URL(route.request().url()).pathname;
+    if (path === `/accounts/${issuer}`) metadataRequested = true;
+    await gate;
+    await route.fulfill({ json: path === `/accounts/${issuer}` ? { home_domain: "stale.example" } : { _embedded: { records: [] } } });
+  });
+  await page.goto("/asset-sales");
+  await page.locator("#assets-input").fill(`Token:${issuer}`);
+  await page.locator("#override-accounts").fill(sellers[0]);
+  const run = page.getByRole("button", { name: "Run Analysis", exact: true });
+  await run.click();
+  await expect.poll(() => metadataRequested).toBe(true);
+  await page.getByRole("button", { name: "Cancel", exact: true }).click();
+  release();
+  await expect(run).toBeEnabled();
+  await expect(page.getByText("Scan cancelled.", { exact: true })).toBeVisible();
+  await expect(page.getByText("Previous scan was interrupted", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("Unfinished scan restored", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("stale.example", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("0 done · 0 failed · 1 stopped", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Clear", exact: true })).toBeEnabled();
+});
+
+test("a stalled Stellar request times out and releases Run Analysis without saving a result", async ({ page }) => {
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  let tradesPending = false, saved = false;
+  await page.route("**/api/db/**", route => {
+    const path = new URL(route.request().url()).pathname;
+    if (path === "/api/db/saved-analyses" && route.request().method() === "POST") saved = true;
+    return route.fulfill({ json: path === "/api/db/bulk-scan-state" ? null : [] });
+  });
+  await page.route("**/api.coingecko.com/**", route => route.fulfill({ json: { stellar: { usd: 0.2 } } }));
+  await page.route("https://horizon.stellar.org/**", async route => {
+    const path = new URL(route.request().url()).pathname;
+    if (path === "/trades") { tradesPending = true; await gate; }
+    await route.fulfill({ json: path === "/" ? { history_elder_ledger: 1 } : { _embedded: { records: [] }, balances: [{ asset_type: "native", balance: "1" }] } });
+  });
+  await page.goto("/asset-sales");
+  await page.locator("#assets-input").fill(`Token:${issuer}`);
+  await page.locator("#override-accounts").fill(sellers[0]);
+  await page.clock.install();
+  const run = page.getByRole("button", { name: "Run Analysis", exact: true });
+  await run.click();
+  await expect.poll(() => tradesPending).toBe(true);
+  await page.clock.fastForward(30_001);
+  await expect(page.getByText("Stellar did not respond in time. Run the analysis again.", { exact: true })).toBeVisible();
+  await expect(run).toBeEnabled();
+  expect(saved).toBe(false);
+  release();
+});

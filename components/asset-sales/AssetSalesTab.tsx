@@ -109,6 +109,7 @@ function isUnchangedSince(prior: SavedAnalysisSummary, result: AssetProceedsResu
 // ---------------------------------------------------------------------------
 
 const CONCURRENCY = 3;
+const REQUEST_TIMEOUT_MS = 30_000;
 
 function formatDuration(ms: number): string {
   const totalSeconds = Math.round(ms / 1000);
@@ -346,16 +347,22 @@ function SinceLastSave({
 export function AssetSalesTab() {
   const router = useRouter();
   const { settings, updateSettings } = useSettings();
+  const [assetsText, setAssetsText] = useState("");
+  const parsedPairs = parseAssetPairs(assetsText);
+  const singlePair = parsedPairs.length === 1;
   const { upsert: upsertSearch } = useSavedSearches();
-  const { analyses: savedAnalyses, saveAnalysis, remove: removeSavedAnalysis, isLoaded: historyLoaded, loadingHistory, error: historyError, retry: retryHistory } = useSavedAnalyses();
+  const { analyses: savedAnalyses, saveAnalysis, remove: removeSavedAnalysis, isLoaded: historyLoaded, loadingHistory, error: historyError, retry: retryHistory } = useSavedAnalyses({ load: parsedPairs.length > 0 });
   const historyReady = historyLoaded && !loadingHistory && !historyError;
+  const historyRef = useRef({ ready: historyReady, analyses: savedAnalyses });
+  useEffect(() => {
+    historyRef.current = { ready: historyReady, analyses: savedAnalyses };
+  }, [historyReady, savedAnalyses]);
   const { groups, isLoaded: groupsLoaded } = useAssetGroups();
   const {
     history: searchHistory,
     upsert: upsertHistory,
     remove: removeHistory,
   } = useProceedsHistory();
-  const [assetsText, setAssetsText] = useState("");
   const [overrideAccountsText, setOverrideAccountsText] = useState("");
   const [rows, setRows] = useState<AssetRow[]>([]);
   const [running, setRunning] = useState(false);
@@ -369,9 +376,6 @@ export function AssetSalesTab() {
   const searchParams = useSearchParams();
   const prefilledRef = useRef(false);
   const pendingAutorunRef = useRef(false);
-
-  const parsedPairs = parseAssetPairs(assetsText);
-  const singlePair = parsedPairs.length === 1;
 
   useEffect(() => {
     requestNotificationPermission();
@@ -429,7 +433,7 @@ export function AssetSalesTab() {
         r.status === "scanning"
           ? {
               status: "error" as AssetRowStatus,
-              error: "Scan was interrupted (page refresh).",
+              error: "Previous scan was not completed.",
             }
           : {}),
       }));
@@ -519,6 +523,7 @@ export function AssetSalesTab() {
           selection = await selectSellerAccounts({
             horizonUrl, assetCode, issuer, network: settings.network, groups,
             savedAccounts, manualAccounts: overrideAccounts, signal, onLog,
+            requestTimeoutMs: REQUEST_TIMEOUT_MS,
           });
           if (signal.aborted) return;
           if (!selection.accounts.length) {
@@ -526,14 +531,16 @@ export function AssetSalesTab() {
             return;
           }
         } catch (error) {
-          if (!signal.aborted) updateRow(i, { status: "error", error: getErrorMessage(error), elapsedMs: Date.now() - startedAt });
+          if (!signal.aborted) updateRow(i, { status: "error", error: error instanceof Error && error.name === "TimeoutError" ? "Stellar did not respond in time. Run the analysis again." : getErrorMessage(error), elapsedMs: Date.now() - startedAt });
           return;
         }
         const scanAccounts = selection.accounts;
         const distribAddress = scanAccounts[0];
         const inferReason = `${selection.attributions[0].source} selection · ${scanAccounts.length} account(s); selling is confirmed from asset-specific ledger entries`;
-        const hd = await fetchHomeDomain(horizonUrl, issuer, signal).catch(() => null);
-        if (!signal.aborted && hd) updateRow(i, { homeDomain: hd });
+        // Optional display metadata must not delay sales or revive a cancelled row.
+        void fetchHomeDomain(horizonUrl, issuer, signal).then(hd => {
+          if (!signal.aborted && hd) updateRow(i, { homeDomain: hd });
+        }).catch(() => {});
 
         // Step 2: scan proceeds
         updateRow(i, { status: "scanning", distribAddress, inferReason });
@@ -545,7 +552,7 @@ export function AssetSalesTab() {
             scanAccounts,
             signal,
             () => {}, undefined, undefined,
-            { network: settings.network, onLog: message => console.info(`[Asset Sales ${assetCode}] ${message}`) },
+            { network: settings.network, onLog: message => console.info(`[Asset Sales ${assetCode}] ${message}`), requestTimeoutMs: REQUEST_TIMEOUT_MS },
           );
           if (signal.aborted) return;
           result.sellerAttributions = selection.attributions.map(attribution => ({
@@ -556,7 +563,7 @@ export function AssetSalesTab() {
 
           // Incomplete history cannot safely suppress a new save or provide a comparison.
           const key = assetKey({ assetCode, issuer, network: settings.network });
-          const priorMatches = (historyReady ? savedAnalyses : [])
+          const priorMatches = (historyRef.current.ready ? historyRef.current.analyses : [])
             .filter((a) => assetKey(a) === key)
             .sort((a, b) => b.timestamp - a.timestamp);
           const priorSave: PriorSaveInfo | null = priorMatches.length
@@ -601,7 +608,7 @@ export function AssetSalesTab() {
           if (signal.aborted) return;
           updateRow(i, {
             status: "error",
-            error: getErrorMessage(e),
+            error: e instanceof Error && e.name === "TimeoutError" ? "Stellar did not respond in time. Run the analysis again." : getErrorMessage(e),
             elapsedMs: Date.now() - startedAt,
           });
         }
@@ -634,7 +641,6 @@ export function AssetSalesTab() {
   const handleCancel = () => {
     abortRef.current?.abort();
     setRunning(false);
-    setInterrupted(true);
     setRows((currentRows) => {
       const cancelledRows = cancelActiveRows(currentRows);
       bulkScanState.saveImmediate(cancelledRows, true);
@@ -671,7 +677,8 @@ export function AssetSalesTab() {
     );
 
   const doneCount = rows.filter((r) => r.status === "done").length;
-  const errorCount = rows.filter((r) => r.status === "error").length;
+  const stoppedCount = rows.filter((r) => r.status === "error" && r.error === "Scan cancelled.").length;
+  const errorCount = rows.filter((r) => r.status === "error" && r.error !== "Scan cancelled.").length;
   const pendingCount = rows.filter(
     (r) =>
       r.status === "pending" ||
@@ -694,11 +701,10 @@ export function AssetSalesTab() {
           <AlertTriangle className="h-4 w-4 text-yellow-500 shrink-0 mt-0.5" />
           <div className="flex-1 text-sm">
             <p className="font-medium text-yellow-700 dark:text-yellow-400">
-              Previous scan was interrupted
+              Unfinished scan restored
             </p>
             <p className="text-xs text-muted-foreground mt-0.5">
-              The page was refreshed while a scan was running. Completed results
-              are shown below. Start a new scan or clear to reset.
+              Saved progress is shown below. Start a new analysis or clear these results.
             </p>
           </div>
           <Button
@@ -706,6 +712,7 @@ export function AssetSalesTab() {
             size="icon"
             className="h-7 w-7 shrink-0"
             onClick={() => setInterrupted(false)}
+            aria-label="Dismiss restored scan notice"
           >
             <X className="h-3.5 w-3.5" />
           </Button>
@@ -773,9 +780,7 @@ export function AssetSalesTab() {
             Asset → XLM Proceeds
           </CardTitle>
           <CardDescription>
-            One <code className="text-xs">CODE:ISSUER</code> per line. Lobstr
-            URLs also work. Distribution address is inferred automatically
-            unless you enter seller accounts manually below.
+            One <code className="text-xs">CODE:ISSUER</code> per line. Lobstr links also work.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -813,7 +818,7 @@ export function AssetSalesTab() {
               <textarea
                 id="override-accounts"
                 className="w-full min-h-20 rounded-md border border-input bg-transparent px-3 py-2 text-sm font-mono"
-                placeholder="Leave empty to auto-infer, or paste one G... address per line"
+                placeholder="Leave empty to use saved distributors or infer sellers, or paste one G... address per line"
                 value={overrideAccountsText}
                 onChange={(e) => setOverrideAccountsText(e.target.value)}
                 disabled={running}
@@ -873,14 +878,14 @@ export function AssetSalesTab() {
           {rows.length > 0 && !running && (
             <span className="text-xs text-muted-foreground ml-auto self-center">
               {doneCount} done · {errorCount} failed
+              {stoppedCount > 0 && ` · ${stoppedCount} stopped`}
               {pendingCount > 0 && ` · ${pendingCount} pending`}
             </span>
           )}
         </CardFooter>
       </Card>
 
-      {parsedPairs.length > 0 && !historyError && (!historyLoaded || loadingHistory) && <p className="text-sm text-muted-foreground">Saved history is loading. You can run the analysis without comparison.</p>}
-      {parsedPairs.length > 0 && historyError && <div role="alert" className="text-sm text-destructive">History comparison unavailable. You can still run the analysis. {historyError} <Button size="sm" variant="outline" onClick={retryHistory}>Retry history</Button></div>}
+      {parsedPairs.length > 0 && historyError && <div role="alert" className="flex items-center gap-2 text-sm text-muted-foreground">History comparison unavailable. <Button size="sm" variant="outline" onClick={retryHistory}>Retry history</Button></div>}
       {/* Running progress */}
       {running && (
         <div className="flex items-center gap-3 rounded-lg border border-border bg-muted/40 px-4 py-3">
@@ -892,14 +897,9 @@ export function AssetSalesTab() {
                 : `Scanning ${Math.min(doneCount + errorCount + 1, rows.length)} of ${rows.length}…`}
             </p>
             <p className="text-xs text-muted-foreground mt-0.5">
-              {doneCount} done · {errorCount} failed · results are saved
-              automatically if you navigate away
+              {doneCount} done · {errorCount} failed · completed analyses are saved automatically
             </p>
           </div>
-          <Button variant="outline" size="sm" onClick={handleCancel}>
-            <X className="mr-1.5 h-3.5 w-3.5" />
-            Stop
-          </Button>
         </div>
       )}
 
@@ -1043,18 +1043,6 @@ export function AssetSalesTab() {
                   <p className="text-xs text-destructive flex items-center gap-1">
                     <AlertTriangle className="h-3 w-3 shrink-0" />
                     {row.error}
-                  </p>
-                </div>
-              )}
-
-              {/* Infer reason */}
-              {row.inferReason && row.status !== "error" && !row.expanded && (
-                <div className="px-4 pb-3 -mt-1">
-                  <p className="text-xs text-muted-foreground">
-                    <span className="font-semibold text-foreground">
-                      Distrib:{" "}
-                    </span>
-                    {row.inferReason}
                   </p>
                 </div>
               )}

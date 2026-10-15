@@ -26,12 +26,13 @@ export function TopHolders({ assetCode, issuer, horizonUrl, network, selectedAcc
     setLoading(true);setError(null);setScanned(0);
     try {
       const next = await fetchTopAssetHolders(horizonUrl, assetCode, issuer, controller.signal, {
+        requestTimeoutMs: 30_000,
         onLog: message => console.info(`[Top holders ${assetCode}] ${message}`),
         onProgress: count => { if (!controller.signal.aborted) setScanned(count); },
       });
       if (!controller.signal.aborted) setResult(next);
     } catch (cause) {
-      if (!controller.signal.aborted) setError(getErrorMessage(cause));
+      if (!controller.signal.aborted) setError(cause instanceof Error && cause.name === "TimeoutError" ? "The holder check timed out. Try again." : getErrorMessage(cause));
     } finally { if (!controller.signal.aborted) setLoading(false); }
   }
   return <section aria-label="Top 3 asset holders" className="rounded-md border p-3 space-y-3 text-xs">
@@ -42,7 +43,7 @@ export function TopHolders({ assetCode, issuer, horizonUrl, network, selectedAcc
           : <Button variant="outline" size="sm" onClick={check} disabled={disabled}>{result ? "Refresh top holders" : "Check top 3 holders"}</Button>}
       </div>
     </div>
-    <p className="text-muted-foreground">Holdings do not prove sales. Use as seller selects for this scan{group ? "; + Distributor saves to the asset group." : "."}</p>
+    <p className="text-muted-foreground">Holdings alone do not prove sales.</p>
     {loading && <p role="status">Checking all accounts… {scanned.toLocaleString()} scanned.</p>}
     {error && <p role="alert" className="text-destructive">{error}</p>}
     {result && <>

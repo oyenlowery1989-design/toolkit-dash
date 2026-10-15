@@ -5,13 +5,22 @@ export async function loadSavedDistributors(
   assetCode: string, issuer: string, network: string, signal: AbortSignal,
   onLog?: (message: string) => void,
 ): Promise<string[]> {
-  await waitForAuth();
-  signal.throwIfAborted();
-  const headers = authHeaders();
-  const url = `/api/asset-sales/distributors?${new URLSearchParams({ assetCode, issuer, network })}`;
-  onLog?.(`  GET ${url}`);
   try {
     const requestSignal = AbortSignal.any([signal, AbortSignal.timeout(20_000)]);
+    requestSignal.throwIfAborted();
+    await new Promise<void>((resolve, reject) => {
+      const cleanup = () => requestSignal.removeEventListener("abort", onAbort);
+      const onAbort = () => { cleanup(); reject(requestSignal.reason); };
+      requestSignal.addEventListener("abort", onAbort, { once: true });
+      waitForAuth().then(
+        () => { cleanup(); resolve(); },
+        error => { cleanup(); reject(error); },
+      );
+    });
+    requestSignal.throwIfAborted();
+    const headers = authHeaders();
+    const url = `/api/asset-sales/distributors?${new URLSearchParams({ assetCode, issuer, network })}`;
+    onLog?.(`  GET ${url}`);
     const response = await fetch(url, { headers, signal: requestSignal, cache: "no-store" });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const body = await response.json();

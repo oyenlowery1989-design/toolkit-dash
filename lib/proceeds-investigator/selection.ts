@@ -27,6 +27,7 @@ export async function selectSellerAccounts(options: {
   signal: AbortSignal;
   onLog?: (message: string) => void;
   onResult?: (attribution: SellerAttribution) => void;
+  requestTimeoutMs?: number;
 }): Promise<SellerSelection> {
   options.signal.throwIfAborted();
   const manual = [...new Set(options.manualAccounts?.map(a => a.trim()).filter(Boolean))];
@@ -37,7 +38,7 @@ export async function selectSellerAccounts(options: {
     attributions = (manual.length ? manual : saved).map(account => ({ account, source, evidence: [] }));
   } else {
     const candidates = await inferDistribLite(options.horizonUrl, options.assetCode, options.issuer,
-      options.signal, options.onLog);
+      options.signal, options.onLog, { requestTimeoutMs: options.requestTimeoutMs });
     attributions = candidates.map(candidate => ({ account: candidate.address, source: "inferred", evidence: candidate.evidence ?? [] }));
   }
   options.signal.throwIfAborted();

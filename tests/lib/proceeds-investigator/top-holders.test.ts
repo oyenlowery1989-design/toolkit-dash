@@ -13,6 +13,32 @@ function mock(pages = [[record("A", "10"), record("B", "30"), record("C", "20"),
   vi.stubGlobal("fetch", fetch); return fetch;
 }
 afterEach(() => vi.unstubAllGlobals());
+it("finishes ranking with unknown percentages when opted-in metadata exceeds five seconds", async () => {
+  vi.useFakeTimers();
+  try {
+    const original = mock();
+    vi.stubGlobal("fetch", (input: string | URL) => new URL(String(input)).pathname === "/assets" ? new Promise(() => {}) : original(input));
+    const request = fetchTopAssetHolders("https://horizon.example", "WhipSim", issuer, new AbortController().signal, { requestTimeoutMs: 30000 });
+    await vi.advanceTimersByTimeAsync(5000);
+    const result = await request;
+    expect(result.holders).toHaveLength(3);
+    expect(result.observedSupply).toBeNull();
+    expect(result.holders.every(holder => holder.percentage === null)).toBe(true);
+    expect(result.warning).toContain("could not be verified");
+    expect(vi.getTimerCount()).toBe(0);
+  } finally { vi.useRealTimers(); }
+});
+it("bounds an opted-in holder account request", async () => {
+  vi.useFakeTimers();
+  try {
+    const original = mock();
+    vi.stubGlobal("fetch", (input: string | URL) => new URL(String(input)).pathname === "/accounts" ? new Promise(() => {}) : original(input));
+    const request = fetchTopAssetHolders("https://horizon.example", "WhipSim", issuer, new AbortController().signal, { requestTimeoutMs: 100 });
+    const rejection = expect(request).rejects.toMatchObject({ name: "TimeoutError" });
+    await vi.advanceTimersByTimeAsync(100);
+    await rejection;
+  } finally { vi.useRealTimers(); }
+});
 it("sorts every account and divides by account balances plus claimables, pools and contracts", async () => {
   mock();
   const log = vi.fn(), result = vi.fn();

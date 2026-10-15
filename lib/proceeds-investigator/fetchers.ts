@@ -42,11 +42,13 @@ async function fetchAccountMergeAmount(
   operationId: string,
   destination: string | undefined,
   signal: AbortSignal,
+  requestTimeoutMs?: number,
 ): Promise<number> {
   const base = horizonBase.replace(/\/+$/, "");
   const data = await fetchJson(
     `${base}/operations/${operationId}/effects?limit=200`,
     signal,
+    { timeoutMs: requestTimeoutMs },
   );
   const records = (data._embedded?.records ?? []) as Record<
     string,
@@ -82,6 +84,7 @@ export async function fetchAssetXlmProceeds(
     network?: string;
     onLog?: (message: string) => void;
     onResult?: (summary: AccountSummary) => void;
+    requestTimeoutMs?: number;
   } = {},
 ): Promise<AssetProceedsResult> {
   const base = horizonBase.replace(/\/+$/, "");
@@ -110,7 +113,7 @@ export async function fetchAssetXlmProceeds(
   const get = async (url: string) => {
     checkAbort();
     options.onLog?.(`  GET ${url}`);
-    const data = await fetchJson(url, signal, { onLog: options.onLog });
+    const data = await fetchJson(url, signal, { onLog: options.onLog, timeoutMs: options.requestTimeoutMs });
     checkAbort();
     return data;
   };
@@ -238,7 +241,7 @@ export async function fetchAssetXlmProceeds(
       } else if (raw.type === "account_merge" && raw.source_account === account) {
         const url = `${base}/operations/${operationId}/effects?limit=200`;
         options.onLog?.(`  GET ${url}`);
-        const amount = await fetchAccountMergeAmount(base, operationId, String(raw.into ?? ""), signal);
+        const amount = await fetchAccountMergeAmount(base, operationId, String(raw.into ?? ""), signal, options.requestTimeoutMs);
         checkAbort();
         if (amount > 0) transfer(entry("account_merge", amount));
         else warn(`Account merge ${operationId} amount unavailable.`);

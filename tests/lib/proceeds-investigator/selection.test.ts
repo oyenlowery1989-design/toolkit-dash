@@ -10,6 +10,12 @@ const group = (assetCode = "WhipSim", issuer = "issuer", network = "public"): As
 const options = () => ({ horizonUrl: "https://horizon.test", assetCode: "WhipSim", issuer: "issuer", network: "public", groups: [], signal: new AbortController().signal });
 afterEach(() => vi.clearAllMocks());
 describe("seller selection", () => {
+  it("passes an opt-in per-request deadline to inference", async () => {
+    vi.mocked(inferDistribLite).mockResolvedValue([]);
+    const input = { ...options(), requestTimeoutMs: 30000 };
+    await selectSellerAccounts(input);
+    expect(inferDistribLite).toHaveBeenCalledWith(input.horizonUrl, input.assetCode, input.issuer, input.signal, undefined, { requestTimeoutMs: 30000 });
+  });
   it("uses an asset-specific saved read while the global groups cache is pending", async () => {
     const result = await selectSellerAccounts({ ...options(), savedAccounts: ["seller-a", "seller-b"] });
     expect(result.accounts).toEqual(["seller-a", "seller-b"]);

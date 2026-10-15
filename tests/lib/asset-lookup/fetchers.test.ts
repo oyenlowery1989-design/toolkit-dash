@@ -7,6 +7,16 @@ const ISSUER = "GISSUER";
 afterEach(() => vi.restoreAllMocks());
 
 describe("inferDistribLite", () => {
+  it("bounds an opted-in inference request", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.stubGlobal("fetch", vi.fn(() => new Promise(() => {})));
+      const request = inferDistribLite(HORIZON, "Token", ISSUER, new AbortController().signal, undefined, { requestTimeoutMs: 100 });
+      const rejection = expect(request).rejects.toMatchObject({ name: "TimeoutError" });
+      await vi.advanceTimersByTimeAsync(100);
+      await rejection;
+    } finally { vi.useRealTimers(); }
+  });
   it("does not infer a recipient from a case-distinct asset", async () => {
     vi.stubGlobal(
       "fetch",

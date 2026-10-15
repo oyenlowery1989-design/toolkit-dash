@@ -21,14 +21,15 @@ export async function fetchTopAssetHolders(horizonUrl: string, assetCode: string
   onLog?: (message: string) => void;
   onProgress?: (accountsScanned: number) => void;
   onResult?: (result: TopHoldersResult) => void;
+  requestTimeoutMs?: number;
 } = {}): Promise<TopHoldersResult> {
   const base = horizonUrl.replace(/\/+$/, "");
-  const get = async (url: string) => {
+  const get = async (url: string, timeoutMs = callbacks.requestTimeoutMs) => {
     signal.throwIfAborted();callbacks.onLog?.(`  GET ${url}`);
-    const result = await fetchJson(url, signal, { onLog: callbacks.onLog });
+    const result = await fetchJson(url, signal, { onLog: callbacks.onLog, timeoutMs });
     signal.throwIfAborted();return result;
   };
-  const metadata = get(`${base}/assets?${new URLSearchParams({ asset_code: assetCode, asset_issuer: issuer })}`).then(data => {
+  const metadata = get(`${base}/assets?${new URLSearchParams({ asset_code: assetCode, asset_issuer: issuer })}`, callbacks.requestTimeoutMs === undefined ? undefined : Math.min(callbacks.requestTimeoutMs, 5000)).then(data => {
     const asset = data._embedded?.records?.find((record: Record<string, unknown>) => record.asset_code === assetCode && record.asset_issuer === issuer);
     if (!asset) throw new Error("Asset supply metadata is unavailable.");
     let extra = BigInt(0);

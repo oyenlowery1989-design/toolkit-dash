@@ -123,6 +123,56 @@ function mergeEffect(into: string, amount: string) {
 
 afterEach(() => vi.restoreAllMocks());
 
+it.each(["payments", "effects"])("bounds an opted-in %s request without publishing partial proceeds", async endpoint => {
+  vi.useFakeTimers();
+  try {
+    vi.stubGlobal("fetch", vi.fn((input: string | URL) => {
+      const url = String(input);
+      if (url === HORIZON) return Promise.resolve(json({ history_elder_ledger: 1 }));
+      if (url.includes(`/${endpoint}?`)) return new Promise(() => {});
+      if (url.includes("/payments?")) return Promise.resolve(json(page([accountMerge("merge", DEST_A)])));
+      return Promise.resolve(json(page([])));
+    }));
+    const onResult = vi.fn();
+    const request = fetchAssetXlmProceeds(HORIZON, ASSET_CODE, ISSUER, [ACCOUNT], new AbortController().signal, undefined, undefined, undefined, { requestTimeoutMs: 100, onResult });
+    const rejection = expect(request).rejects.toMatchObject({ name: "TimeoutError" });
+    await vi.advanceTimersByTimeAsync(100);
+    await rejection;
+    expect(onResult).not.toHaveBeenCalled();
+  } finally { vi.useRealTimers(); }
+});
+
+it("bounds beneficiary memo enrichment and retains unresolved transfers", async () => {
+  vi.useFakeTimers();
+  try {
+    vi.stubGlobal("fetch", vi.fn((input: string | URL) => {
+      const url = String(input);
+      if (url.includes("/transactions/")) return new Promise(() => {});
+      if (url === HORIZON) return Promise.resolve(json({ history_elder_ledger: 1 }));
+      if (url.includes("/payments?")) return Promise.resolve(json(page([xlmPayment("sent", DEST_A, "10")])));
+      if (url.includes(`/accounts/${ACCOUNT}`) && !url.includes("/payments")) return Promise.resolve(json({ balances: [{ asset_type: "native", balance: "0" }] }));
+      return Promise.resolve(json(page([])));
+    }));
+    const request = fetchAssetXlmProceeds(HORIZON, ASSET_CODE, ISSUER, [ACCOUNT], new AbortController().signal, undefined, undefined, undefined, { network: "public", requestTimeoutMs: 100 });
+    await vi.advanceTimersByTimeAsync(100);
+    const result = await request;
+    expect(result.totalOutgoingXlm).toBe(10);
+    expect(result.beneficiaryGrouping?.unresolvedOperationCount).toBe(1);
+  } finally { vi.useRealTimers(); }
+});
+
+it("allows the full scan to exceed one request's deadline", async () => {
+  vi.useFakeTimers();
+  try {
+    vi.stubGlobal("fetch", vi.fn((input: string | URL) => new Promise(resolve => setTimeout(() => resolve(json(
+      String(input) === HORIZON ? { history_elder_ledger: 1 } : String(input) === `${HORIZON}/accounts/${ACCOUNT}` ? { balances: [{ asset_type: "native", balance: "0" }] } : page([]),
+    )), 75))));
+    const request = fetchAssetXlmProceeds(HORIZON, ASSET_CODE, ISSUER, [ACCOUNT], new AbortController().signal, undefined, undefined, undefined, { requestTimeoutMs: 100 });
+    await vi.runAllTimersAsync();
+    expect((await request).accounts).toEqual([ACCOUNT]);
+  } finally { vi.useRealTimers(); }
+});
+
 describe("fetchAssetXlmProceeds", () => {
   it("does not mix case-distinct asset codes from the same issuer", async () => {
     stubHorizon({
