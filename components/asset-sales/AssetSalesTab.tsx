@@ -30,6 +30,7 @@ import {
 } from "lucide-react";
 import { useSettings, resolveHorizonUrl, NETWORK_LABELS, type Network } from "@/lib/settings";
 import { TopHolders } from "./TopHolders";
+import { TopVerifiedBuyers } from "./TopVerifiedBuyers";
 import { useProceedsHistory } from "./useProceedsHistory";
 import { getErrorMessage } from "@/lib/stellar-helpers";
 import { ShortAddress } from "@/components/shared/ShortAddress";
@@ -829,6 +830,11 @@ export function AssetSalesTab() {
                 horizonUrl={resolveHorizonUrl(settings)} network={settings.network}
                 disabled={running} selectedAccounts={parseAddresses(overrideAccountsText)}
                 onUseHolder={address => setOverrideAccountsText(previous => parseAddresses(previous).includes(address) ? previous : [previous.trim(), address].filter(Boolean).join("\n"))}
+              />
+              <TopVerifiedBuyers
+                key={JSON.stringify(["buyers", settings.network, resolveHorizonUrl(settings), parsedPairs[0].assetCode, parsedPairs[0].issuer])}
+                assetCode={parsedPairs[0].assetCode} issuer={parsedPairs[0].issuer}
+                horizonUrl={resolveHorizonUrl(settings)} network={settings.network} disabled={running}
               />
             </div>
           )}

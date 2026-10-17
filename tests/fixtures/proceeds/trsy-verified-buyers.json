@@ -1,0 +1,1222 @@
+{
+  "description": "Public TRSY purchase proof samples only, not full market history or totals.",
+  "capturedAt": "2026-10-16T16:49:01.997Z",
+  "assetCode": "TRSY",
+  "issuer": "GDAHP47TPZVR3CX45GAHLRJOOY6QV23HYSSVJ4NGR3P33ULLLJMST2KJ",
+  "trades": [
+    {
+      "_links": {
+        "self": {
+          "href": ""
+        },
+        "base": {
+          "href": "https://horizon.stellar.org/accounts/GCDTWPDFESYQQ6YSPVEMRLIHQ4HLMKIOFO6RNZMNWVRUWXJJLIAB4AZI"
+        },
+        "counter": {
+          "href": "https://horizon.stellar.org/accounts/GAA4YDNCPRCTZC64MQP33BZWYXGRTWU33LE5QAZEHXSCWRPCZXAND2LV"
+        },
+        "operation": {
+          "href": "https://horizon.stellar.org/operations/278177120432586753"
+        }
+      },
+      "id": "278177120432586753-0",
+      "paging_token": "278177120432586753-0",
+      "ledger_close_time": "2026-10-04T15:09:32Z",
+      "trade_type": "orderbook",
+      "base_offer_id": "1858553540",
+      "base_account": "GCDTWPDFESYQQ6YSPVEMRLIHQ4HLMKIOFO6RNZMNWVRUWXJJLIAB4AZI",
+      "base_amount": "8525.0000000",
+      "base_asset_type": "credit_alphanum4",
+      "base_asset_code": "TRSY",
+      "base_asset_issuer": "GDAHP47TPZVR3CX45GAHLRJOOY6QV23HYSSVJ4NGR3P33ULLLJMST2KJ",
+      "counter_offer_id": "4889863138859974657",
+      "counter_account": "GAA4YDNCPRCTZC64MQP33BZWYXGRTWU33LE5QAZEHXSCWRPCZXAND2LV",
+      "counter_amount": "8525.0000000",
+      "counter_asset_type": "native",
+      "base_is_seller": true,
+      "price": {
+        "n": "1",
+        "d": "1"
+      }
+    },
+    {
+      "_links": {
+        "self": {
+          "href": ""
+        },
+        "base": {
+          "href": "https://horizon.stellar.org/accounts/GCDTWPDFESYQQ6YSPVEMRLIHQ4HLMKIOFO6RNZMNWVRUWXJJLIAB4AZI"
+        },
+        "counter": {
+          "href": "https://horizon.stellar.org/accounts/GAA4YDNCPRCTZC64MQP33BZWYXGRTWU33LE5QAZEHXSCWRPCZXAND2LV"
+        },
+        "operation": {
+          "href": "https://horizon.stellar.org/operations/278165571265695745"
+        }
+      },
+      "id": "278165571265695745-0",
+      "paging_token": "278165571265695745-0",
+      "ledger_close_time": "2026-10-04T11:25:27Z",
+      "trade_type": "orderbook",
+      "base_offer_id": "1858553540",
+      "base_account": "GCDTWPDFESYQQ6YSPVEMRLIHQ4HLMKIOFO6RNZMNWVRUWXJJLIAB4AZI",
+      "base_amount": "50.0000000",
+      "base_asset_type": "credit_alphanum4",
+      "base_asset_code": "TRSY",
+      "base_asset_issuer": "GDAHP47TPZVR3CX45GAHLRJOOY6QV23HYSSVJ4NGR3P33ULLLJMST2KJ",
+      "counter_offer_id": "4889851589693083649",
+      "counter_account": "GAA4YDNCPRCTZC64MQP33BZWYXGRTWU33LE5QAZEHXSCWRPCZXAND2LV",
+      "counter_amount": "50.0000000",
+      "counter_asset_type": "native",
+      "base_is_seller": true,
+      "price": {
+        "n": "1",
+        "d": "1"
+      }
+    },
+    {
+      "_links": {
+        "self": {
+          "href": ""
+        },
+        "base": {
+          "href": "https://horizon.stellar.org/accounts/GCDTWPDFESYQQ6YSPVEMRLIHQ4HLMKIOFO6RNZMNWVRUWXJJLIAB4AZI"
+        },
+        "counter": {
+          "href": "https://horizon.stellar.org/accounts/GAA4YDNCPRCTZC64MQP33BZWYXGRTWU33LE5QAZEHXSCWRPCZXAND2LV"
+        },
+        "operation": {
+          "href": "https://horizon.stellar.org/operations/278165532610629633"
+        }
+      },
+      "id": "278165532610629633-0",
+      "paging_token": "278165532610629633-0",
+      "ledger_close_time": "2026-10-04T11:24:42Z",
+      "trade_type": "orderbook",
+      "base_offer_id": "1858553540",
+      "base_account": "GCDTWPDFESYQQ6YSPVEMRLIHQ4HLMKIOFO6RNZMNWVRUWXJJLIAB4AZI",
+      "base_amount": "430.0000000",
+      "base_asset_type": "credit_alphanum4",
+      "base_asset_code": "TRSY",
+      "base_asset_issuer": "GDAHP47TPZVR3CX45GAHLRJOOY6QV23HYSSVJ4NGR3P33ULLLJMST2KJ",
+      "counter_offer_id": "4889851551038017537",
+      "counter_account": "GAA4YDNCPRCTZC64MQP33BZWYXGRTWU33LE5QAZEHXSCWRPCZXAND2LV",
+      "counter_amount": "430.0000000",
+      "counter_asset_type": "native",
+      "base_is_seller": true,
+      "price": {
+        "n": "1",
+        "d": "1"
+      }
+    },
+    {
+      "_links": {
+        "self": {
+          "href": ""
+        },
+        "base": {
+          "href": "https://horizon.stellar.org/accounts/GCDTWPDFESYQQ6YSPVEMRLIHQ4HLMKIOFO6RNZMNWVRUWXJJLIAB4AZI"
+        },
+        "counter": {
+          "href": "https://horizon.stellar.org/accounts/GAA4YDNCPRCTZC64MQP33BZWYXGRTWU33LE5QAZEHXSCWRPCZXAND2LV"
+        },
+        "operation": {
+          "href": "https://horizon.stellar.org/operations/278113808319512577"
+        }
+      },
+      "id": "278113808319512577-0",
+      "paging_token": "278113808319512577-0",
+      "ledger_close_time": "2026-10-03T18:41:07Z",
+      "trade_type": "orderbook",
+      "base_offer_id": "1858553540",
+      "base_account": "GCDTWPDFESYQQ6YSPVEMRLIHQ4HLMKIOFO6RNZMNWVRUWXJJLIAB4AZI",
+      "base_amount": "900.0000000",
+      "base_asset_type": "credit_alphanum4",
+      "base_asset_code": "TRSY",
+      "base_asset_issuer": "GDAHP47TPZVR3CX45GAHLRJOOY6QV23HYSSVJ4NGR3P33ULLLJMST2KJ",
+      "counter_offer_id": "4889799826746900481",
+      "counter_account": "GAA4YDNCPRCTZC64MQP33BZWYXGRTWU33LE5QAZEHXSCWRPCZXAND2LV",
+      "counter_amount": "900.0000000",
+      "counter_asset_type": "native",
+      "base_is_seller": true,
+      "price": {
+        "n": "1",
+        "d": "1"
+      }
+    },
+    {
+      "_links": {
+        "self": {
+          "href": ""
+        },
+        "base": {
+          "href": "https://horizon.stellar.org/accounts/GCDTWPDFESYQQ6YSPVEMRLIHQ4HLMKIOFO6RNZMNWVRUWXJJLIAB4AZI"
+        },
+        "counter": {
+          "href": "https://horizon.stellar.org/accounts/GAFSDSVQI22DRI2GLTJGWAAC3KG6EJGYOG2TYK3J6YAWGTIQWUX6IMAC"
+        },
+        "operation": {
+          "href": "https://horizon.stellar.org/operations/277889452113207297"
+        }
+      },
+      "id": "277889452113207297-2",
+      "paging_token": "277889452113207297-2",
+      "ledger_close_time": "2026-09-30T18:08:02Z",
+      "trade_type": "orderbook",
+      "base_offer_id": "1858553540",
+      "base_account": "GCDTWPDFESYQQ6YSPVEMRLIHQ4HLMKIOFO6RNZMNWVRUWXJJLIAB4AZI",
+      "base_amount": "1.3398276",
+      "base_asset_type": "credit_alphanum4",
+      "base_asset_code": "TRSY",
+      "base_asset_issuer": "GDAHP47TPZVR3CX45GAHLRJOOY6QV23HYSSVJ4NGR3P33ULLLJMST2KJ",
+      "counter_offer_id": "4889575470540595201",
+      "counter_account": "GAFSDSVQI22DRI2GLTJGWAAC3KG6EJGYOG2TYK3J6YAWGTIQWUX6IMAC",
+      "counter_amount": "1.3398276",
+      "counter_asset_type": "native",
+      "base_is_seller": true,
+      "price": {
+        "n": "1",
+        "d": "1"
+      }
+    },
+    {
+      "_links": {
+        "self": {
+          "href": ""
+        },
+        "base": {
+          "href": "https://horizon.stellar.org/accounts/GCDTWPDFESYQQ6YSPVEMRLIHQ4HLMKIOFO6RNZMNWVRUWXJJLIAB4AZI"
+        },
+        "counter": {
+          "href": "https://horizon.stellar.org/accounts/GA7ZFJXFEKJRBQIFJNYDV5HPBYUKC5D5PVKAYGITR6TOUQTCLURIJOXG"
+        },
+        "operation": {
+          "href": "https://horizon.stellar.org/operations/277811949427937281"
+        }
+      },
+      "id": "277811949427937281-4",
+      "paging_token": "277811949427937281-4",
+      "ledger_close_time": "2026-09-29T17:04:16Z",
+      "trade_type": "orderbook",
+      "base_offer_id": "1858553540",
+      "base_account": "GCDTWPDFESYQQ6YSPVEMRLIHQ4HLMKIOFO6RNZMNWVRUWXJJLIAB4AZI",
+      "base_amount": "198.0000000",
+      "base_asset_type": "credit_alphanum4",
+      "base_asset_code": "TRSY",
+      "base_asset_issuer": "GDAHP47TPZVR3CX45GAHLRJOOY6QV23HYSSVJ4NGR3P33ULLLJMST2KJ",
+      "counter_offer_id": "4889497967855325185",
+      "counter_account": "GA7ZFJXFEKJRBQIFJNYDV5HPBYUKC5D5PVKAYGITR6TOUQTCLURIJOXG",
+      "counter_amount": "198.0000000",
+      "counter_asset_type": "native",
+      "base_is_seller": true,
+      "price": {
+        "n": "1",
+        "d": "1"
+      }
+    },
+    {
+      "_links": {
+        "self": {
+          "href": ""
+        },
+        "base": {
+          "href": "https://horizon.stellar.org/accounts/GCDTWPDFESYQQ6YSPVEMRLIHQ4HLMKIOFO6RNZMNWVRUWXJJLIAB4AZI"
+        },
+        "counter": {
+          "href": "https://horizon.stellar.org/accounts/GAA4YDNCPRCTZC64MQP33BZWYXGRTWU33LE5QAZEHXSCWRPCZXAND2LV"
+        },
+        "operation": {
+          "href": "https://horizon.stellar.org/operations/277787639913000962"
+        }
+      },
+      "id": "277787639913000962-0",
+      "paging_token": "277787639913000962-0",
+      "ledger_close_time": "2026-09-29T09:12:36Z",
+      "trade_type": "orderbook",
+      "base_offer_id": "1858553540",
+      "base_account": "GCDTWPDFESYQQ6YSPVEMRLIHQ4HLMKIOFO6RNZMNWVRUWXJJLIAB4AZI",
+      "base_amount": "101.0000000",
+      "base_asset_type": "credit_alphanum4",
+      "base_asset_code": "TRSY",
+      "base_asset_issuer": "GDAHP47TPZVR3CX45GAHLRJOOY6QV23HYSSVJ4NGR3P33ULLLJMST2KJ",
+      "counter_offer_id": "4889473658340388866",
+      "counter_account": "GAA4YDNCPRCTZC64MQP33BZWYXGRTWU33LE5QAZEHXSCWRPCZXAND2LV",
+      "counter_amount": "101.0000000",
+      "counter_asset_type": "native",
+      "base_is_seller": true,
+      "price": {
+        "n": "1",
+        "d": "1"
+      }
+    },
+    {
+      "_links": {
+        "self": {
+          "href": ""
+        },
+        "base": {
+          "href": "https://horizon.stellar.org/accounts/GCDTWPDFESYQQ6YSPVEMRLIHQ4HLMKIOFO6RNZMNWVRUWXJJLIAB4AZI"
+        },
+        "counter": {
+          "href": "https://horizon.stellar.org/accounts/GB2PX6R2KWRX5WKHXA2V22L3ITU3ZZE3MFPHYZV5NPU6BYA55O25T6JG"
+        },
+        "operation": {
+          "href": "https://horizon.stellar.org/operations/277611846901620737"
+        }
+      },
+      "id": "277611846901620737-1",
+      "paging_token": "277611846901620737-1",
+      "ledger_close_time": "2026-09-27T00:21:46Z",
+      "trade_type": "orderbook",
+      "base_offer_id": "1858553540",
+      "base_account": "GCDTWPDFESYQQ6YSPVEMRLIHQ4HLMKIOFO6RNZMNWVRUWXJJLIAB4AZI",
+      "base_amount": "0.6000000",
+      "base_asset_type": "credit_alphanum4",
+      "base_asset_code": "TRSY",
+      "base_asset_issuer": "GDAHP47TPZVR3CX45GAHLRJOOY6QV23HYSSVJ4NGR3P33ULLLJMST2KJ",
+      "counter_offer_id": "4889297865329008641",
+      "counter_account": "GB2PX6R2KWRX5WKHXA2V22L3ITU3ZZE3MFPHYZV5NPU6BYA55O25T6JG",
+      "counter_amount": "0.6000000",
+      "counter_asset_type": "native",
+      "base_is_seller": true,
+      "price": {
+        "n": "1",
+        "d": "1"
+      }
+    },
+    {
+      "_links": {
+        "self": {
+          "href": ""
+        },
+        "base": {
+          "href": "https://horizon.stellar.org/accounts/GCDTWPDFESYQQ6YSPVEMRLIHQ4HLMKIOFO6RNZMNWVRUWXJJLIAB4AZI"
+        },
+        "counter": {
+          "href": "https://horizon.stellar.org/accounts/GBZOHI5USNIHAJC76D2RX2BXL6XQXLUYKN33KIX3QPIOYAHBU3DQ67D7"
+        },
+        "operation": {
+          "href": "https://horizon.stellar.org/operations/277611739527450625"
+        }
+      },
+      "id": "277611739527450625-1",
+      "paging_token": "277611739527450625-1",
+      "ledger_close_time": "2026-09-27T00:19:41Z",
+      "trade_type": "orderbook",
+      "base_offer_id": "1858553540",
+      "base_account": "GCDTWPDFESYQQ6YSPVEMRLIHQ4HLMKIOFO6RNZMNWVRUWXJJLIAB4AZI",
+      "base_amount": "0.6000000",
+      "base_asset_type": "credit_alphanum4",
+      "base_asset_code": "TRSY",
+      "base_asset_issuer": "GDAHP47TPZVR3CX45GAHLRJOOY6QV23HYSSVJ4NGR3P33ULLLJMST2KJ",
+      "counter_offer_id": "4889297757954838529",
+      "counter_account": "GBZOHI5USNIHAJC76D2RX2BXL6XQXLUYKN33KIX3QPIOYAHBU3DQ67D7",
+      "counter_amount": "0.6000000",
+      "counter_asset_type": "native",
+      "base_is_seller": true,
+      "price": {
+        "n": "1",
+        "d": "1"
+      }
+    },
+    {
+      "_links": {
+        "self": {
+          "href": ""
+        },
+        "base": {
+          "href": "https://horizon.stellar.org/accounts/GCDTWPDFESYQQ6YSPVEMRLIHQ4HLMKIOFO6RNZMNWVRUWXJJLIAB4AZI"
+        },
+        "counter": {
+          "href": "https://horizon.stellar.org/accounts/GA4HRMOHOXSHLXXF3TACWPHMV7RXYTGW6Y5G635KEDJT6ZEW2WQETR7X"
+        },
+        "operation": {
+          "href": "https://horizon.stellar.org/operations/277601053648809985"
+        }
+      },
+      "id": "277601053648809985-1",
+      "paging_token": "277601053648809985-1",
+      "ledger_close_time": "2026-09-26T20:52:21Z",
+      "trade_type": "orderbook",
+      "base_offer_id": "1858553540",
+      "base_account": "GCDTWPDFESYQQ6YSPVEMRLIHQ4HLMKIOFO6RNZMNWVRUWXJJLIAB4AZI",
+      "base_amount": "0.6000000",
+      "base_asset_type": "credit_alphanum4",
+      "base_asset_code": "TRSY",
+      "base_asset_issuer": "GDAHP47TPZVR3CX45GAHLRJOOY6QV23HYSSVJ4NGR3P33ULLLJMST2KJ",
+      "counter_offer_id": "4889287072076197889",
+      "counter_account": "GA4HRMOHOXSHLXXF3TACWPHMV7RXYTGW6Y5G635KEDJT6ZEW2WQETR7X",
+      "counter_amount": "0.6000000",
+      "counter_asset_type": "native",
+      "base_is_seller": true,
+      "price": {
+        "n": "1",
+        "d": "1"
+      }
+    },
+    {
+      "_links": {
+        "self": {
+          "href": ""
+        },
+        "base": {
+          "href": "https://horizon.stellar.org/accounts/GCDTWPDFESYQQ6YSPVEMRLIHQ4HLMKIOFO6RNZMNWVRUWXJJLIAB4AZI"
+        },
+        "counter": {
+          "href": "https://horizon.stellar.org/accounts/GBOB3YWSIVD234TBS64K56O3ZQZG5O5WYWUAGJFROG52QSTTB7GQHXK2"
+        },
+        "operation": {
+          "href": "https://horizon.stellar.org/operations/277600907620519937"
+        }
+      },
+      "id": "277600907620519937-1",
+      "paging_token": "277600907620519937-1",
+      "ledger_close_time": "2026-09-26T20:49:31Z",
+      "trade_type": "orderbook",
+      "base_offer_id": "1858553540",
+      "base_account": "GCDTWPDFESYQQ6YSPVEMRLIHQ4HLMKIOFO6RNZMNWVRUWXJJLIAB4AZI",
+      "base_amount": "0.6000000",
+      "base_asset_type": "credit_alphanum4",
+      "base_asset_code": "TRSY",
+      "base_asset_issuer": "GDAHP47TPZVR3CX45GAHLRJOOY6QV23HYSSVJ4NGR3P33ULLLJMST2KJ",
+      "counter_offer_id": "4889286926047907841",
+      "counter_account": "GBOB3YWSIVD234TBS64K56O3ZQZG5O5WYWUAGJFROG52QSTTB7GQHXK2",
+      "counter_amount": "0.6000000",
+      "counter_asset_type": "native",
+      "base_is_seller": true,
+      "price": {
+        "n": "1",
+        "d": "1"
+      }
+    },
+    {
+      "_links": {
+        "self": {
+          "href": ""
+        },
+        "base": {
+          "href": "https://horizon.stellar.org/accounts/GCDTWPDFESYQQ6YSPVEMRLIHQ4HLMKIOFO6RNZMNWVRUWXJJLIAB4AZI"
+        },
+        "counter": {
+          "href": "https://horizon.stellar.org/accounts/GDV3IKQVTB4UN73QGGV2GXTYFRUTLOAOG4J2HIA7WYLNYW25YRJSP7XR"
+        },
+        "operation": {
+          "href": "https://horizon.stellar.org/operations/277600452354547713"
+        }
+      },
+      "id": "277600452354547713-1",
+      "paging_token": "277600452354547713-1",
+      "ledger_close_time": "2026-09-26T20:40:41Z",
+      "trade_type": "orderbook",
+      "base_offer_id": "1858553540",
+      "base_account": "GCDTWPDFESYQQ6YSPVEMRLIHQ4HLMKIOFO6RNZMNWVRUWXJJLIAB4AZI",
+      "base_amount": "0.7000000",
+      "base_asset_type": "credit_alphanum4",
+      "base_asset_code": "TRSY",
+      "base_asset_issuer": "GDAHP47TPZVR3CX45GAHLRJOOY6QV23HYSSVJ4NGR3P33ULLLJMST2KJ",
+      "counter_offer_id": "4889286470781935617",
+      "counter_account": "GDV3IKQVTB4UN73QGGV2GXTYFRUTLOAOG4J2HIA7WYLNYW25YRJSP7XR",
+      "counter_amount": "0.7000000",
+      "counter_asset_type": "native",
+      "base_is_seller": true,
+      "price": {
+        "n": "1",
+        "d": "1"
+      }
+    },
+    {
+      "_links": {
+        "self": {
+          "href": ""
+        },
+        "base": {
+          "href": "https://horizon.stellar.org/accounts/GCDTWPDFESYQQ6YSPVEMRLIHQ4HLMKIOFO6RNZMNWVRUWXJJLIAB4AZI"
+        },
+        "counter": {
+          "href": "https://horizon.stellar.org/accounts/GAXVTT746JMK2225RPUAE5FE2JSOCK4EHEKSHPYZWAA7WMJRLGGLL6NG"
+        },
+        "operation": {
+          "href": "https://horizon.stellar.org/operations/277459680505294849"
+        }
+      },
+      "id": "277459680505294849-0",
+      "paging_token": "277459680505294849-0",
+      "ledger_close_time": "2026-09-24T23:09:19Z",
+      "trade_type": "orderbook",
+      "base_offer_id": "1858553540",
+      "base_account": "GCDTWPDFESYQQ6YSPVEMRLIHQ4HLMKIOFO6RNZMNWVRUWXJJLIAB4AZI",
+      "base_amount": "5000.0000000",
+      "base_asset_type": "credit_alphanum4",
+      "base_asset_code": "TRSY",
+      "base_asset_issuer": "GDAHP47TPZVR3CX45GAHLRJOOY6QV23HYSSVJ4NGR3P33ULLLJMST2KJ",
+      "counter_offer_id": "4889145698932682753",
+      "counter_account": "GAXVTT746JMK2225RPUAE5FE2JSOCK4EHEKSHPYZWAA7WMJRLGGLL6NG",
+      "counter_amount": "5000.0000000",
+      "counter_asset_type": "native",
+      "base_is_seller": true,
+      "price": {
+        "n": "1",
+        "d": "1"
+      }
+    },
+    {
+      "_links": {
+        "self": {
+          "href": ""
+        },
+        "base": {
+          "href": "https://horizon.stellar.org/accounts/GCDTWPDFESYQQ6YSPVEMRLIHQ4HLMKIOFO6RNZMNWVRUWXJJLIAB4AZI"
+        },
+        "counter": {
+          "href": "https://horizon.stellar.org/accounts/GB2IOWAZKVGA5MPL3TJYEKNXP4QFSAB7RQ3FOCFGJHBVQPIIDX4TJ67I"
+        },
+        "operation": {
+          "href": "https://horizon.stellar.org/operations/277440804124057601"
+        }
+      },
+      "id": "277440804124057601-0",
+      "paging_token": "277440804124057601-0",
+      "ledger_close_time": "2026-09-24T17:03:04Z",
+      "trade_type": "orderbook",
+      "base_offer_id": "1858553540",
+      "base_account": "GCDTWPDFESYQQ6YSPVEMRLIHQ4HLMKIOFO6RNZMNWVRUWXJJLIAB4AZI",
+      "base_amount": "1800.0000000",
+      "base_asset_type": "credit_alphanum4",
+      "base_asset_code": "TRSY",
+      "base_asset_issuer": "GDAHP47TPZVR3CX45GAHLRJOOY6QV23HYSSVJ4NGR3P33ULLLJMST2KJ",
+      "counter_offer_id": "4889126822551445505",
+      "counter_account": "GB2IOWAZKVGA5MPL3TJYEKNXP4QFSAB7RQ3FOCFGJHBVQPIIDX4TJ67I",
+      "counter_amount": "1800.0000000",
+      "counter_asset_type": "native",
+      "base_is_seller": true,
+      "price": {
+        "n": "1",
+        "d": "1"
+      }
+    },
+    {
+      "_links": {
+        "self": {
+          "href": ""
+        },
+        "base": {
+          "href": "https://horizon.stellar.org/accounts/GCDTWPDFESYQQ6YSPVEMRLIHQ4HLMKIOFO6RNZMNWVRUWXJJLIAB4AZI"
+        },
+        "counter": {
+          "href": "https://horizon.stellar.org/accounts/GB2IOWAZKVGA5MPL3TJYEKNXP4QFSAB7RQ3FOCFGJHBVQPIIDX4TJ67I"
+        },
+        "operation": {
+          "href": "https://horizon.stellar.org/operations/277438901454053377"
+        }
+      },
+      "id": "277438901454053377-0",
+      "paging_token": "277438901454053377-0",
+      "ledger_close_time": "2026-09-24T16:26:09Z",
+      "trade_type": "orderbook",
+      "base_offer_id": "1858553540",
+      "base_account": "GCDTWPDFESYQQ6YSPVEMRLIHQ4HLMKIOFO6RNZMNWVRUWXJJLIAB4AZI",
+      "base_amount": "2500.0000000",
+      "base_asset_type": "credit_alphanum4",
+      "base_asset_code": "TRSY",
+      "base_asset_issuer": "GDAHP47TPZVR3CX45GAHLRJOOY6QV23HYSSVJ4NGR3P33ULLLJMST2KJ",
+      "counter_offer_id": "4889124919881441281",
+      "counter_account": "GB2IOWAZKVGA5MPL3TJYEKNXP4QFSAB7RQ3FOCFGJHBVQPIIDX4TJ67I",
+      "counter_amount": "2500.0000000",
+      "counter_asset_type": "native",
+      "base_is_seller": true,
+      "price": {
+        "n": "1",
+        "d": "1"
+      }
+    },
+    {
+      "_links": {
+        "self": {
+          "href": ""
+        },
+        "base": {
+          "href": "https://horizon.stellar.org/accounts/GCDTWPDFESYQQ6YSPVEMRLIHQ4HLMKIOFO6RNZMNWVRUWXJJLIAB4AZI"
+        },
+        "counter": {
+          "href": "https://horizon.stellar.org/accounts/GB2IOWAZKVGA5MPL3TJYEKNXP4QFSAB7RQ3FOCFGJHBVQPIIDX4TJ67I"
+        },
+        "operation": {
+          "href": "https://horizon.stellar.org/operations/277394749189591041"
+        }
+      },
+      "id": "277394749189591041-0",
+      "paging_token": "277394749189591041-0",
+      "ledger_close_time": "2026-09-24T02:09:28Z",
+      "trade_type": "orderbook",
+      "base_offer_id": "1858553540",
+      "base_account": "GCDTWPDFESYQQ6YSPVEMRLIHQ4HLMKIOFO6RNZMNWVRUWXJJLIAB4AZI",
+      "base_amount": "700.0000000",
+      "base_asset_type": "credit_alphanum4",
+      "base_asset_code": "TRSY",
+      "base_asset_issuer": "GDAHP47TPZVR3CX45GAHLRJOOY6QV23HYSSVJ4NGR3P33ULLLJMST2KJ",
+      "counter_offer_id": "4889080767616978945",
+      "counter_account": "GB2IOWAZKVGA5MPL3TJYEKNXP4QFSAB7RQ3FOCFGJHBVQPIIDX4TJ67I",
+      "counter_amount": "700.0000000",
+      "counter_asset_type": "native",
+      "base_is_seller": true,
+      "price": {
+        "n": "1",
+        "d": "1"
+      }
+    }
+  ],
+  "operations": {
+    "278177120432586753": {
+      "_links": {
+        "self": {
+          "href": "https://horizon.stellar.org/operations/278177120432586753"
+        },
+        "transaction": {
+          "href": "https://horizon.stellar.org/transactions/69c348116703dcc42c6538f05ea441ede84592b56cdd812d954af1c694098df6"
+        },
+        "effects": {
+          "href": "https://horizon.stellar.org/operations/278177120432586753/effects"
+        },
+        "succeeds": {
+          "href": "https://horizon.stellar.org/effects?order=desc&cursor=278177120432586753"
+        },
+        "precedes": {
+          "href": "https://horizon.stellar.org/effects?order=asc&cursor=278177120432586753"
+        }
+      },
+      "id": "278177120432586753",
+      "paging_token": "278177120432586753",
+      "transaction_successful": true,
+      "source_account": "GAA4YDNCPRCTZC64MQP33BZWYXGRTWU33LE5QAZEHXSCWRPCZXAND2LV",
+      "type": "manage_buy_offer",
+      "type_i": 12,
+      "created_at": "2026-10-04T15:09:32Z",
+      "transaction_hash": "69c348116703dcc42c6538f05ea441ede84592b56cdd812d954af1c694098df6",
+      "amount": "8525.0000000",
+      "price": "1.0000000",
+      "price_r": {
+        "n": 1,
+        "d": 1
+      },
+      "buying_asset_type": "credit_alphanum4",
+      "buying_asset_code": "TRSY",
+      "buying_asset_issuer": "GDAHP47TPZVR3CX45GAHLRJOOY6QV23HYSSVJ4NGR3P33ULLLJMST2KJ",
+      "selling_asset_type": "native",
+      "offer_id": "0"
+    },
+    "278165571265695745": {
+      "_links": {
+        "self": {
+          "href": "https://horizon.stellar.org/operations/278165571265695745"
+        },
+        "transaction": {
+          "href": "https://horizon.stellar.org/transactions/2af842a0df2e01e5a1adc1aa0148955bb4721cf5c87f9773360d19175b78e143"
+        },
+        "effects": {
+          "href": "https://horizon.stellar.org/operations/278165571265695745/effects"
+        },
+        "succeeds": {
+          "href": "https://horizon.stellar.org/effects?order=desc&cursor=278165571265695745"
+        },
+        "precedes": {
+          "href": "https://horizon.stellar.org/effects?order=asc&cursor=278165571265695745"
+        }
+      },
+      "id": "278165571265695745",
+      "paging_token": "278165571265695745",
+      "transaction_successful": true,
+      "source_account": "GAA4YDNCPRCTZC64MQP33BZWYXGRTWU33LE5QAZEHXSCWRPCZXAND2LV",
+      "type": "manage_buy_offer",
+      "type_i": 12,
+      "created_at": "2026-10-04T11:25:27Z",
+      "transaction_hash": "2af842a0df2e01e5a1adc1aa0148955bb4721cf5c87f9773360d19175b78e143",
+      "amount": "50.0000000",
+      "price": "1.0000000",
+      "price_r": {
+        "n": 1,
+        "d": 1
+      },
+      "buying_asset_type": "credit_alphanum4",
+      "buying_asset_code": "TRSY",
+      "buying_asset_issuer": "GDAHP47TPZVR3CX45GAHLRJOOY6QV23HYSSVJ4NGR3P33ULLLJMST2KJ",
+      "selling_asset_type": "native",
+      "offer_id": "0"
+    },
+    "278165532610629633": {
+      "_links": {
+        "self": {
+          "href": "https://horizon.stellar.org/operations/278165532610629633"
+        },
+        "transaction": {
+          "href": "https://horizon.stellar.org/transactions/8665ba015b04dce78f831ede379f3aada0564680feffba5c6656b6b9a8838f02"
+        },
+        "effects": {
+          "href": "https://horizon.stellar.org/operations/278165532610629633/effects"
+        },
+        "succeeds": {
+          "href": "https://horizon.stellar.org/effects?order=desc&cursor=278165532610629633"
+        },
+        "precedes": {
+          "href": "https://horizon.stellar.org/effects?order=asc&cursor=278165532610629633"
+        }
+      },
+      "id": "278165532610629633",
+      "paging_token": "278165532610629633",
+      "transaction_successful": true,
+      "source_account": "GAA4YDNCPRCTZC64MQP33BZWYXGRTWU33LE5QAZEHXSCWRPCZXAND2LV",
+      "type": "manage_buy_offer",
+      "type_i": 12,
+      "created_at": "2026-10-04T11:24:42Z",
+      "transaction_hash": "8665ba015b04dce78f831ede379f3aada0564680feffba5c6656b6b9a8838f02",
+      "amount": "430.0000000",
+      "price": "1.0000000",
+      "price_r": {
+        "n": 1,
+        "d": 1
+      },
+      "buying_asset_type": "credit_alphanum4",
+      "buying_asset_code": "TRSY",
+      "buying_asset_issuer": "GDAHP47TPZVR3CX45GAHLRJOOY6QV23HYSSVJ4NGR3P33ULLLJMST2KJ",
+      "selling_asset_type": "native",
+      "offer_id": "0"
+    },
+    "278113808319512577": {
+      "_links": {
+        "self": {
+          "href": "https://horizon.stellar.org/operations/278113808319512577"
+        },
+        "transaction": {
+          "href": "https://horizon.stellar.org/transactions/96e7062d60f52b424052b3e4ee7663d401efd30ff6a4a9e1b168e1ac28c62df5"
+        },
+        "effects": {
+          "href": "https://horizon.stellar.org/operations/278113808319512577/effects"
+        },
+        "succeeds": {
+          "href": "https://horizon.stellar.org/effects?order=desc&cursor=278113808319512577"
+        },
+        "precedes": {
+          "href": "https://horizon.stellar.org/effects?order=asc&cursor=278113808319512577"
+        }
+      },
+      "id": "278113808319512577",
+      "paging_token": "278113808319512577",
+      "transaction_successful": true,
+      "source_account": "GAA4YDNCPRCTZC64MQP33BZWYXGRTWU33LE5QAZEHXSCWRPCZXAND2LV",
+      "type": "manage_buy_offer",
+      "type_i": 12,
+      "created_at": "2026-10-03T18:41:07Z",
+      "transaction_hash": "96e7062d60f52b424052b3e4ee7663d401efd30ff6a4a9e1b168e1ac28c62df5",
+      "amount": "900.0000000",
+      "price": "1.0000000",
+      "price_r": {
+        "n": 1,
+        "d": 1
+      },
+      "buying_asset_type": "credit_alphanum4",
+      "buying_asset_code": "TRSY",
+      "buying_asset_issuer": "GDAHP47TPZVR3CX45GAHLRJOOY6QV23HYSSVJ4NGR3P33ULLLJMST2KJ",
+      "selling_asset_type": "native",
+      "offer_id": "0"
+    },
+    "277787639913000962": {
+      "_links": {
+        "self": {
+          "href": "https://horizon.stellar.org/operations/277787639913000962"
+        },
+        "transaction": {
+          "href": "https://horizon.stellar.org/transactions/2675f6513fab5993c0244b374b273672890a69efc311871d76b3f40172deb344"
+        },
+        "effects": {
+          "href": "https://horizon.stellar.org/operations/277787639913000962/effects"
+        },
+        "succeeds": {
+          "href": "https://horizon.stellar.org/effects?order=desc&cursor=277787639913000962"
+        },
+        "precedes": {
+          "href": "https://horizon.stellar.org/effects?order=asc&cursor=277787639913000962"
+        }
+      },
+      "id": "277787639913000962",
+      "paging_token": "277787639913000962",
+      "transaction_successful": true,
+      "source_account": "GAA4YDNCPRCTZC64MQP33BZWYXGRTWU33LE5QAZEHXSCWRPCZXAND2LV",
+      "type": "manage_buy_offer",
+      "type_i": 12,
+      "created_at": "2026-09-29T09:12:36Z",
+      "transaction_hash": "2675f6513fab5993c0244b374b273672890a69efc311871d76b3f40172deb344",
+      "amount": "101.0000000",
+      "price": "1.0000000",
+      "price_r": {
+        "n": 1,
+        "d": 1
+      },
+      "buying_asset_type": "credit_alphanum4",
+      "buying_asset_code": "TRSY",
+      "buying_asset_issuer": "GDAHP47TPZVR3CX45GAHLRJOOY6QV23HYSSVJ4NGR3P33ULLLJMST2KJ",
+      "selling_asset_type": "native",
+      "offer_id": "0"
+    },
+    "277459680505294849": {
+      "_links": {
+        "self": {
+          "href": "https://horizon.stellar.org/operations/277459680505294849"
+        },
+        "transaction": {
+          "href": "https://horizon.stellar.org/transactions/499d4aec9a3d93f994454357887ae85d06f7f0d68e740bcab87f6327e783c0ad"
+        },
+        "effects": {
+          "href": "https://horizon.stellar.org/operations/277459680505294849/effects"
+        },
+        "succeeds": {
+          "href": "https://horizon.stellar.org/effects?order=desc&cursor=277459680505294849"
+        },
+        "precedes": {
+          "href": "https://horizon.stellar.org/effects?order=asc&cursor=277459680505294849"
+        }
+      },
+      "id": "277459680505294849",
+      "paging_token": "277459680505294849",
+      "transaction_successful": true,
+      "source_account": "GAXVTT746JMK2225RPUAE5FE2JSOCK4EHEKSHPYZWAA7WMJRLGGLL6NG",
+      "type": "manage_buy_offer",
+      "type_i": 12,
+      "created_at": "2026-09-24T23:09:19Z",
+      "transaction_hash": "499d4aec9a3d93f994454357887ae85d06f7f0d68e740bcab87f6327e783c0ad",
+      "amount": "5000.0000000",
+      "price": "1.0000000",
+      "price_r": {
+        "n": 1,
+        "d": 1
+      },
+      "buying_asset_type": "credit_alphanum4",
+      "buying_asset_code": "TRSY",
+      "buying_asset_issuer": "GDAHP47TPZVR3CX45GAHLRJOOY6QV23HYSSVJ4NGR3P33ULLLJMST2KJ",
+      "selling_asset_type": "native",
+      "offer_id": "0"
+    },
+    "277440804124057601": {
+      "_links": {
+        "self": {
+          "href": "https://horizon.stellar.org/operations/277440804124057601"
+        },
+        "transaction": {
+          "href": "https://horizon.stellar.org/transactions/8b7df8a6e4d2a2f9069890fec509c1f2ef14780b3503599bcc5a5288b9e158f5"
+        },
+        "effects": {
+          "href": "https://horizon.stellar.org/operations/277440804124057601/effects"
+        },
+        "succeeds": {
+          "href": "https://horizon.stellar.org/effects?order=desc&cursor=277440804124057601"
+        },
+        "precedes": {
+          "href": "https://horizon.stellar.org/effects?order=asc&cursor=277440804124057601"
+        }
+      },
+      "id": "277440804124057601",
+      "paging_token": "277440804124057601",
+      "transaction_successful": true,
+      "source_account": "GB2IOWAZKVGA5MPL3TJYEKNXP4QFSAB7RQ3FOCFGJHBVQPIIDX4TJ67I",
+      "type": "manage_buy_offer",
+      "type_i": 12,
+      "created_at": "2026-09-24T17:03:04Z",
+      "transaction_hash": "8b7df8a6e4d2a2f9069890fec509c1f2ef14780b3503599bcc5a5288b9e158f5",
+      "amount": "1800.0000000",
+      "price": "1.0000000",
+      "price_r": {
+        "n": 1,
+        "d": 1
+      },
+      "buying_asset_type": "credit_alphanum4",
+      "buying_asset_code": "TRSY",
+      "buying_asset_issuer": "GDAHP47TPZVR3CX45GAHLRJOOY6QV23HYSSVJ4NGR3P33ULLLJMST2KJ",
+      "selling_asset_type": "native",
+      "offer_id": "0"
+    },
+    "277438901454053377": {
+      "_links": {
+        "self": {
+          "href": "https://horizon.stellar.org/operations/277438901454053377"
+        },
+        "transaction": {
+          "href": "https://horizon.stellar.org/transactions/249293ea99fd6d097d94875e37fdf31782ab6f236be6d6db39cd02c3a9a545e6"
+        },
+        "effects": {
+          "href": "https://horizon.stellar.org/operations/277438901454053377/effects"
+        },
+        "succeeds": {
+          "href": "https://horizon.stellar.org/effects?order=desc&cursor=277438901454053377"
+        },
+        "precedes": {
+          "href": "https://horizon.stellar.org/effects?order=asc&cursor=277438901454053377"
+        }
+      },
+      "id": "277438901454053377",
+      "paging_token": "277438901454053377",
+      "transaction_successful": true,
+      "source_account": "GB2IOWAZKVGA5MPL3TJYEKNXP4QFSAB7RQ3FOCFGJHBVQPIIDX4TJ67I",
+      "type": "manage_buy_offer",
+      "type_i": 12,
+      "created_at": "2026-09-24T16:26:09Z",
+      "transaction_hash": "249293ea99fd6d097d94875e37fdf31782ab6f236be6d6db39cd02c3a9a545e6",
+      "amount": "2500.0000000",
+      "price": "1.0000000",
+      "price_r": {
+        "n": 1,
+        "d": 1
+      },
+      "buying_asset_type": "credit_alphanum4",
+      "buying_asset_code": "TRSY",
+      "buying_asset_issuer": "GDAHP47TPZVR3CX45GAHLRJOOY6QV23HYSSVJ4NGR3P33ULLLJMST2KJ",
+      "selling_asset_type": "native",
+      "offer_id": "0"
+    },
+    "277394749189591041": {
+      "_links": {
+        "self": {
+          "href": "https://horizon.stellar.org/operations/277394749189591041"
+        },
+        "transaction": {
+          "href": "https://horizon.stellar.org/transactions/a512add0c46a99b9384c1cd7c448f09609a9a8b28c0e13427e25e1626c7d4390"
+        },
+        "effects": {
+          "href": "https://horizon.stellar.org/operations/277394749189591041/effects"
+        },
+        "succeeds": {
+          "href": "https://horizon.stellar.org/effects?order=desc&cursor=277394749189591041"
+        },
+        "precedes": {
+          "href": "https://horizon.stellar.org/effects?order=asc&cursor=277394749189591041"
+        }
+      },
+      "id": "277394749189591041",
+      "paging_token": "277394749189591041",
+      "transaction_successful": true,
+      "source_account": "GB2IOWAZKVGA5MPL3TJYEKNXP4QFSAB7RQ3FOCFGJHBVQPIIDX4TJ67I",
+      "type": "manage_buy_offer",
+      "type_i": 12,
+      "created_at": "2026-09-24T02:09:28Z",
+      "transaction_hash": "a512add0c46a99b9384c1cd7c448f09609a9a8b28c0e13427e25e1626c7d4390",
+      "amount": "700.0000000",
+      "price": "1.0000000",
+      "price_r": {
+        "n": 1,
+        "d": 1
+      },
+      "buying_asset_type": "credit_alphanum4",
+      "buying_asset_code": "TRSY",
+      "buying_asset_issuer": "GDAHP47TPZVR3CX45GAHLRJOOY6QV23HYSSVJ4NGR3P33ULLLJMST2KJ",
+      "selling_asset_type": "native",
+      "offer_id": "0"
+    },
+    "277889452113207297": {
+      "_links": {
+        "self": {
+          "href": "https://horizon.stellar.org/operations/277889452113207297"
+        },
+        "transaction": {
+          "href": "https://horizon.stellar.org/transactions/a42c55781dc28dec73d37db96ca577070a81d509badccea324858fdc97de5e9f"
+        },
+        "effects": {
+          "href": "https://horizon.stellar.org/operations/277889452113207297/effects"
+        },
+        "succeeds": {
+          "href": "https://horizon.stellar.org/effects?order=desc&cursor=277889452113207297"
+        },
+        "precedes": {
+          "href": "https://horizon.stellar.org/effects?order=asc&cursor=277889452113207297"
+        }
+      },
+      "id": "277889452113207297",
+      "paging_token": "277889452113207297",
+      "transaction_successful": true,
+      "source_account": "GAFSDSVQI22DRI2GLTJGWAAC3KG6EJGYOG2TYK3J6YAWGTIQWUX6IMAC",
+      "type": "path_payment_strict_send",
+      "type_i": 13,
+      "created_at": "2026-09-30T18:08:02Z",
+      "transaction_hash": "a42c55781dc28dec73d37db96ca577070a81d509badccea324858fdc97de5e9f",
+      "asset_type": "credit_alphanum4",
+      "asset_code": "TRSY",
+      "asset_issuer": "GDAHP47TPZVR3CX45GAHLRJOOY6QV23HYSSVJ4NGR3P33ULLLJMST2KJ",
+      "from": "GAFSDSVQI22DRI2GLTJGWAAC3KG6EJGYOG2TYK3J6YAWGTIQWUX6IMAC",
+      "to": "GAFSDSVQI22DRI2GLTJGWAAC3KG6EJGYOG2TYK3J6YAWGTIQWUX6IMAC",
+      "amount": "1.3398276",
+      "path": [
+        {
+          "asset_type": "native"
+        }
+      ],
+      "source_amount": "85.0000000",
+      "destination_min": "1.3263723",
+      "source_asset_type": "credit_alphanum4",
+      "source_asset_code": "SCOP",
+      "source_asset_issuer": "GC6OYQJIZF3HFXCYPFCBXYXNGIBQ4TNSFUBUXQJOZWIP6F3YZK4QH3VQ"
+    },
+    "277811949427937281": {
+      "_links": {
+        "self": {
+          "href": "https://horizon.stellar.org/operations/277811949427937281"
+        },
+        "transaction": {
+          "href": "https://horizon.stellar.org/transactions/9fa4a53aaaa259aa021b7a3b37989fcd29a0706f94f47c4fbc83164550f3978a"
+        },
+        "effects": {
+          "href": "https://horizon.stellar.org/operations/277811949427937281/effects"
+        },
+        "succeeds": {
+          "href": "https://horizon.stellar.org/effects?order=desc&cursor=277811949427937281"
+        },
+        "precedes": {
+          "href": "https://horizon.stellar.org/effects?order=asc&cursor=277811949427937281"
+        }
+      },
+      "id": "277811949427937281",
+      "paging_token": "277811949427937281",
+      "transaction_successful": true,
+      "source_account": "GA7ZFJXFEKJRBQIFJNYDV5HPBYUKC5D5PVKAYGITR6TOUQTCLURIJOXG",
+      "type": "path_payment_strict_receive",
+      "type_i": 2,
+      "created_at": "2026-09-29T17:04:16Z",
+      "transaction_hash": "9fa4a53aaaa259aa021b7a3b37989fcd29a0706f94f47c4fbc83164550f3978a",
+      "asset_type": "credit_alphanum4",
+      "asset_code": "TRSY",
+      "asset_issuer": "GDAHP47TPZVR3CX45GAHLRJOOY6QV23HYSSVJ4NGR3P33ULLLJMST2KJ",
+      "from": "GA7ZFJXFEKJRBQIFJNYDV5HPBYUKC5D5PVKAYGITR6TOUQTCLURIJOXG",
+      "to": "GA7ZFJXFEKJRBQIFJNYDV5HPBYUKC5D5PVKAYGITR6TOUQTCLURIJOXG",
+      "amount": "198.0000000",
+      "path": [
+        {
+          "asset_type": "native"
+        }
+      ],
+      "source_amount": "29.8039518",
+      "source_max": "30.0638235",
+      "source_asset_type": "credit_alphanum4",
+      "source_asset_code": "XRP",
+      "source_asset_issuer": "GBXRPL45NPHCVMFFAYZVUVFFVKSIZ362ZXFP7I2ETNQ3QKZMFLPRDTD5"
+    },
+    "277611846901620737": {
+      "_links": {
+        "self": {
+          "href": "https://horizon.stellar.org/operations/277611846901620737"
+        },
+        "transaction": {
+          "href": "https://horizon.stellar.org/transactions/7817ce56f923d0155ff671864ec7a90e2cd356131c96f3c81c7c7a0b10baaaf3"
+        },
+        "effects": {
+          "href": "https://horizon.stellar.org/operations/277611846901620737/effects"
+        },
+        "succeeds": {
+          "href": "https://horizon.stellar.org/effects?order=desc&cursor=277611846901620737"
+        },
+        "precedes": {
+          "href": "https://horizon.stellar.org/effects?order=asc&cursor=277611846901620737"
+        }
+      },
+      "id": "277611846901620737",
+      "paging_token": "277611846901620737",
+      "transaction_successful": true,
+      "source_account": "GB2PX6R2KWRX5WKHXA2V22L3ITU3ZZE3MFPHYZV5NPU6BYA55O25T6JG",
+      "type": "path_payment_strict_receive",
+      "type_i": 2,
+      "created_at": "2026-09-27T00:21:46Z",
+      "transaction_hash": "7817ce56f923d0155ff671864ec7a90e2cd356131c96f3c81c7c7a0b10baaaf3",
+      "asset_type": "credit_alphanum4",
+      "asset_code": "TRSY",
+      "asset_issuer": "GDAHP47TPZVR3CX45GAHLRJOOY6QV23HYSSVJ4NGR3P33ULLLJMST2KJ",
+      "from": "GB2PX6R2KWRX5WKHXA2V22L3ITU3ZZE3MFPHYZV5NPU6BYA55O25T6JG",
+      "to": "GB2PX6R2KWRX5WKHXA2V22L3ITU3ZZE3MFPHYZV5NPU6BYA55O25T6JG",
+      "amount": "0.6000000",
+      "path": [
+        {
+          "asset_type": "native"
+        }
+      ],
+      "source_amount": "22934576447.8818683",
+      "source_max": "23163922212.3606870",
+      "source_asset_type": "credit_alphanum4",
+      "source_asset_code": "SGB",
+      "source_asset_issuer": "GAME5YNKHIPRSMN2BI3HLS3OYD4NE6FQ2WKUUJPYYM6GU4MRDUBPHN6B"
+    },
+    "277611739527450625": {
+      "_links": {
+        "self": {
+          "href": "https://horizon.stellar.org/operations/277611739527450625"
+        },
+        "transaction": {
+          "href": "https://horizon.stellar.org/transactions/2c1765bd17133078e1c6cbd033d3ce739767cdb1953f0dac6cd1f639601157d2"
+        },
+        "effects": {
+          "href": "https://horizon.stellar.org/operations/277611739527450625/effects"
+        },
+        "succeeds": {
+          "href": "https://horizon.stellar.org/effects?order=desc&cursor=277611739527450625"
+        },
+        "precedes": {
+          "href": "https://horizon.stellar.org/effects?order=asc&cursor=277611739527450625"
+        }
+      },
+      "id": "277611739527450625",
+      "paging_token": "277611739527450625",
+      "transaction_successful": true,
+      "source_account": "GBZOHI5USNIHAJC76D2RX2BXL6XQXLUYKN33KIX3QPIOYAHBU3DQ67D7",
+      "type": "path_payment_strict_receive",
+      "type_i": 2,
+      "created_at": "2026-09-27T00:19:41Z",
+      "transaction_hash": "2c1765bd17133078e1c6cbd033d3ce739767cdb1953f0dac6cd1f639601157d2",
+      "asset_type": "credit_alphanum4",
+      "asset_code": "TRSY",
+      "asset_issuer": "GDAHP47TPZVR3CX45GAHLRJOOY6QV23HYSSVJ4NGR3P33ULLLJMST2KJ",
+      "from": "GBZOHI5USNIHAJC76D2RX2BXL6XQXLUYKN33KIX3QPIOYAHBU3DQ67D7",
+      "to": "GBZOHI5USNIHAJC76D2RX2BXL6XQXLUYKN33KIX3QPIOYAHBU3DQ67D7",
+      "amount": "0.6000000",
+      "path": [
+        {
+          "asset_type": "native"
+        }
+      ],
+      "source_amount": "22673929865.5802608",
+      "source_max": "22900669164.2360634",
+      "source_asset_type": "credit_alphanum4",
+      "source_asset_code": "SGB",
+      "source_asset_issuer": "GAME5YNKHIPRSMN2BI3HLS3OYD4NE6FQ2WKUUJPYYM6GU4MRDUBPHN6B"
+    },
+    "277601053648809985": {
+      "_links": {
+        "self": {
+          "href": "https://horizon.stellar.org/operations/277601053648809985"
+        },
+        "transaction": {
+          "href": "https://horizon.stellar.org/transactions/6b19107f70cd67bc912ecac5054c3e6b709be36c44135fcf097712cdfa3878e3"
+        },
+        "effects": {
+          "href": "https://horizon.stellar.org/operations/277601053648809985/effects"
+        },
+        "succeeds": {
+          "href": "https://horizon.stellar.org/effects?order=desc&cursor=277601053648809985"
+        },
+        "precedes": {
+          "href": "https://horizon.stellar.org/effects?order=asc&cursor=277601053648809985"
+        }
+      },
+      "id": "277601053648809985",
+      "paging_token": "277601053648809985",
+      "transaction_successful": true,
+      "source_account": "GA4HRMOHOXSHLXXF3TACWPHMV7RXYTGW6Y5G635KEDJT6ZEW2WQETR7X",
+      "type": "path_payment_strict_receive",
+      "type_i": 2,
+      "created_at": "2026-09-26T20:52:21Z",
+      "transaction_hash": "6b19107f70cd67bc912ecac5054c3e6b709be36c44135fcf097712cdfa3878e3",
+      "asset_type": "credit_alphanum4",
+      "asset_code": "TRSY",
+      "asset_issuer": "GDAHP47TPZVR3CX45GAHLRJOOY6QV23HYSSVJ4NGR3P33ULLLJMST2KJ",
+      "from": "GA4HRMOHOXSHLXXF3TACWPHMV7RXYTGW6Y5G635KEDJT6ZEW2WQETR7X",
+      "to": "GA4HRMOHOXSHLXXF3TACWPHMV7RXYTGW6Y5G635KEDJT6ZEW2WQETR7X",
+      "amount": "0.6000000",
+      "path": [
+        {
+          "asset_type": "native"
+        }
+      ],
+      "source_amount": "21870067675.4769816",
+      "source_max": "22132473999.5602180",
+      "source_asset_type": "credit_alphanum4",
+      "source_asset_code": "SGB",
+      "source_asset_issuer": "GAME5YNKHIPRSMN2BI3HLS3OYD4NE6FQ2WKUUJPYYM6GU4MRDUBPHN6B"
+    },
+    "277600907620519937": {
+      "_links": {
+        "self": {
+          "href": "https://horizon.stellar.org/operations/277600907620519937"
+        },
+        "transaction": {
+          "href": "https://horizon.stellar.org/transactions/75dfb584e1bb2679f8dca5eceeb01a112f2a8249810500a64836f9f55c66d1d2"
+        },
+        "effects": {
+          "href": "https://horizon.stellar.org/operations/277600907620519937/effects"
+        },
+        "succeeds": {
+          "href": "https://horizon.stellar.org/effects?order=desc&cursor=277600907620519937"
+        },
+        "precedes": {
+          "href": "https://horizon.stellar.org/effects?order=asc&cursor=277600907620519937"
+        }
+      },
+      "id": "277600907620519937",
+      "paging_token": "277600907620519937",
+      "transaction_successful": true,
+      "source_account": "GBOB3YWSIVD234TBS64K56O3ZQZG5O5WYWUAGJFROG52QSTTB7GQHXK2",
+      "type": "path_payment_strict_receive",
+      "type_i": 2,
+      "created_at": "2026-09-26T20:49:31Z",
+      "transaction_hash": "75dfb584e1bb2679f8dca5eceeb01a112f2a8249810500a64836f9f55c66d1d2",
+      "asset_type": "credit_alphanum4",
+      "asset_code": "TRSY",
+      "asset_issuer": "GDAHP47TPZVR3CX45GAHLRJOOY6QV23HYSSVJ4NGR3P33ULLLJMST2KJ",
+      "from": "GBOB3YWSIVD234TBS64K56O3ZQZG5O5WYWUAGJFROG52QSTTB7GQHXK2",
+      "to": "GBOB3YWSIVD234TBS64K56O3ZQZG5O5WYWUAGJFROG52QSTTB7GQHXK2",
+      "amount": "0.6000000",
+      "path": [
+        {
+          "asset_type": "native"
+        }
+      ],
+      "source_amount": "21472008754.6711131",
+      "source_max": "21686728842.2178242",
+      "source_asset_type": "credit_alphanum4",
+      "source_asset_code": "SGB",
+      "source_asset_issuer": "GAME5YNKHIPRSMN2BI3HLS3OYD4NE6FQ2WKUUJPYYM6GU4MRDUBPHN6B"
+    },
+    "277600452354547713": {
+      "_links": {
+        "self": {
+          "href": "https://horizon.stellar.org/operations/277600452354547713"
+        },
+        "transaction": {
+          "href": "https://horizon.stellar.org/transactions/b49caa321d20cad181d0aab67ba76e1f68cd50cf8359dfb83dd03e9a1704f653"
+        },
+        "effects": {
+          "href": "https://horizon.stellar.org/operations/277600452354547713/effects"
+        },
+        "succeeds": {
+          "href": "https://horizon.stellar.org/effects?order=desc&cursor=277600452354547713"
+        },
+        "precedes": {
+          "href": "https://horizon.stellar.org/effects?order=asc&cursor=277600452354547713"
+        }
+      },
+      "id": "277600452354547713",
+      "paging_token": "277600452354547713",
+      "transaction_successful": true,
+      "source_account": "GDV3IKQVTB4UN73QGGV2GXTYFRUTLOAOG4J2HIA7WYLNYW25YRJSP7XR",
+      "type": "path_payment_strict_receive",
+      "type_i": 2,
+      "created_at": "2026-09-26T20:40:41Z",
+      "transaction_hash": "b49caa321d20cad181d0aab67ba76e1f68cd50cf8359dfb83dd03e9a1704f653",
+      "asset_type": "credit_alphanum4",
+      "asset_code": "TRSY",
+      "asset_issuer": "GDAHP47TPZVR3CX45GAHLRJOOY6QV23HYSSVJ4NGR3P33ULLLJMST2KJ",
+      "from": "GDV3IKQVTB4UN73QGGV2GXTYFRUTLOAOG4J2HIA7WYLNYW25YRJSP7XR",
+      "to": "GDV3IKQVTB4UN73QGGV2GXTYFRUTLOAOG4J2HIA7WYLNYW25YRJSP7XR",
+      "amount": "0.7000000",
+      "path": [
+        {
+          "asset_type": "native"
+        }
+      ],
+      "source_amount": "23934570907.8371760",
+      "source_max": "24173916616.9155478",
+      "source_asset_type": "credit_alphanum4",
+      "source_asset_code": "SGB",
+      "source_asset_issuer": "GAME5YNKHIPRSMN2BI3HLS3OYD4NE6FQ2WKUUJPYYM6GU4MRDUBPHN6B"
+    }
+  },
+  "excludedIntermediateTradeIds": [
+    "277889452113207297-2",
+    "277811949427937281-4",
+    "277611846901620737-1",
+    "277611739527450625-1",
+    "277601053648809985-1",
+    "277600907620519937-1",
+    "277600452354547713-1"
+  ]
+}
