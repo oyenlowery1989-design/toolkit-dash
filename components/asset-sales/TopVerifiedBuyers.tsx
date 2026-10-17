@@ -6,11 +6,36 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { ShortAddress } from "@/components/shared/ShortAddress";
 import { shortAddr } from "@/lib/format";
 import { getErrorMessage } from "@/lib/stellar-helpers";
+import { fetchXlmBalance, type XlmBalanceValue } from "@/lib/horizon-balance";
 import { fetchTopVerifiedBuyers, type BuyerWindow, type TopBuyersResult } from "@/lib/proceeds-investigator/top-buyers";
 
 const periods: Array<{ value: BuyerWindow; label: string }> = [
   { value: "7d", label: "7 days" }, { value: "30d", label: "30 days" }, { value: "all", label: "All history" },
 ];
+
+function BuyerBalance({ address, horizonUrl }: { address: string; horizonUrl: string }) {
+  const [balance, setBalance] = useState<{ value: XlmBalanceValue; checkedAt: string } | null>(null);
+  const [refresh, setRefresh] = useState(0);
+  useEffect(() => {
+    const controller = new AbortController();
+    setBalance(null);
+    console.info(`[Verified buyer balance] GET ${horizonUrl}/accounts/${address}`);
+    void fetchXlmBalance(horizonUrl, address, controller.signal).then(value => {
+      if (!controller.signal.aborted) setBalance({ value, checkedAt: new Date().toLocaleString() });
+    });
+    return () => controller.abort();
+  }, [address, horizonUrl, refresh]);
+  if (!balance) return <span role="status" aria-label={`Loading XLM balance for ${shortAddr(address)}`}>Loading…</span>;
+  const { value, checkedAt } = balance;
+  return <Button variant="ghost" size="sm" className="h-auto p-0 font-mono"
+    aria-label={`${value === "error" ? "Retry" : "Refresh"} XLM balance for ${shortAddr(address)}`}
+    title={`Checked ${checkedAt}. Total XLM includes reserves and offer liabilities. Click to refresh.`}
+    onClick={() => setRefresh(count => count + 1)}>
+    {typeof value === "number" && Number.isFinite(value) && value >= 0
+      ? value.toLocaleString(undefined, { maximumFractionDigits: 7 })
+      : value === "unfunded" ? "Account not funded" : "Unavailable · Retry"}
+  </Button>;
+}
 
 export function TopVerifiedBuyers({ assetCode, issuer, horizonUrl, network, disabled }: {
   assetCode: string; issuer: string; horizonUrl: string; network: string; disabled: boolean;
@@ -80,12 +105,14 @@ export function TopVerifiedBuyers({ assetCode, issuer, horizonUrl, network, disa
         <Table aria-label="Verified buyer ranking" className="text-xs [&_th]:px-2 [&_td]:px-2 [&_td]:py-2">
           <TableHeader><TableRow>
             <TableHead className="min-w-40">Buyer</TableHead><TableHead className="text-right">XLM spent ↓</TableHead>
+            <TableHead className="text-right" title="Current total balance, separate from historical spending; includes reserves and offer liabilities">Current XLM</TableHead>
             <TableHead className="text-right">{assetCode} bought</TableHead><TableHead className="text-right">Avg XLM/token</TableHead>
             <TableHead className="text-right">Purchases</TableHead><TableHead>Latest purchase</TableHead><TableHead>Proof</TableHead>
           </TableRow></TableHeader>
           <TableBody>{result.buyers.slice(0, visible).map(buyer => <TableRow key={buyer.address}>
             <TableCell><ShortAddress address={buyer.address} network={network} /></TableCell>
             <TableCell className="text-right font-mono whitespace-nowrap">{buyer.xlmSpent}</TableCell>
+            <TableCell className="text-right whitespace-nowrap"><BuyerBalance address={buyer.address} horizonUrl={horizonUrl} /></TableCell>
             <TableCell className="text-right font-mono whitespace-nowrap">{buyer.assetBought}</TableCell>
             <TableCell className="text-right font-mono">{buyer.averagePrice.toLocaleString(undefined, { maximumSignificantDigits: 10 })}</TableCell>
             <TableCell className="text-right">{buyer.purchaseCount}</TableCell>

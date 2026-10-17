@@ -10,9 +10,19 @@ test("real TRSY GET capture reproduces the buyer ranking and all period filters 
   const live = JSON.parse(await readFile(`${directory}/trsy-top-buyers-live-results.json`, "utf8"));
   const issuer = "GDAHP47TPZVR3CX45GAHLRJOOY6QV23HYSSVJ4NGR3P33ULLLJMST2KJ";
   await page.route("**/api/db/**", route => route.fulfill({ json: new URL(route.request().url()).pathname === "/api/db/bulk-scan-state" ? null : [] }));
-  await page.route("https://horizon.stellar.org/**", route => {
+  const balances = new Map<string, string>();
+  await page.route("https://horizon.stellar.org/**", async route => {
     expect(route.request().method()).toBe("GET");
     const url = route.request().url();
+    if (new URL(url).pathname.startsWith("/accounts/")) {
+      if (!process.env.TRSY_BUYERS_LIVE_BALANCES) return route.fulfill({ json: { balances: [{ asset_type: "native", balance: "0.0000000" }] } });
+      const response = await route.fetch();
+      expect(response.ok()).toBe(true);
+      const data = await response.json();
+      const balance = data.balances.find((entry: { asset_type: string }) => entry.asset_type === "native").balance;
+      balances.set(new URL(url).pathname.split("/").at(-1)!, Number(balance).toLocaleString("en-US", { maximumFractionDigits: 7 }));
+      return route.fulfill({ response });
+    }
     expect(cache[url], `Missing public GET capture: ${url}`).toBeDefined();
     return route.fulfill({ json: cache[url] });
   });
@@ -28,6 +38,11 @@ test("real TRSY GET capture reproduces the buyer ranking and all period filters 
     await expect(section.getByText(new RegExp(`${expected.buyers.length} verified buyers`))).toBeVisible();
     await expect(section.locator("tbody tr").first()).toContainText(expected.buyers[0].xlmSpent);
     await expect(section.locator("tbody tr").first()).toContainText(expected.buyers[0].assetBought);
+    if (process.env.TRSY_BUYERS_LIVE_BALANCES) {
+      await expect.poll(() => balances.get(expected.buyers[0].address)).toBeTruthy();
+      await expect(section.locator("tbody tr").first().locator("td").nth(2)).toHaveText(balances.get(expected.buyers[0].address)!);
+      console.info(`TRSY ${period}: ${expected.buyers[0].address} spent ${expected.buyers[0].xlmSpent} XLM; current ${balances.get(expected.buyers[0].address)} XLM`);
+    }
     await expect(page.getByRole("button", { name: "Run Analysis", exact: true })).toBeEnabled();
   }
   await section.locator("tbody tr").first().getByRole("button", { name: /^View purchases for/ }).click();

@@ -49,9 +49,49 @@ test("buyers are opt-in, ranked by spending with independent 7/30/all periods an
   const proof = section.getByRole("region", { name: "Verified purchase evidence", exact: true });
   await expect(proof.getByRole("link")).toHaveAttribute("href", `https://stellar.expert/explorer/public/tx/${"3".repeat(64)}`);
   expect(writes.filter(url => url.includes("saved-analyses"))).toEqual([]);
-  expect(requests.every(url => url.pathname === "/" || url.pathname === "/trades" || url.pathname.startsWith("/operations/"))).toBe(true);
+  expect(requests.every(url => url.pathname === "/" || url.pathname === "/trades" || url.pathname.startsWith("/operations/") || url.pathname.startsWith("/accounts/"))).toBe(true);
   await page.locator("#assets-input").fill(`wTRSY:${issuer}`);
   await expect(section.getByRole("heading", { name: "Top Verified Buyers · wTRSY" })).toBeVisible();
+  await expect(section.locator("tbody tr")).toHaveCount(0);
+});
+
+test("current balances stay separate from spending, support retry and never block analysis", async ({ page }) => {
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  let recover = false;
+  await page.route("**/api/db/**", route => route.fulfill({ json: new URL(route.request().url()).pathname === "/api/db/bulk-scan-state" ? null : [] }));
+  await page.route("https://horizon.stellar.org/**", async route => {
+    expect(route.request().method()).toBe("GET");
+    const path = new URL(route.request().url()).pathname;
+    if (path === "/") return route.fulfill({ json: { history_elder_ledger: 1 } });
+    if (path === "/trades") return route.fulfill({ json: { _embedded: { records: [0, 1, 2].map(i => trade(i)) } } });
+    if (path.startsWith("/operations/")) return route.fulfill({ json: operation(Number(path.split("/").at(-1)) - 100) });
+    if (path.endsWith(buyers[0])) { await gate;return route.fulfill({ json: { balances: [{ asset_type: "native", balance: "4321.1234567" }] } }); }
+    if (path.endsWith(buyers[1])) return route.fulfill({ json: { balances: [{ asset_type: "native", balance: "0.0000000" }] } });
+    return !recover ? route.fulfill({ status: 503, json: {} }) : route.fulfill({ status: 404, json: {} });
+  });
+  await page.goto("/asset-sales");
+  await page.clock.install({ time: new Date("2026-10-16T12:00:00Z") });
+  await page.locator("#assets-input").fill(`TRSY:${issuer}`);
+  const section = page.getByRole("region", { name: "Top Verified Buyers", exact: true });
+  await section.getByRole("button", { name: "All history", exact: true }).click();
+  await section.getByRole("button", { name: "Check verified buyers", exact: true }).click();
+  await expect(section.getByRole("button", { name: "Refresh buyers", exact: true })).toBeVisible();
+  const rows = section.locator("tbody tr");
+  await expect(rows.nth(0).locator("td").nth(1)).toHaveText("100.0000000");
+  await expect(rows.nth(1).locator("td").nth(2)).toHaveText("0");
+  await expect(rows.nth(2).locator("td").nth(2)).toHaveText("Loading…");
+  await expect(page.getByRole("button", { name: "Run Analysis", exact: true })).toBeEnabled();
+  const retry = section.getByRole("button", { name: "Retry XLM balance for GC67…UTD6", exact: true });
+  await expect(retry).toBeVisible();
+  recover = true;
+  await retry.click();
+  await expect(rows.nth(0).locator("td").nth(2)).toHaveText("Account not funded");
+  release();
+  await expect(rows.nth(2).locator("td").nth(2)).toHaveText("4,321.1234567");
+  await expect(rows.nth(2).locator("td").nth(1)).toHaveText("10.0000000");
+  await expect(rows.nth(0).locator("td").nth(1)).toHaveText("100.0000000");
+  await page.locator("#assets-input").fill(`wTRSY:${issuer}`);
   await expect(section.locator("tbody tr")).toHaveCount(0);
 });
 
