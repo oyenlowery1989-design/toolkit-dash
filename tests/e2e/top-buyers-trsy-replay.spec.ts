@@ -48,6 +48,17 @@ test("real TRSY GET capture reproduces the buyer ranking and all period filters 
   await section.locator("tbody tr").first().getByRole("button", { name: /^View purchases for/ }).click();
   await expect(section.getByRole("region", { name: "Verified purchase evidence" }).getByRole("link").first())
     .toHaveAttribute("href", `https://stellar.expert/explorer/public/tx/${live.results["7d"].buyers[0].evidence[0].txHash}`);
+  if (process.env.TRSY_BUYERS_LIVE_BALANCES) {
+    await section.getByRole("button", { name: "Sort by current XLM", exact: true }).click();
+    const buyers = live.results["7d"].buyers;
+    await expect(section.getByText(new RegExp(`Balances checked: ${buyers.length} / ${buyers.length}`))).toBeVisible({ timeout: 60_000 });
+    const expected = [...buyers].sort((a, b) => Number(balances.get(b.address)!.replaceAll(",", "")) - Number(balances.get(a.address)!.replaceAll(",", "")))[0];
+    const first = section.locator("tbody tr").first();
+    await expect(first.locator("td").nth(0)).toContainText(`${expected.address.slice(0, 4)}…${expected.address.slice(-4)}`);
+    await expect(first.locator("td").nth(1)).toHaveText(expected.xlmSpent);
+    await expect(first.locator("td").nth(2)).toHaveText(balances.get(expected.address)!);
+    console.info(`TRSY balance ranking: ${buyers.length} accounts checked; highest ${expected.address}, current ${balances.get(expected.address)} XLM; historical spent ${expected.xlmSpent} XLM`);
+  }
   await section.getByRole("heading", { name: "Top Verified Buyers · TRSY" }).scrollIntoViewIfNeeded();
   await page.screenshot({ path: "/tmp/trsy-top-verified-buyers.jpg" });
 });

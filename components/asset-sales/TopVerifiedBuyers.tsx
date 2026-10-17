@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { ShortAddress } from "@/components/shared/ShortAddress";
@@ -13,29 +13,7 @@ const periods: Array<{ value: BuyerWindow; label: string }> = [
   { value: "7d", label: "7 days" }, { value: "30d", label: "30 days" }, { value: "all", label: "All history" },
 ];
 
-function BuyerBalance({ address, horizonUrl }: { address: string; horizonUrl: string }) {
-  const [balance, setBalance] = useState<{ value: XlmBalanceValue; checkedAt: string } | null>(null);
-  const [refresh, setRefresh] = useState(0);
-  useEffect(() => {
-    const controller = new AbortController();
-    setBalance(null);
-    console.info(`[Verified buyer balance] GET ${horizonUrl}/accounts/${address}`);
-    void fetchXlmBalance(horizonUrl, address, controller.signal).then(value => {
-      if (!controller.signal.aborted) setBalance({ value, checkedAt: new Date().toLocaleString() });
-    });
-    return () => controller.abort();
-  }, [address, horizonUrl, refresh]);
-  if (!balance) return <span role="status" aria-label={`Loading XLM balance for ${shortAddr(address)}`}>Loading…</span>;
-  const { value, checkedAt } = balance;
-  return <Button variant="ghost" size="sm" className="h-auto p-0 font-mono"
-    aria-label={`${value === "error" ? "Retry" : "Refresh"} XLM balance for ${shortAddr(address)}`}
-    title={`Checked ${checkedAt}. Total XLM includes reserves and offer liabilities. Click to refresh.`}
-    onClick={() => setRefresh(count => count + 1)}>
-    {typeof value === "number" && Number.isFinite(value) && value >= 0
-      ? value.toLocaleString(undefined, { maximumFractionDigits: 7 })
-      : value === "unfunded" ? "Account not funded" : "Unavailable · Retry"}
-  </Button>;
-}
+type BuyerBalance = { value: XlmBalanceValue; checkedAt: string };
 
 export function TopVerifiedBuyers({ assetCode, issuer, horizonUrl, network, disabled }: {
   assetCode: string; issuer: string; horizonUrl: string; network: string; disabled: boolean;
@@ -49,11 +27,63 @@ export function TopVerifiedBuyers({ assetCode, issuer, horizonUrl, network, disa
   const [visible, setVisible] = useState(10);
   const [proofAddress, setProofAddress] = useState<string | null>(null);
   const [proofVisible, setProofVisible] = useState(10);
+  const [sortBy, setSortBy] = useState<"spent" | "balance">("spent");
+  const [balances, setBalances] = useState<Record<string, BuyerBalance>>({});
+  const balanceCache = useRef<Record<string, BuyerBalance>>({});
+  const balanceAbortRef = useRef<AbortController | null>(null);
+  const [balanceRefresh, setBalanceRefresh] = useState(0);
+  const balanceTargets = (sortBy === "balance"
+    ? loading ? [] : result?.buyers
+    : result?.buyers.slice(0, visible))?.map(buyer => buyer.address).join(",") ?? "";
+  useEffect(() => {
+    const controller = new AbortController();
+    balanceAbortRef.current = controller;
+    const pending = balanceTargets.split(",").filter(address => address && !balanceCache.current[address]);
+    let index = 0;
+    async function worker() {
+      while (!controller.signal.aborted && index < pending.length) {
+        const address = pending[index++];
+        console.info(`[Verified buyer balance] GET ${horizonUrl}/accounts/${address}`);
+        const value = await fetchXlmBalance(horizonUrl, address, controller.signal);
+        if (controller.signal.aborted) return;
+        balanceCache.current[address] = { value, checkedAt: new Date().toLocaleString() };
+        setBalances({ ...balanceCache.current });
+      }
+    }
+    void Promise.all(Array.from({ length: Math.min(4, pending.length) }, worker));
+    return () => controller.abort();
+  }, [balanceTargets, horizonUrl, balanceRefresh]);
+  function resetBalances() {
+    balanceAbortRef.current?.abort();
+    balanceCache.current = {};
+    setBalances({});
+    setBalanceRefresh(count => count + 1);
+  }
+  function refreshBalance(address: string) {
+    balanceAbortRef.current?.abort();
+    delete balanceCache.current[address];
+    setBalances({ ...balanceCache.current });
+    setBalanceRefresh(count => count + 1);
+  }
+  const sortedBuyers = useMemo(() => {
+    if (!result || sortBy === "spent") return result?.buyers ?? [];
+    const numericBalance = (address: string) => {
+      const value = balances[address]?.value;
+      return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : -1;
+    };
+    return [...result.buyers].sort((a, b) => numericBalance(b.address) - numericBalance(a.address));
+  }, [result, balances, sortBy]);
+  const checkedBalances = result?.buyers.filter(buyer => balances[buyer.address]).length ?? 0;
+  const unavailableBalances = result?.buyers.filter(buyer => {
+    const value = balances[buyer.address]?.value;
+    return value !== undefined && !(typeof value === "number" && Number.isFinite(value) && value >= 0);
+  }).length ?? 0;
   const abortRef = useRef<AbortController | null>(null);
   useEffect(() => () => abortRef.current?.abort(), []);
 
   async function check(nextPeriod = period) {
     abortRef.current?.abort();
+    resetBalances();
     const controller = new AbortController();
     abortRef.current = controller;
     setLoading(true);setStopped(false);setError(null);setResult(null);setScanned(0);setVisible(10);setProofAddress(null);
@@ -91,7 +121,7 @@ export function TopVerifiedBuyers({ assetCode, issuer, horizonUrl, network, disa
           : <Button variant="outline" size="sm" disabled={disabled} onClick={() => void check()}>{result ? "Refresh buyers" : "Check verified buyers"}</Button>}
       </div>
     </div>
-    <p className="text-muted-foreground">Ranked by verified XLM spent on the {assetCode}/XLM market. Transfers and airdrops do not qualify.</p>
+    <p className="text-muted-foreground">Verified buyers on the {assetCode}/XLM market. Transfers and airdrops do not qualify.</p>
     {loading && <p role="status">Verifying purchases… {scanned.toLocaleString()} trades checked. Ranking is provisional.</p>}
     {stopped && <p role="status">Buyer check stopped. Retained results are partial.</p>}
     {error && <p role="alert" className="text-destructive">Buyer check failed; any retained ranking is partial. {error}</p>}
@@ -102,17 +132,38 @@ export function TopVerifiedBuyers({ assetCode, issuer, horizonUrl, network, disa
       </details>}
       {result.skippedRecords > 0 && <p role="status">{result.skippedRecords.toLocaleString()} records excluded; ranking may be incomplete.</p>}
       {result.buyers.length > 0 ? <>
+        {sortBy === "balance" && <p role="status" className="text-muted-foreground">
+          Balances checked: {checkedBalances} / {result.buyers.length}.
+          {checkedBalances < result.buyers.length ? " Balance order is provisional." : " Highest current XLM first."}
+          {unavailableBalances > 0 && ` ${unavailableBalances} balances unavailable or unfunded; listed last.`}
+        </p>}
         <Table aria-label="Verified buyer ranking" className="text-xs [&_th]:px-2 [&_td]:px-2 [&_td]:py-2">
           <TableHeader><TableRow>
-            <TableHead className="min-w-40">Buyer</TableHead><TableHead className="text-right">XLM spent ↓</TableHead>
-            <TableHead className="text-right" title="Current total balance, separate from historical spending; includes reserves and offer liabilities">Current XLM</TableHead>
+            <TableHead className="min-w-40">Buyer</TableHead>
+            <TableHead className="text-right" aria-sort={sortBy === "spent" ? "descending" : "none"}>
+              <Button variant="ghost" size="sm" className="h-auto p-0" aria-label="Sort by XLM spent" onClick={() => setSortBy("spent")}>XLM spent{sortBy === "spent" ? " ↓" : ""}</Button>
+            </TableHead>
+            <TableHead className="text-right" aria-sort={sortBy === "balance" ? "descending" : "none"} title="Current total balance, separate from historical spending; includes reserves and offer liabilities">
+              <Button variant="ghost" size="sm" className="h-auto p-0" aria-label="Sort by current XLM" disabled={loading || disabled} onClick={() => setSortBy("balance")}>Current XLM{sortBy === "balance" ? " ↓" : ""}</Button>
+            </TableHead>
             <TableHead className="text-right">{assetCode} bought</TableHead><TableHead className="text-right">Avg XLM/token</TableHead>
             <TableHead className="text-right">Purchases</TableHead><TableHead>Latest purchase</TableHead><TableHead>Proof</TableHead>
           </TableRow></TableHeader>
-          <TableBody>{result.buyers.slice(0, visible).map(buyer => <TableRow key={buyer.address}>
+          <TableBody>{sortedBuyers.slice(0, visible).map(buyer => <TableRow key={buyer.address}>
             <TableCell><ShortAddress address={buyer.address} network={network} /></TableCell>
             <TableCell className="text-right font-mono whitespace-nowrap">{buyer.xlmSpent}</TableCell>
-            <TableCell className="text-right whitespace-nowrap"><BuyerBalance address={buyer.address} horizonUrl={horizonUrl} /></TableCell>
+            <TableCell className="text-right whitespace-nowrap">{(() => {
+              const balance = balances[buyer.address];
+              if (!balance) return <span role="status" aria-label={`Loading XLM balance for ${shortAddr(buyer.address)}`}>Loading…</span>;
+              const { value, checkedAt } = balance;
+              const valid = typeof value === "number" && Number.isFinite(value) && value >= 0;
+              return <Button variant="ghost" size="sm" className="h-auto p-0 font-mono"
+                aria-label={`${!valid && value !== "unfunded" ? "Retry" : "Refresh"} XLM balance for ${shortAddr(buyer.address)}`}
+                title={`Checked ${checkedAt}. Total XLM includes reserves and offer liabilities. Click to refresh.`}
+                onClick={() => refreshBalance(buyer.address)}>
+                {valid ? value.toLocaleString(undefined, { maximumFractionDigits: 7 }) : value === "unfunded" ? "Account not funded" : "Unavailable · Retry"}
+              </Button>;
+            })()}</TableCell>
             <TableCell className="text-right font-mono whitespace-nowrap">{buyer.assetBought}</TableCell>
             <TableCell className="text-right font-mono">{buyer.averagePrice.toLocaleString(undefined, { maximumSignificantDigits: 10 })}</TableCell>
             <TableCell className="text-right">{buyer.purchaseCount}</TableCell>

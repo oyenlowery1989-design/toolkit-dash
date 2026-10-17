@@ -141,3 +141,58 @@ test("retention gaps remain visible when coverage details are collapsed", async 
   await expect(section.locator("details")).not.toHaveAttribute("open", "");
   await expect(section.locator("tbody tr")).toHaveCount(1);
 });
+
+test("balance sorting checks buyers beyond the visible ten and keeps spending and proof intact", async ({ page }) => {
+  const { StrKey } = await import("stellar-sdk");
+  const accounts = Array.from({ length: 12 }, (_, i) => StrKey.encodeEd25519PublicKey(Buffer.alloc(32, i + 1)));
+  let richBalance = "999.1234567";
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const checked = new Set<string>();
+  await page.route("**/api/db/**", route => route.fulfill({ json: new URL(route.request().url()).pathname === "/api/db/bulk-scan-state" ? null : [] }));
+  await page.route("https://horizon.stellar.org/**", async route => {
+    expect(route.request().method()).toBe("GET");
+    const path = new URL(route.request().url()).pathname;
+    if (path === "/") return route.fulfill({ json: { history_elder_ledger: 1 } });
+    if (path === "/trades") return route.fulfill({ json: { _embedded: { records: accounts.map((address, i) => ({ ...trade(0), id: `${100 + i}-0`, paging_token: `${100 + i}-0`, base_account: address, base_amount: String(12 - i), _links: { operation: { href: `https://horizon.stellar.org/operations/${100 + i}` } } })) } } });
+    if (path.startsWith("/operations/")) {
+      const i = Number(path.split("/").at(-1)) - 100;
+      return route.fulfill({ json: { ...operation(0), id: String(100 + i), source_account: accounts[i] } });
+    }
+    const address = path.split("/").at(-1)!;
+    const i = accounts.indexOf(address);
+    checked.add(address);
+    if (i === 11) await gate;
+    if (i === 0) return route.fulfill({ status: 503, json: {} });
+    return route.fulfill({ json: { balances: [{ asset_type: "native", balance: i === 11 ? richBalance : i === 1 ? "0.0000000" : String(i + 5) }] } });
+  });
+  await page.goto("/asset-sales");
+  await page.clock.install({ time: new Date("2026-10-16T12:00:00Z") });
+  await page.locator("#assets-input").fill(`TRSY:${issuer}`);
+  const section = page.getByRole("region", { name: "Top Verified Buyers", exact: true });
+  await section.getByRole("button", { name: "Check verified buyers", exact: true }).click();
+  await expect(section.getByRole("button", { name: "Refresh buyers", exact: true })).toBeVisible();
+  const rows = section.locator("tbody tr");
+  await expect(rows.first().locator("td").nth(1)).toHaveText("12.0000000");
+  expect(checked.has(accounts[11])).toBe(false);
+  await section.getByRole("button", { name: "Sort by current XLM", exact: true }).click();
+  await expect.poll(() => checked.has(accounts[11])).toBe(true);
+  await expect(section.getByText(/Balance order is provisional/)).toBeVisible();
+  await expect(page.getByRole("button", { name: "Run Analysis", exact: true })).toBeEnabled();
+  release();
+  await expect(section.getByText(/Balances checked: 12 \/ 12/)).toBeVisible();
+  await expect(rows.first().locator("td").nth(1)).toHaveText("1.0000000");
+  await expect(rows.first().locator("td").nth(2)).toHaveText("999.1234567");
+  await expect(section.getByText(/1 balances unavailable or unfunded; listed last/)).toBeVisible();
+  await section.getByRole("button", { name: "Show 10 more buyers", exact: true }).click();
+  await expect(rows.nth(10).locator("td").nth(2)).toHaveText("0");
+  await expect(rows.last().locator("td").nth(1)).toHaveText("12.0000000");
+  await rows.first().getByRole("button", { name: /^View purchases for/ }).click();
+  await expect(section.getByRole("region", { name: "Verified purchase evidence" }).getByRole("link").first()).toHaveAttribute("href", `https://stellar.expert/explorer/public/tx/${"1".repeat(64)}`);
+  richBalance = "1.0000000";
+  await rows.first().getByRole("button", { name: /^Refresh XLM balance/ }).click();
+  await expect(rows.first().locator("td").nth(2)).toHaveText("15");
+  await section.getByRole("button", { name: "Sort by XLM spent", exact: true }).click();
+  await expect(rows.first().locator("td").nth(1)).toHaveText("12.0000000");
+  await expect(rows.last().locator("td").nth(1)).toHaveText("1.0000000");
+});
